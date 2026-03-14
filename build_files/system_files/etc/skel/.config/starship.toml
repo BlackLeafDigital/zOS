@@ -1,0 +1,67 @@
+# =============================================================================
+# zOS Starship Prompt
+# Clean, informative, fast
+# =============================================================================
+
+format = """
+$os\
+$directory\
+$git_branch\
+$git_status\
+$nodejs\
+$python\
+$rust\
+$golang\
+$docker_context\
+$cmd_duration\
+$line_break\
+$character"""
+
+[os]
+disabled = false
+style = "bold blue"
+[os.symbols]
+Linux = " "
+
+[directory]
+style = "bold cyan"
+truncation_length = 3
+truncation_symbol = "…/"
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+format = "on [$symbol$branch]($style) "
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+style = "bold red"
+
+[nodejs]
+symbol = " "
+format = "[$symbol($version)]($style) "
+detect_files = ["package.json", ".node-version"]
+
+[python]
+symbol = " "
+format = '[${symbol}(${version})(\($virtualenv\))]($style) '
+
+[rust]
+symbol = " "
+format = "[$symbol($version)]($style) "
+
+[golang]
+symbol = " "
+format = "[$symbol($version)]($style) "
+
+[docker_context]
+symbol = " "
+format = "[$symbol$context]($style) "
+
+[cmd_duration]
+min_time = 2_000
+format = "took [$duration](bold yellow) "
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
