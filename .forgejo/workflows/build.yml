@@ -19,7 +19,7 @@ env:
   DEFAULT_TAG: "latest"
 
 concurrency:
-  group: build-${{ github.ref }}-${{ matrix.variant }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
