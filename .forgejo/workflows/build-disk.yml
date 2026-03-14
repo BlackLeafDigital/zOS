@@ -1,0 +1,87 @@
+---
+name: Build disk images (ISO/QCOW2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Image variant"
+        required: true
+        type: choice
+        options:
+          - zos
+          - zos-nvidia
+      upload-to-s3:
+        description: "Upload to S3"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/blackleafdigital"
+  DEFAULT_TAG: "latest"
+  BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
+
+concurrency:
+  group: build-disk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ inputs.variant }} ${{ matrix.disk-type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        disk-type: ["qcow2", "anaconda-iso"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine config file
+        id: config
+        run: |
+          if [ "${{ matrix.disk-type }}" = "anaconda-iso" ]; then
+            if [ "${{ inputs.variant }}" = "zos-nvidia" ]; then
+              echo "file=disk_config/iso-kde-nvidia.toml" >> $GITHUB_OUTPUT
+            else
+              echo "file=disk_config/iso-kde.toml" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "file=disk_config/disk.toml" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build disk image
+        run: |
+          sudo podman run \
+            --rm \
+            --privileged \
+            --security-opt label=type:unconfined_t \
+            -v $(pwd)/output:/output \
+            -v $(pwd)/${{ steps.config.outputs.file }}:/config.toml:ro \
+            ${{ env.BIB_IMAGE }} \
+            --type ${{ matrix.disk-type }} \
+            --use-librepo=True \
+            ${{ env.IMAGE_REGISTRY }}/${{ inputs.variant }}:${{ env.DEFAULT_TAG }}
+
+      - name: Upload artifacts
+        uses: christopherhx/gitea-upload-artifact@v4
+        with:
+          name: ${{ inputs.variant }}-${{ matrix.disk-type }}
+          path: output/
+          retention-days: 7
+
+      - name: Upload to S3
+        if: inputs.upload-to-s3 == true
+        run: |
+          DISK_TYPE="${{ matrix.disk-type }}"
+          VARIANT="${{ inputs.variant }}"
+          DATE=$(date -u +%Y%m%d)
+          for file in output/${DISK_TYPE}/*; do
+            [ -f "$file" ] || continue
+            FILENAME=$(basename "$file")
+            curl --fail --max-time 600 --connect-timeout 30 --retry 3 --retry-delay 10 \
+              --user "zachhandley:${{ secrets.FORGEJO_ACTIONS_TOKEN }}" \
+              --upload-file "$file" \
+              "https://forge.blackleafdigital.com/api/packages/BlackLeafDigital/generic/zos-images/${VARIANT}-${DATE}/${FILENAME}"
+          done

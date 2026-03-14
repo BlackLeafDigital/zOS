@@ -22,10 +22,8 @@ dnf5 install -y \
     ShellCheck
 
 # --- Container dev tools ---
+# Note: buildah, skopeo, distrobox already in Bazzite
 dnf5 install -y \
-    podman-compose \
-    buildah \
-    skopeo \
-    distrobox
+    podman-compose
 
 echo "Developer tools installation complete."

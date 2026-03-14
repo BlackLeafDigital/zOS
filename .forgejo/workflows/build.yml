@@ -1,0 +1,103 @@
+---
+name: Build zOS images
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/README.md'
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '05 10 * * *'
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/blackleafdigital"
+  DEFAULT_TAG: "latest"
+
+concurrency:
+  group: build-${{ github.ref }}-${{ matrix.variant }}
+  cancel-in-progress: true
+
+jobs:
+  build_push:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: zos
+            base_image: "ghcr.io/ublue-os/bazzite:stable"
+            image_name: zos
+          - variant: zos-nvidia
+            base_image: "ghcr.io/ublue-os/bazzite-nvidia:stable"
+            image_name: zos-nvidia
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: Build Image
+        id: build
+        run: |
+          buildah build \
+            -f Containerfile \
+            --build-arg BASE_IMAGE=${{ matrix.base_image }} \
+            -t ${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} \
+            -t ${{ matrix.image_name }}:${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} \
+            -t ${{ matrix.image_name }}:${{ steps.date.outputs.date }} \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.description=zOS - A curated Linux desktop that just works" \
+            --label "org.opencontainers.image.title=${{ matrix.image_name }}" \
+            --label "containers.bootc=1" \
+            .
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GH_ACCESS_TOKEN }}" | buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
+
+      - name: Push to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
+            buildah push ${{ matrix.image_name }}:${tag} docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}
+          done
+
+      # TODO: Enable cosign signing once keypair is generated (cosign generate-key-pair)
+      # - name: Install Cosign
+      #   if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      #   uses: sigstore/cosign-installer@v3
+      #
+      # - name: Sign container image
+      #   if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      #   run: |
+      #     for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
+      #       cosign sign -y --key env://COSIGN_PRIVATE_KEY "${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}"
+      #     done
+      #   env:
+      #     COSIGN_EXPERIMENTAL: false
+      #     COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+  # Mirror repo to GitHub
+  mirror:
+    name: Mirror to GitHub
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitHub
+        run: |
+          git remote add github https://x-access-token:${{ secrets.GH_ACCESS_TOKEN }}@github.com/BlackLeafDigital/zOS.git || true
+          git push --force github main

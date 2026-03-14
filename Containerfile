@@ -1,9 +1,10 @@
+# Base image - override with --build-arg for NVIDIA variant
+ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite:stable"
+
 # Build context stage - scripts are mounted, not copied into final image
 FROM scratch AS ctx
 COPY build_files /
 
-# Base image - override with --build-arg for NVIDIA variant
-ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite:stable"
 FROM ${BASE_IMAGE}
 
 ### MODIFICATIONS

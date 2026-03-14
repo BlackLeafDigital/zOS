@@ -6,26 +6,29 @@ set -ouex pipefail
 # Core system packages and configuration
 # =============================================================================
 
+# --- COPR Repos (not in Fedora repos) ---
+dnf5 copr enable -y wezfurlong/wezterm-nightly
+dnf5 copr enable -y atim/starship
+
 # --- System Packages ---
+# Note: btop, fastfetch, fish, jq, fzf, wl-clipboard, ripgrep are already in Bazzite
 dnf5 install -y \
     wezterm \
     starship \
     zsh \
-    fish \
-    fastfetch \
     bat \
-    eza \
     fd-find \
-    ripgrep \
-    fzf \
     zoxide \
-    jq \
     yq \
     htop \
-    btop \
     tldr \
-    git-delta \
-    wl-clipboard
+    git-delta
+
+# --- eza (not in Fedora repos, install from GitHub release) ---
+curl -Lo /tmp/eza.tar.gz https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz
+tar -xzf /tmp/eza.tar.gz -C /usr/bin/
+chmod +x /usr/bin/eza
+rm /tmp/eza.tar.gz
 
 # --- Fonts ---
 dnf5 install -y \
@@ -38,6 +41,6 @@ dnf5 install -y \
 
 # --- Enable services ---
 systemctl enable podman.socket
-systemctl enable docker.socket
+# docker.socket not available in Bazzite base — podman provides Docker-compatible socket
 
 echo "zOS core build complete."
