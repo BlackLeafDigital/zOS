@@ -68,6 +68,7 @@ jobs:
             ${{ env.BIB_IMAGE }} \
             --type ${{ matrix.disk-type }} \
             --use-librepo=True \
+            --rootfs ext4 \
             --local \
             ${{ env.IMAGE_REGISTRY }}/${{ inputs.variant }}:${{ env.DEFAULT_TAG }}
 
