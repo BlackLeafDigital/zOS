@@ -40,6 +40,9 @@ jobs:
             base_image: "ghcr.io/ublue-os/bazzite-nvidia:stable"
             image_name: zos-nvidia
     steps:
+      - name: Setup Node
+        uses: https://forge.blackleafdigital.com/Public/actions/setup-node@main
+
       - name: Checkout
         uses: actions/checkout@v4
 
