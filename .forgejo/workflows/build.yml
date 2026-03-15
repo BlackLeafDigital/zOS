@@ -60,12 +60,12 @@ jobs:
             .
 
       - name: Login to GHCR
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         run: |
           echo "${{ secrets.GH_ACCESS_TOKEN }}" | sudo buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
 
       - name: Push to GHCR
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         run: |
           for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
             sudo buildah push ${{ matrix.image_name }}:${tag} docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}
@@ -73,11 +73,11 @@ jobs:
 
       # TODO: Enable cosign signing once keypair is generated (cosign generate-key-pair)
       # - name: Install Cosign
-      #   if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      #   if: github.event_name != 'pull_request'
       #   uses: sigstore/cosign-installer@v3
       #
       # - name: Sign container image
-      #   if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      #   if: github.event_name != 'pull_request'
       #   run: |
       #     for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
       #       cosign sign -y --key env://COSIGN_PRIVATE_KEY "${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}"
@@ -90,7 +90,7 @@ jobs:
   mirror:
     name: Mirror to GitHub
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
