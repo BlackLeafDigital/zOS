@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: Build ${{ inputs.variant }} ${{ matrix.disk-type }}
-    runs-on: ubuntu-latest
+    runs-on: minibeast
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +37,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Pull image
+        run: |
+          sudo podman pull ${{ env.IMAGE_REGISTRY }}/${{ inputs.variant }}:${{ env.DEFAULT_TAG }}
 
       - name: Determine config file
         id: config
@@ -57,15 +61,17 @@ jobs:
             --rm \
             --privileged \
             --security-opt label=type:unconfined_t \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
             -v $(pwd)/output:/output \
             -v $(pwd)/${{ steps.config.outputs.file }}:/config.toml:ro \
             ${{ env.BIB_IMAGE }} \
             --type ${{ matrix.disk-type }} \
             --use-librepo=True \
+            --local \
             ${{ env.IMAGE_REGISTRY }}/${{ inputs.variant }}:${{ env.DEFAULT_TAG }}
 
       - name: Upload artifacts
-        uses: christopherhx/gitea-upload-artifact@v4
+        uses: https://github.com/christopherhx/gitea-upload-artifact@v4
         with:
           name: ${{ inputs.variant }}-${{ matrix.disk-type }}
           path: output/
