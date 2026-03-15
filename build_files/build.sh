@@ -43,4 +43,11 @@ dnf5 install -y \
 systemctl enable podman.socket
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket
 
+# --- Fix GPG keys for BIB (bootc-image-builder) compatibility ---
+# BIB runs depsolve outside the image and can't access local GPG key files.
+# Since the OS is immutable (no dnf at runtime), disabling gpgcheck is safe.
+for repo in /etc/yum.repos.d/*terra*mesa*; do
+    [ -f "$repo" ] && sed -i 's/gpgcheck=1/gpgcheck=0/g' "$repo"
+done
+
 echo "zOS core build complete."

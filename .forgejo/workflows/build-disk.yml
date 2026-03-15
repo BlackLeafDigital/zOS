@@ -67,9 +67,8 @@ jobs:
             -v $(pwd)/${{ steps.config.outputs.file }}:/config.toml:ro \
             ${{ env.BIB_IMAGE }} \
             --type ${{ matrix.disk-type }} \
-            --use-librepo=True \
             --rootfs ext4 \
-            --local \
+            --use-librepo=True \
             ${{ env.IMAGE_REGISTRY }}/${{ inputs.variant }}:${{ env.DEFAULT_TAG }}
 
       - name: Upload artifacts
