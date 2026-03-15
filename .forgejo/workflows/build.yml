@@ -26,9 +26,6 @@ jobs:
   build_push:
     name: Build ${{ matrix.variant }}
     runs-on: ubuntu-latest
-    container:
-      image: quay.io/buildah/stable:latest
-      options: --privileged
     strategy:
       fail-fast: false
       matrix:
@@ -40,9 +37,6 @@ jobs:
             base_image: "ghcr.io/ublue-os/bazzite-nvidia:stable"
             image_name: zos-nvidia
     steps:
-      - name: Setup Node
-        uses: https://forge.blackleafdigital.com/Public/actions/setup-node@main
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -53,7 +47,7 @@ jobs:
       - name: Build Image
         id: build
         run: |
-          buildah build \
+          sudo buildah build \
             -f Containerfile \
             --build-arg BASE_IMAGE=${{ matrix.base_image }} \
             -t ${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} \
@@ -68,13 +62,13 @@ jobs:
       - name: Login to GHCR
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
-          echo "${{ secrets.GH_ACCESS_TOKEN }}" | buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
+          echo "${{ secrets.GH_ACCESS_TOKEN }}" | sudo buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
 
       - name: Push to GHCR
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
           for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
-            buildah push ${{ matrix.image_name }}:${tag} docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}
+            sudo buildah push ${{ matrix.image_name }}:${tag} docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}
           done
 
       # TODO: Enable cosign signing once keypair is generated (cosign generate-key-pair)
