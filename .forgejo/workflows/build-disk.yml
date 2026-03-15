@@ -57,6 +57,7 @@ jobs:
 
       - name: Build disk image
         run: |
+          mkdir -p output
           sudo podman run \
             --rm \
             --privileged \
