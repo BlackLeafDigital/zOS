@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build_push:
     name: Build ${{ matrix.variant }}
-    runs-on: ubuntu-latest
+    runs-on: minibeast
     strategy:
       fail-fast: false
       matrix:
@@ -97,11 +97,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure GitHub credentials
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.GH_ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Push to GitHub
         run: |
-          git remote add github https://github.com/BlackLeafDigital/zOS.git 2>/dev/null || true
+          git remote add github https://x-access-token:${{ secrets.GH_ACCESS_TOKEN }}@github.com/BlackLeafDigital/zOS 2>/dev/null || true
+          git remote set-url github https://x-access-token:${{ secrets.GH_ACCESS_TOKEN }}@github.com/BlackLeafDigital/zOS
           git push --force github main
