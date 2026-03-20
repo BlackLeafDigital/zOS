@@ -60,6 +60,11 @@ dnf5 install -y "$NWG_LOOK_URL" || true
 cp /ctx/system_files/usr/share/wayland-sessions/hyprland-zos.desktop \
    /usr/share/wayland-sessions/hyprland-zos.desktop
 
+# --- Copy system-managed Hyprland configs (update with OS) ---
+mkdir -p /usr/share/zos/hypr
+cp /ctx/system_files/usr/share/zos/hypr/*.conf /usr/share/zos/hypr/
+cp /ctx/system_files/usr/share/zos/version /usr/share/zos/version
+
 # --- Copy default Hyprland configs to skeleton (new user defaults) ---
 cp -r /ctx/system_files/etc/skel/.config/hypr /etc/skel/.config/
 cp -r /ctx/system_files/etc/skel/.config/waybar /etc/skel/.config/

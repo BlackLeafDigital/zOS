@@ -24,11 +24,16 @@ mkdir -p /etc/skel/.local/bin
 cp /ctx/system_files/etc/skel/.local/bin/dnf /etc/skel/.local/bin/dnf
 chmod +x /etc/skel/.local/bin/dnf
 
-# --- System setup script (GRUB, dual-boot) ---
+# --- zos-system is built from Rust in Containerfile, already at /usr/bin/zos-system ---
+
+# --- Auto-migration systemd user service ---
+cp /ctx/system_files/usr/lib/systemd/user/zos-user-migrate.service \
+   /usr/lib/systemd/user/zos-user-migrate.service
+systemctl --global enable zos-user-migrate.service
+
+# --- Legacy scripts (kept for compatibility, absorbed by zos-system) ---
 cp /ctx/scripts/zos-setup.sh /usr/bin/zos-setup
 chmod +x /usr/bin/zos-setup
-
-# --- First-login setup script ---
 cp /ctx/scripts/zos-first-login.sh /usr/bin/zos-first-login
 chmod +x /usr/bin/zos-first-login
 

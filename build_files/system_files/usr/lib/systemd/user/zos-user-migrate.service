@@ -1,0 +1,11 @@
+[Unit]
+Description=zOS User Config Migration
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/zos-system migrate --auto
+RemainAfterExit=no
+
+[Install]
+WantedBy=default.target
