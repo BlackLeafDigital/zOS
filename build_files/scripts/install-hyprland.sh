@@ -34,14 +34,12 @@ dnf5 install -y \
     cliphist \
     wlogout \
     blueman \
-    NetworkManager-applet \
+    network-manager-applet \
     qpwgraph \
     easyeffects \
     pavucontrol \
     qt5ct \
     qt6ct \
-    qt5-qtwayland \
-    qt6-qtwayland \
     papirus-icon-theme
 
 # --- Catppuccin Mocha cursors ---
