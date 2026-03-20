@@ -31,7 +31,7 @@ dnf5 install -y \
     brightnessctl \
     playerctl \
     pamixer \
-    wdisplays \
+    nwg-displays \
     wlogout \
     blueman \
     network-manager-applet \

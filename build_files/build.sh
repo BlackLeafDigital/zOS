@@ -39,10 +39,8 @@ dnf5 install -y \
     google-noto-emoji-fonts \
     google-noto-sans-mono-fonts
 
-# --- JetBrainsMono Nerd Font (patched with icons, required by wezterm/waybar) ---
-mkdir -p /usr/share/fonts/jetbrains-mono-nerd
-curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz \
-    | tar -xJ -C /usr/share/fonts/jetbrains-mono-nerd/
+# --- JetBrainsMono Nerd Font (bundled in repo, no download needed) ---
+cp -r /ctx/system_files/usr/share/fonts/jetbrains-mono-nerd /usr/share/fonts/
 fc-cache -f /usr/share/fonts/jetbrains-mono-nerd/
 
 # --- Default wallpaper (Catppuccin Mocha gradient) ---
