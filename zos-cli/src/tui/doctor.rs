@@ -62,12 +62,10 @@ impl DoctorView {
         if self.running {
             let spinner_chars = ['|', '/', '-', '\\'];
             let spinner = spinner_chars[(self.tick as usize) % spinner_chars.len()];
-            let text = Paragraph::new(Line::from(vec![
-                Span::styled(
-                    format!("  {} Running diagnostics...", spinner),
-                    theme::accent_style(),
-                ),
-            ]))
+            let text = Paragraph::new(Line::from(vec![Span::styled(
+                format!("  {} Running diagnostics...", spinner),
+                theme::accent_style(),
+            )]))
             .block(block);
             frame.render_widget(text, area);
             return;
@@ -85,10 +83,7 @@ impl DoctorView {
 
                 ListItem::new(Line::from(vec![
                     Span::styled(format!(" {} ", icon), style),
-                    Span::styled(
-                        format!("{:<25}", check.name),
-                        theme::text_style(),
-                    ),
+                    Span::styled(format!("{:<25}", check.name), theme::text_style()),
                     Span::styled(&check.message, theme::subtext_style()),
                 ]))
             })

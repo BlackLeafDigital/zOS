@@ -4,18 +4,18 @@ ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite:stable"
 # Build context stage - scripts are mounted, not copied into final image
 FROM scratch AS ctx
 COPY build_files /
-COPY zos-system /zos-system
+COPY zos-cli /zos-cli
 
 FROM ${BASE_IMAGE}
 
-### BUILD zos-system (Rust TUI)
+### BUILD zos-cli (Rust TUI)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo && \
-    cd /ctx/zos-system && \
+    cd /ctx/zos-cli && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
-    cp /tmp/cargo-target/release/zos-system /usr/bin/zos-system && \
+    cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     dnf5 remove -y rust cargo
 
 ### BUILD ReGreet (GTK4 login greeter)

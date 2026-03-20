@@ -42,8 +42,7 @@ pub fn expand_home(rel: &str) -> PathBuf {
 pub fn read_system_version() -> Result<String> {
     let path = Path::new(SYSTEM_VERSION);
     if path.exists() {
-        let content = fs::read_to_string(path)
-            .wrap_err("Failed to read system version")?;
+        let content = fs::read_to_string(path).wrap_err("Failed to read system version")?;
         Ok(content.trim().to_string())
     } else {
         Ok("unknown".to_string())
@@ -54,10 +53,9 @@ pub fn read_system_version() -> Result<String> {
 pub fn read_user_state() -> Result<ConfigState> {
     let path = expand_home(USER_STATE_REL);
     if path.exists() {
-        let content = fs::read_to_string(&path)
-            .wrap_err("Failed to read user state")?;
-        let state: ConfigState = serde_json::from_str(&content)
-            .wrap_err("Failed to parse user state JSON")?;
+        let content = fs::read_to_string(&path).wrap_err("Failed to read user state")?;
+        let state: ConfigState =
+            serde_json::from_str(&content).wrap_err("Failed to parse user state JSON")?;
         Ok(state)
     } else {
         Ok(ConfigState::default())
@@ -68,21 +66,17 @@ pub fn read_user_state() -> Result<ConfigState> {
 pub fn write_user_state(state: &ConfigState) -> Result<()> {
     let path = expand_home(USER_STATE_REL);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .wrap_err("Failed to create state directory")?;
+        fs::create_dir_all(parent).wrap_err("Failed to create state directory")?;
     }
-    let json = serde_json::to_string_pretty(state)
-        .wrap_err("Failed to serialize state")?;
-    fs::write(&path, json)
-        .wrap_err("Failed to write user state")?;
+    let json = serde_json::to_string_pretty(state).wrap_err("Failed to serialize state")?;
+    fs::write(&path, json).wrap_err("Failed to write user state")?;
     Ok(())
 }
 
 /// Ensure the backup directory exists and return its path.
 pub fn ensure_backup_dir() -> Result<PathBuf> {
     let path = expand_home(BACKUP_DIR_REL);
-    fs::create_dir_all(&path)
-        .wrap_err("Failed to create backup directory")?;
+    fs::create_dir_all(&path).wrap_err("Failed to create backup directory")?;
     Ok(path)
 }
 

@@ -38,8 +38,8 @@ pub struct ConfigArea {
 pub fn get_system_info() -> SystemInfo {
     let os_version = config::read_system_version().unwrap_or_else(|_| "unknown".into());
 
-    let (image_name, fedora_version) = read_image_info()
-        .unwrap_or(("unknown".into(), "unknown".into()));
+    let (image_name, fedora_version) =
+        read_image_info().unwrap_or(("unknown".into(), "unknown".into()));
 
     let last_update = get_last_update().unwrap_or_else(|| "unknown".into());
 
@@ -97,10 +97,9 @@ fn read_image_info() -> Result<(String, String)> {
     if !std::path::Path::new(path).exists() {
         return Ok(("unknown".into(), "unknown".into()));
     }
-    let content = fs::read_to_string(path)
-        .wrap_err("Failed to read image-info.json")?;
-    let info: ImageInfoJson = serde_json::from_str(&content)
-        .wrap_err("Failed to parse image-info.json")?;
+    let content = fs::read_to_string(path).wrap_err("Failed to read image-info.json")?;
+    let info: ImageInfoJson =
+        serde_json::from_str(&content).wrap_err("Failed to parse image-info.json")?;
     Ok((
         info.image_name.unwrap_or_else(|| "unknown".into()),
         info.fedora_version.unwrap_or_else(|| "unknown".into()),

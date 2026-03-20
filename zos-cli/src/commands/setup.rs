@@ -146,8 +146,7 @@ pub fn mark_setup_done() -> Result<()> {
     if let Some(parent) = marker.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&marker, "done\n")
-        .wrap_err("Failed to write setup-done marker")?;
+    std::fs::write(&marker, "done\n").wrap_err("Failed to write setup-done marker")?;
     Ok(())
 }
 

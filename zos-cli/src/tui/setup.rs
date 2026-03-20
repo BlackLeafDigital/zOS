@@ -71,15 +71,9 @@ impl SetupView {
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let status_text = if self.setup_done {
-            Span::styled(
-                "  First-login setup: COMPLETE",
-                theme::pass_style(),
-            )
+            Span::styled("  First-login setup: COMPLETE", theme::pass_style())
         } else {
-            Span::styled(
-                "  First-login setup: PENDING",
-                theme::warn_style(),
-            )
+            Span::styled("  First-login setup: PENDING", theme::warn_style())
         };
 
         let block = Block::default()
@@ -88,10 +82,7 @@ impl SetupView {
             .border_style(Style::default().fg(theme::SURFACE0))
             .style(Style::default().bg(theme::BASE));
 
-        frame.render_widget(
-            Paragraph::new(Line::from(status_text)).block(block),
-            area,
-        );
+        frame.render_widget(Paragraph::new(Line::from(status_text)).block(block), area);
     }
 
     fn render_checklist(&mut self, frame: &mut Frame, area: Rect) {
@@ -212,9 +203,17 @@ impl SetupView {
         let current = self.list_state.selected().unwrap_or(0);
         let len = self.steps.len();
         let next = if delta < 0 {
-            if current == 0 { len - 1 } else { current - 1 }
+            if current == 0 {
+                len - 1
+            } else {
+                current - 1
+            }
         } else {
-            if current >= len - 1 { 0 } else { current + 1 }
+            if current >= len - 1 {
+                0
+            } else {
+                current + 1
+            }
         };
         self.list_state.select(Some(next));
     }
@@ -226,10 +225,8 @@ impl SetupView {
                 match setup::run_setup_step(&self.steps[idx]) {
                     Ok(()) => {
                         self.steps[idx].installed = true;
-                        self.message = Some((
-                            format!("Installed: {}", self.steps[idx].name),
-                            false,
-                        ));
+                        self.message =
+                            Some((format!("Installed: {}", self.steps[idx].name), false));
                     }
                     Err(e) => {
                         self.message = Some((format!("Error: {}", e), true));

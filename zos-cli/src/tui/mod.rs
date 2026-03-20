@@ -221,8 +221,7 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     }
                 }
                 Err(e) => {
-                    app.update_message =
-                        Some(format!("Error checking updates: {}", e));
+                    app.update_message = Some(format!("Error checking updates: {}", e));
                 }
             }
         }
@@ -238,8 +237,7 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
                         ));
                     } else {
                         let stderr = String::from_utf8_lossy(&output.stderr);
-                        app.update_message =
-                            Some(format!("Update failed: {}", stderr.trim()));
+                        app.update_message = Some(format!("Update failed: {}", stderr.trim()));
                     }
                 }
                 Err(e) => {
@@ -262,7 +260,7 @@ fn render(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Title bar
-            Constraint::Min(10),  // Content
+            Constraint::Min(10),   // Content
         ])
         .split(size);
 

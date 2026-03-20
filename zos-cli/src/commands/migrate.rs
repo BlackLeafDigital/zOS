@@ -2,7 +2,7 @@
 
 use crate::config;
 use chrono::Local;
-use color_eyre::eyre::{Context, Result, eyre};
+use color_eyre::eyre::{eyre, Context, Result};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -97,32 +97,17 @@ pub fn apply_migrations(actions: &mut [MigrationAction]) -> Result<()> {
                 action.applied = true;
             }
             "waybar" => {
-                apply_skel_migration(
-                    ".config/waybar",
-                    &backup_dir,
-                    &datestamp,
-                    "waybar",
-                )?;
+                apply_skel_migration(".config/waybar", &backup_dir, &datestamp, "waybar")?;
                 state.waybar = system_versions.waybar;
                 action.applied = true;
             }
             "wlogout" => {
-                apply_skel_migration(
-                    ".config/wlogout",
-                    &backup_dir,
-                    &datestamp,
-                    "wlogout",
-                )?;
+                apply_skel_migration(".config/wlogout", &backup_dir, &datestamp, "wlogout")?;
                 state.wlogout = system_versions.wlogout;
                 action.applied = true;
             }
             "zshrc" => {
-                apply_single_file_migration(
-                    ".zshrc",
-                    "/etc/skel/.zshrc",
-                    &backup_dir,
-                    &datestamp,
-                )?;
+                apply_single_file_migration(".zshrc", "/etc/skel/.zshrc", &backup_dir, &datestamp)?;
                 state.zshrc = system_versions.zshrc;
                 action.applied = true;
             }
@@ -195,10 +180,7 @@ fn read_system_config_versions() -> config::ConfigState {
     }
 }
 
-fn apply_hypr_migration(
-    backup_dir: &Path,
-    datestamp: &str,
-) -> Result<()> {
+fn apply_hypr_migration(backup_dir: &Path, datestamp: &str) -> Result<()> {
     let user_hypr_dir = config::expand_home(".config/hypr");
     let user_conf = user_hypr_dir.join("hyprland.conf");
 
@@ -221,12 +203,10 @@ fn apply_hypr_migration(
         }
     } else {
         // No config at all — copy from skel
-        fs::create_dir_all(&user_hypr_dir)
-            .wrap_err("Failed to create hypr config directory")?;
+        fs::create_dir_all(&user_hypr_dir).wrap_err("Failed to create hypr config directory")?;
         let skel_conf = Path::new(config::SKEL_HYPR_DIR).join("hyprland.conf");
         if skel_conf.exists() {
-            fs::copy(&skel_conf, &user_conf)
-                .wrap_err("Failed to copy hyprland.conf from skel")?;
+            fs::copy(&skel_conf, &user_conf).wrap_err("Failed to copy hyprland.conf from skel")?;
         }
     }
 
@@ -248,7 +228,10 @@ fn apply_hypr_migration(
                 // Create an empty placeholder with a header comment
                 fs::write(
                     &user_file,
-                    format!("# {} — zOS user overrides\n# Add your customizations here.\n", filename),
+                    format!(
+                        "# {} — zOS user overrides\n# Add your customizations here.\n",
+                        filename
+                    ),
                 )
                 .wrap_err_with(|| format!("Failed to create {}", filename))?;
             }

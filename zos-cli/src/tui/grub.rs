@@ -47,10 +47,7 @@ impl GrubView {
             GrubMode::Overview => match key.code {
                 KeyCode::Char('t') => {
                     if !grub::is_root() {
-                        self.message = Some((
-                            "Requires root. Run: sudo zos-system grub".into(),
-                            true,
-                        ));
+                        self.message = Some(("Requires root. Run: sudo zos grub".into(), true));
                     } else {
                         self.timeout_input.clear();
                         self.mode = GrubMode::SetTimeout;
@@ -58,13 +55,9 @@ impl GrubView {
                 }
                 KeyCode::Char('w') => {
                     if !grub::is_root() {
-                        self.message = Some((
-                            "Requires root. Run: sudo zos-system grub".into(),
-                            true,
-                        ));
+                        self.message = Some(("Requires root. Run: sudo zos grub".into(), true));
                     } else if !self.status.windows_detected {
-                        self.message =
-                            Some(("No Windows installation detected.".into(), true));
+                        self.message = Some(("No Windows installation detected.".into(), true));
                     } else {
                         self.mode = GrubMode::Confirm(ConfirmAction::WindowsBls);
                     }
@@ -115,7 +108,7 @@ impl GrubView {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(9),  // Status
+                Constraint::Length(9), // Status
                 Constraint::Min(4),    // Action area
                 Constraint::Length(4), // Message
                 Constraint::Length(3), // Keybinds
@@ -136,10 +129,7 @@ impl GrubView {
             .unwrap_or_else(|| "not set".into());
 
         let windows_str = if self.status.windows_detected {
-            self.status
-                .windows_path
-                .as_deref()
-                .unwrap_or("detected")
+            self.status.windows_path.as_deref().unwrap_or("detected")
         } else {
             "not detected"
         };
@@ -213,10 +203,7 @@ impl GrubView {
                         format!("  Confirm: {}?", desc),
                         theme::text_style(),
                     )),
-                    Line::from(Span::styled(
-                        "  [y] Yes  [n] No",
-                        theme::keybind_style(),
-                    )),
+                    Line::from(Span::styled("  [y] Yes  [n] No", theme::keybind_style())),
                 ])
             }
         };
@@ -270,10 +257,7 @@ impl GrubView {
             ConfirmAction::Timeout(secs) => match grub::apply_grub_timeout(*secs) {
                 Ok(()) => {
                     self.status = grub::get_grub_status();
-                    self.message = Some((
-                        format!("GRUB timeout set to {}s.", secs),
-                        false,
-                    ));
+                    self.message = Some((format!("GRUB timeout set to {}s.", secs), false));
                 }
                 Err(e) => {
                     self.message = Some((format!("Error: {}", e), true));
@@ -282,8 +266,7 @@ impl GrubView {
             ConfirmAction::WindowsBls => match grub::create_windows_bls() {
                 Ok(()) => {
                     self.status = grub::get_grub_status();
-                    self.message =
-                        Some(("Windows BLS entry created.".into(), false));
+                    self.message = Some(("Windows BLS entry created.".into(), false));
                 }
                 Err(e) => {
                     self.message = Some((format!("Error: {}", e), true));

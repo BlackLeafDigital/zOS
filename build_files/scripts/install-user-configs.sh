@@ -31,14 +31,14 @@ cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
 
-# --- zos-system is built from Rust in Containerfile, already at /usr/bin/zos-system ---
+# --- zos is built from Rust in Containerfile, already at /usr/bin/zos ---
 
 # --- Auto-migration systemd user service ---
 cp /ctx/system_files/usr/lib/systemd/user/zos-user-migrate.service \
    /usr/lib/systemd/user/zos-user-migrate.service
 systemctl --global enable zos-user-migrate.service
 
-# --- Legacy scripts (kept for compatibility, absorbed by zos-system) ---
+# --- Legacy scripts (kept for compatibility, absorbed by zos) ---
 cp /ctx/scripts/zos-setup.sh /usr/bin/zos-setup
 chmod +x /usr/bin/zos-setup
 cp /ctx/scripts/zos-first-login.sh /usr/bin/zos-first-login

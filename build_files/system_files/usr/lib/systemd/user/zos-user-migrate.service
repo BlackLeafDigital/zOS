@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/zos-system migrate --auto
+ExecStart=/usr/bin/zos migrate --auto
 RemainAfterExit=no
 
 [Install]

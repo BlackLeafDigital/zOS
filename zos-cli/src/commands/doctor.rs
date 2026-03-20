@@ -43,9 +43,18 @@ pub fn run_doctor_checks() -> Vec<DoctorCheck> {
 
 /// Summary counts: (pass, fail, warn)
 pub fn summarize(checks: &[DoctorCheck]) -> (usize, usize, usize) {
-    let pass = checks.iter().filter(|c| c.status == CheckStatus::Pass).count();
-    let fail = checks.iter().filter(|c| c.status == CheckStatus::Fail).count();
-    let warn = checks.iter().filter(|c| c.status == CheckStatus::Warn).count();
+    let pass = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Pass)
+        .count();
+    let fail = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Fail)
+        .count();
+    let warn = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Warn)
+        .count();
     (pass, fail, warn)
 }
 
@@ -137,14 +146,7 @@ fn check_pipewire() -> DoctorCheck {
 
 fn check_expected_packages() -> Vec<DoctorCheck> {
     let packages = [
-        "waybar",
-        "wofi",
-        "swaync",
-        "cliphist",
-        "swaylock",
-        "grim",
-        "slurp",
-        "wl-copy",
+        "waybar", "wofi", "swaync", "cliphist", "swaylock", "grim", "slurp", "wl-copy",
     ];
 
     packages

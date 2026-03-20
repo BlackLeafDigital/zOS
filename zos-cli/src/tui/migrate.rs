@@ -87,7 +87,10 @@ impl MigrateView {
 
                 ListItem::new(Line::from(vec![
                     Span::styled(format!(" {} ", icon), style),
-                    Span::styled(&action.area, theme::text_style().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        &action.area,
+                        theme::text_style().add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" - ", theme::subtext_style()),
                     Span::styled(&action.description, theme::subtext_style()),
                 ]))
@@ -164,9 +167,17 @@ impl MigrateView {
         let current = self.list_state.selected().unwrap_or(0);
         let len = self.actions.len();
         let next = if delta < 0 {
-            if current == 0 { len - 1 } else { current - 1 }
+            if current == 0 {
+                len - 1
+            } else {
+                current - 1
+            }
         } else {
-            if current >= len - 1 { 0 } else { current + 1 }
+            if current >= len - 1 {
+                0
+            } else {
+                current + 1
+            }
         };
         self.list_state.select(Some(next));
     }

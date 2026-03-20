@@ -1,6 +1,6 @@
 // === commands/grub.rs — GRUB bootloader management ===
 
-use color_eyre::eyre::{Context, Result, eyre};
+use color_eyre::eyre::{eyre, Context, Result};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -40,14 +40,13 @@ pub fn apply_grub_timeout(seconds: u32) -> Result<()> {
     let cfg_path = Path::new(GRUB_USER_CFG);
 
     if let Some(parent) = cfg_path.parent() {
-        fs::create_dir_all(parent)
-            .wrap_err("Failed to create GRUB config directory")?;
+        fs::create_dir_all(parent).wrap_err("Failed to create GRUB config directory")?;
     }
 
     // If user.cfg exists, update the timeout line; otherwise create it
     if cfg_path.exists() {
-        let existing = fs::read_to_string(cfg_path)
-            .wrap_err("Failed to read existing GRUB user.cfg")?;
+        let existing =
+            fs::read_to_string(cfg_path).wrap_err("Failed to read existing GRUB user.cfg")?;
         let mut found = false;
         let updated: String = existing
             .lines()
@@ -67,11 +66,9 @@ pub fn apply_grub_timeout(seconds: u32) -> Result<()> {
         } else {
             format!("{}{}", existing, content)
         };
-        fs::write(cfg_path, final_content)
-            .wrap_err("Failed to write GRUB user.cfg")?;
+        fs::write(cfg_path, final_content).wrap_err("Failed to write GRUB user.cfg")?;
     } else {
-        fs::write(cfg_path, content)
-            .wrap_err("Failed to create GRUB user.cfg")?;
+        fs::write(cfg_path, content).wrap_err("Failed to create GRUB user.cfg")?;
     }
 
     Ok(())
@@ -110,12 +107,10 @@ pub fn detect_windows() -> Option<String> {
 pub fn create_windows_bls() -> Result<()> {
     check_root()?;
 
-    let windows_path = detect_windows()
-        .ok_or_else(|| eyre!("No Windows installation detected"))?;
+    let windows_path = detect_windows().ok_or_else(|| eyre!("No Windows installation detected"))?;
 
     let bls_dir = Path::new(BLS_DIR);
-    fs::create_dir_all(bls_dir)
-        .wrap_err("Failed to create BLS entries directory")?;
+    fs::create_dir_all(bls_dir).wrap_err("Failed to create BLS entries directory")?;
 
     let entry_path = bls_dir.join("windows.conf");
     let entry_content = format!(
@@ -123,8 +118,7 @@ pub fn create_windows_bls() -> Result<()> {
         windows_path
     );
 
-    fs::write(&entry_path, entry_content)
-        .wrap_err("Failed to write Windows BLS entry")?;
+    fs::write(&entry_path, entry_content).wrap_err("Failed to write Windows BLS entry")?;
 
     Ok(())
 }
@@ -149,7 +143,9 @@ pub fn is_root() -> bool {
 
 fn check_root() -> Result<()> {
     if !is_root() {
-        Err(eyre!("This operation requires root privileges. Run with sudo."))
+        Err(eyre!(
+            "This operation requires root privileges. Run with sudo."
+        ))
     } else {
         Ok(())
     }

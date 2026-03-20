@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),  // OS info
+            Constraint::Length(8), // OS info
             Constraint::Min(8),    // Config status table
             Constraint::Length(3), // Keybind hints
         ])
@@ -84,8 +84,7 @@ fn render_config_table(frame: &mut Frame, area: Rect) {
                 Cell::from(icon).style(style),
                 Cell::from(area_item.name.as_str()).style(theme::text_style()),
                 Cell::from(format!("v{}", area_item.user_version)).style(theme::subtext_style()),
-                Cell::from(format!("v{}", area_item.system_version))
-                    .style(theme::subtext_style()),
+                Cell::from(format!("v{}", area_item.system_version)).style(theme::subtext_style()),
             ])
         })
         .collect();

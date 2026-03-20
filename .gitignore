@@ -5,4 +5,4 @@ _build-*/**
 *.qcow2
 *.iso
 *.raw
-zos-system/target
+zos-cli/target
