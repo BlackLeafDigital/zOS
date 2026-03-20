@@ -22,7 +22,8 @@ dnf5 install -y \
     yq \
     htop \
     tldr \
-    git-delta
+    git-delta \
+    liquidctl
 
 # --- eza (not in Fedora repos, install from GitHub release) ---
 curl -Lo /tmp/eza.tar.gz https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz
