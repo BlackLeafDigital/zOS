@@ -76,6 +76,8 @@ cp /ctx/system_files/usr/share/wayland-sessions/hyprland-zos.desktop \
    /usr/share/wayland-sessions/hyprland-zos.desktop
 rm -f /usr/share/wayland-sessions/hyprland.desktop
 rm -f /usr/share/wayland-sessions/hyprland-uwsm.desktop
+rm -f /usr/share/wayland-sessions/plasma.desktop
+rm -f /usr/share/xsessions/plasma.desktop
 
 # --- Copy system-managed Hyprland configs (update with OS) ---
 mkdir -p /usr/share/zos/hypr

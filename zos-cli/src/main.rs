@@ -92,7 +92,13 @@ fn main() -> Result<()> {
         }
         Some(Commands::Doctor) => tui::run(tui::View::Doctor),
         Some(Commands::Grub) => tui::run(tui::View::Grub),
-        Some(Commands::Setup) => tui::run(tui::View::Setup),
+        Some(Commands::Setup) => {
+            if commands::setup::is_root() {
+                eprintln!("Error: 'zos setup' must not run as root. Run as your normal user.");
+                std::process::exit(1);
+            }
+            tui::run(tui::View::Setup)
+        }
         Some(Commands::Update) => tui::run(tui::View::Update),
         Some(Commands::Search { name }) => commands::install::search_and_print(&name),
         Some(Commands::Install { name }) => commands::install::search_and_install(&name),

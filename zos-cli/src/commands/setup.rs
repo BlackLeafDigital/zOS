@@ -14,6 +14,22 @@ pub struct SetupStep {
     pub install_cmd: Vec<String>,
 }
 
+/// Build PATH that includes user-space tool locations.
+fn full_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let existing = std::env::var("PATH").unwrap_or_default();
+    format!(
+        "{}/.local/share/mise/shims:{}/.local/bin:/home/linuxbrew/.linuxbrew/bin:{}",
+        home, home, existing
+    )
+}
+
+/// Returns true if running as root.
+pub fn is_root() -> bool {
+    std::env::var("USER").map(|u| u == "root").unwrap_or(false)
+        || std::env::var("EUID").map(|u| u == "0").unwrap_or(false)
+}
+
 /// Check which setup steps are complete and which are pending.
 pub fn get_setup_steps() -> Vec<SetupStep> {
     vec![
@@ -101,39 +117,27 @@ pub fn get_setup_steps() -> Vec<SetupStep> {
             check_cmd: None,
             install_cmd: vec!["chsh".into(), "-s".into(), "/usr/bin/zsh".into()],
         },
-        SetupStep {
-            name: "Nerd Font".into(),
-            description: "JetBrainsMono Nerd Font for terminal".into(),
-            installed: check_nerd_font_installed(),
-            check_cmd: None,
-            install_cmd: vec![
-                "bash".into(),
-                "-c".into(),
-                "brew install font-jetbrains-mono-nerd-font".into(),
-            ],
-        },
     ]
 }
 
-/// Execute a single setup step.
+/// Execute a single setup step with inherited stdio and full PATH.
 pub fn run_setup_step(step: &SetupStep) -> Result<()> {
     if step.install_cmd.is_empty() {
         return Ok(());
     }
 
     let (program, args) = step.install_cmd.split_first().unwrap();
-    let output = Command::new(program)
+    let status = Command::new(program)
         .args(args)
-        .output()
+        .env("PATH", full_path())
+        .status()
         .wrap_err_with(|| format!("Failed to run setup step: {}", step.name))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         color_eyre::eyre::bail!(
-            "Setup step '{}' failed (exit {}): {}",
+            "Setup step '{}' failed (exit {})",
             step.name,
-            output.status.code().unwrap_or(-1),
-            stderr.trim()
+            status.code().unwrap_or(-1),
         );
     }
 
@@ -155,6 +159,7 @@ pub fn mark_setup_done() -> Result<()> {
 fn check_command_exists(cmd: &str) -> bool {
     Command::new("which")
         .arg(cmd)
+        .env("PATH", full_path())
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -163,24 +168,22 @@ fn check_command_exists(cmd: &str) -> bool {
 fn check_mise_installed(tool: &str) -> bool {
     Command::new("mise")
         .args(["which", tool])
+        .env("PATH", full_path())
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 fn is_zsh_default() -> bool {
-    std::env::var("SHELL")
-        .map(|s| s.contains("zsh"))
-        .unwrap_or(false)
-}
-
-fn check_nerd_font_installed() -> bool {
-    // Check if JetBrainsMono Nerd Font is available via fc-list
-    Command::new("fc-list")
-        .output()
-        .map(|o| {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout.contains("JetBrainsMono") && stdout.contains("Nerd")
+    let user = std::env::var("USER").unwrap_or_default();
+    if user.is_empty() {
+        return false;
+    }
+    std::fs::read_to_string("/etc/passwd")
+        .map(|s| {
+            s.lines()
+                .any(|l| l.starts_with(&format!("{}:", user)) && l.ends_with("/zsh"))
         })
         .unwrap_or(false)
 }
+
