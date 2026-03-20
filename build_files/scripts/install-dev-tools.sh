@@ -77,7 +77,7 @@ rm /tmp/xh.tar.gz
 # --- doggo (DNS client) ---
 DOGGO_VERSION=$(curl -fsSL https://api.github.com/repos/mr-karan/doggo/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
 curl -fsSL -o /tmp/doggo.tar.gz "https://github.com/mr-karan/doggo/releases/latest/download/doggo_${DOGGO_VERSION}_Linux_x86_64.tar.gz"
-tar -xzf /tmp/doggo.tar.gz -C /usr/bin/ doggo
+tar -xzf /tmp/doggo.tar.gz --strip-components=1 -C /usr/bin/ --wildcards '*/doggo'
 chmod +x /usr/bin/doggo
 rm /tmp/doggo.tar.gz
 
