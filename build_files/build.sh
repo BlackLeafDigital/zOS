@@ -39,6 +39,12 @@ dnf5 install -y \
     google-noto-emoji-fonts \
     google-noto-sans-mono-fonts
 
+# --- JetBrainsMono Nerd Font (patched with icons, required by wezterm/waybar) ---
+mkdir -p /usr/share/fonts/jetbrains-mono-nerd
+curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz \
+    | tar -xJ -C /usr/share/fonts/jetbrains-mono-nerd/
+fc-cache -f /usr/share/fonts/jetbrains-mono-nerd/
+
 # --- Enable services ---
 systemctl enable podman.socket
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket
