@@ -59,17 +59,15 @@ dnf5 install -y "$NWG_LOOK_URL" || true
 
 # --- greetd + ReGreet login ---
 dnf5 install -y greetd greetd-selinux
-if ! id greeter &>/dev/null; then
-    useradd -r -s /sbin/nologin -M -d /var/cache/regreet greeter
-fi
-usermod -aG video,input greeter
 mkdir -p /etc/greetd
 cp /ctx/system_files/etc/greetd/config.toml /etc/greetd/
 cp /ctx/system_files/etc/greetd/hyprland.conf /etc/greetd/
 cp /ctx/system_files/etc/greetd/hyprpaper.conf /etc/greetd/
 cp /ctx/system_files/etc/greetd/regreet.toml /etc/greetd/
-mkdir -p /var/cache/regreet
-chown greeter:greeter /var/cache/regreet
+# greetd RPM creates 'greetd' user via sysusers.d — add video/input groups
+cp /ctx/system_files/usr/lib/sysusers.d/zos-greetd.conf /usr/lib/sysusers.d/
+# ReGreet cache dir created at boot via tmpfiles.d
+cp /ctx/system_files/usr/lib/tmpfiles.d/zos-regreet.conf /usr/lib/tmpfiles.d/
 systemctl disable sddm || true
 systemctl enable greetd
 
