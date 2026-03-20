@@ -20,6 +20,7 @@ dnf5 install -y \
     hypridle \
     hyprpolkitagent \
     hyprpicker \
+    hyprland-guiutils \
     xdg-desktop-portal-hyprland \
     waybar \
     wofi \
@@ -55,6 +56,12 @@ rm /tmp/catppuccin-cursors.zip
 # --- nwg-look (GTK settings editor for wlroots) ---
 NWG_LOOK_URL="https://github.com/nwg-piotr/nwg-look/releases/latest/download/nwg-look-v0.2.7-1.x86_64.rpm"
 dnf5 install -y "$NWG_LOOK_URL" || true
+
+# --- SDDM single-monitor login ---
+mkdir -p /etc/sddm.conf.d
+cp /ctx/system_files/etc/sddm.conf.d/10-display.conf /etc/sddm.conf.d/
+cp /ctx/system_files/usr/share/sddm/scripts/Xsetup /usr/share/sddm/scripts/Xsetup
+chmod +x /usr/share/sddm/scripts/Xsetup
 
 # --- Copy Hyprland session file for SDDM/login screen ---
 cp /ctx/system_files/usr/share/wayland-sessions/hyprland-zos.desktop \
