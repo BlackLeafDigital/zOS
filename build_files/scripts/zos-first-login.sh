@@ -29,9 +29,13 @@ if ! command -v mise &> /dev/null; then
 fi
 
 # --- Install common dev runtimes via mise ---
-echo "[zOS] Setting up Node.js and Python..."
+echo "[zOS] Setting up Node.js, Python, Bun, Zig, PHP, and Flutter..."
 mise use --global node@lts
 mise use --global python@latest
+mise use --global bun@latest
+mise use --global zig@latest
+mise use --global php@latest
+mise use --global flutter@stable
 
 # --- Install pnpm ---
 if command -v node &> /dev/null; then

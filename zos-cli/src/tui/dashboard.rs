@@ -1,6 +1,6 @@
 // === tui/dashboard.rs — Main dashboard view ===
 
-use crate::commands::status::{get_config_status, get_system_info};
+use zos_core::commands::status::{get_config_status, get_system_info};
 use crate::tui::theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

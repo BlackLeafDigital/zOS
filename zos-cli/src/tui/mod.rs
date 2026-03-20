@@ -205,7 +205,7 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
         KeyCode::Char('c') => {
             // Check for updates
-            match crate::commands::update::check_for_updates() {
+            match zos_core::commands::update::check_for_updates() {
                 Ok(status) => {
                     if status.pending {
                         let details = status.pending_details.unwrap_or_default();
@@ -228,12 +228,12 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('a') => {
             // Apply update
             app.update_message = Some("Applying update... this may take a while.".into());
-            match crate::commands::update::apply_update() {
+            match zos_core::commands::update::apply_update() {
                 Ok(output) => {
                     if output.status.success() {
                         app.update_message = Some(format!(
                             "Update applied successfully.\n{}",
-                            crate::commands::update::reboot_message()
+                            zos_core::commands::update::reboot_message()
                         ));
                     } else {
                         let stderr = String::from_utf8_lossy(&output.stderr);

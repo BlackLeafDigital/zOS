@@ -65,7 +65,7 @@ Requires `podman` and `just`. Does NOT work in WSL (needs real Linux for contain
 | `build_files/scripts/install-user-configs.sh` | Deploys dotfiles to /etc/skel |
 | `build_files/scripts/zos-first-login.sh` | User-space setup (brew, mise, rust) — runs once per user |
 | `build_files/system_files/etc/skel/.config/` | Default user configs (hypr, waybar, wezterm, starship) |
-| `build_files/system_files/etc/skel/.zshrc` | Default zsh config |
+| `build_files/system_files/usr/share/zos/zshrc` | System-managed zsh config (sourced from /etc/zshrc, ~/.zshrc is user's) |
 | `build_files/system_files/usr/share/wayland-sessions/hyprland-zos.desktop` | SDDM session entry |
 | `disk_config/iso-kde.toml` | Anaconda ISO config for AMD |
 | `disk_config/iso-kde-nvidia.toml` | Anaconda ISO config for NVIDIA |

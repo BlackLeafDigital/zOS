@@ -48,6 +48,10 @@ fc-cache -f /usr/share/fonts/jetbrains-mono-nerd/
 mkdir -p /usr/share/zos
 magick -size 3840x2160 gradient:'#1e1e2e'-'#181825' /usr/share/zos/wallpaper.png
 
+# --- liquidctl udev rules (Fedora RPM doesn't ship them) ---
+curl -fsSL -o /etc/udev/rules.d/71-liquidctl.rules \
+    https://raw.githubusercontent.com/liquidctl/liquidctl/main/extra/linux/71-liquidctl.rules
+
 # --- Enable services ---
 systemctl enable podman.socket
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket

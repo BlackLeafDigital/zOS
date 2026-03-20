@@ -14,12 +14,53 @@ dnf5 install -y \
     cmake \
     clang \
     llvm \
+    llvm-devel \
+    clang-devel \
+    rust \
+    cargo \
     openssl-devel \
     pkg-config \
     python3-pip \
     python3-devel \
     golang \
     ShellCheck
+
+# --- GUI / GTK / Wayland dev libraries ---
+dnf5 install -y \
+    gtk3-devel \
+    gtk4-devel \
+    libadwaita-devel \
+    webkit2gtk4.1-devel \
+    libsoup3-devel \
+    javascriptcoregtk4.1-devel \
+    glib2-devel \
+    wayland-devel \
+    libX11-devel \
+    libxcb-devel \
+    libinput-devel \
+    vulkan-loader-devel \
+    dbus-devel \
+    pango-devel \
+    cairo-devel \
+    gdk-pixbuf2-devel
+
+# --- Multimedia dev libraries ---
+# Runtime libs already in Bazzite; these are the -devel headers
+# Note: ffmpeg-devel, x264-devel, x265-devel, libfdk-aac-devel, pipewire-devel
+# conflict with Bazzite's custom builds (excluded/filtered packages)
+dnf5 install -y \
+    libdav1d-devel \
+    opus-devel \
+    libvorbis-devel \
+    lame-devel \
+    pulseaudio-libs-devel \
+    alsa-lib-devel
+
+# --- Android / mobile dev ---
+# Note: bluez-libs-devel conflicts with Bazzite's custom bluez build
+dnf5 install -y \
+    android-tools \
+    java-21-openjdk-devel
 
 # --- Container + system tools ---
 # Note: buildah, skopeo, distrobox already in Bazzite

@@ -1,6 +1,6 @@
 // === tui/migrate.rs — Migration view with selection and apply ===
 
-use crate::commands::migrate::{apply_migrations, plan_migrations, MigrationAction};
+use zos_core::commands::migrate::{apply_migrations, plan_migrations, MigrationAction};
 use crate::tui::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{

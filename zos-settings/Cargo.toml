@@ -1,0 +1,10 @@
+[package]
+name = "zos-settings"
+version = "0.1.0"
+edition = "2021"
+description = "GTK4/Adwaita settings application for zOS"
+
+[dependencies]
+zos-core = { path = "../zos-core" }
+gtk4 = "0.9"
+libadwaita = { version = "0.7", features = ["v1_4"] }

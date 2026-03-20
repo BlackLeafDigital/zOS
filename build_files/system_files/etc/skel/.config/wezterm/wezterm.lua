@@ -61,27 +61,33 @@ config.keys = {
 	{ key = "k", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Up") },
 	{ key = "j", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Down") },
 
-	-- Tabs
+	-- Tabs (Ctrl+T new tab, Ctrl+W close, Ctrl+Tab/Ctrl+Shift+Tab cycle)
+	{ key = "t", mods = "CTRL", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
 	{ key = "t", mods = "SUPER", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
+	{ key = "w", mods = "CTRL", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "w", mods = "SUPER", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
+	{ key = "Tab", mods = "CTRL", action = wezterm.action.ActivateTabRelative(1) },
+	{ key = "Tab", mods = "CTRL|SHIFT", action = wezterm.action.ActivateTabRelative(-1) },
 
-	-- Navigate tabs by number
-	{ key = "1", mods = "SUPER", action = wezterm.action.ActivateTab(0) },
-	{ key = "2", mods = "SUPER", action = wezterm.action.ActivateTab(1) },
-	{ key = "3", mods = "SUPER", action = wezterm.action.ActivateTab(2) },
-	{ key = "4", mods = "SUPER", action = wezterm.action.ActivateTab(3) },
-	{ key = "5", mods = "SUPER", action = wezterm.action.ActivateTab(4) },
-	{ key = "6", mods = "SUPER", action = wezterm.action.ActivateTab(5) },
-	{ key = "7", mods = "SUPER", action = wezterm.action.ActivateTab(6) },
-	{ key = "8", mods = "SUPER", action = wezterm.action.ActivateTab(7) },
-	{ key = "9", mods = "SUPER", action = wezterm.action.ActivateTab(8) },
+	-- Navigate tabs by number (Ctrl+Alt+# since SUPER+# is Hyprland workspaces)
+	{ key = "1", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(0) },
+	{ key = "2", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(1) },
+	{ key = "3", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(2) },
+	{ key = "4", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(3) },
+	{ key = "5", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(4) },
+	{ key = "6", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(5) },
+	{ key = "7", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(6) },
+	{ key = "8", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(7) },
+	{ key = "9", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(8) },
 
 	-- Font size
 	{ key = "=", mods = "SUPER", action = wezterm.action.IncreaseFontSize },
 	{ key = "-", mods = "SUPER", action = wezterm.action.DecreaseFontSize },
 	{ key = "0", mods = "SUPER", action = wezterm.action.ResetFontSize },
 
-	-- Copy/paste
+	-- Copy/paste (Ctrl+Shift is standard Linux terminal, SUPER for macOS-like)
+	{ key = "c", mods = "CTRL|SHIFT", action = wezterm.action.CopyTo("Clipboard") },
+	{ key = "v", mods = "CTRL|SHIFT", action = wezterm.action.PasteFrom("Clipboard") },
 	{ key = "c", mods = "SUPER", action = wezterm.action.CopyTo("Clipboard") },
 	{ key = "v", mods = "SUPER", action = wezterm.action.PasteFrom("Clipboard") },
 

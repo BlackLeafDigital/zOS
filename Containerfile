@@ -5,19 +5,25 @@ ARG GH_TOKEN=""
 # Build context stage - scripts are mounted, not copied into final image
 FROM scratch AS ctx
 COPY build_files /
+COPY Cargo.toml /Cargo.toml
+COPY Cargo.lock /Cargo.lock
+COPY zos-core /zos-core
 COPY zos-cli /zos-cli
+COPY zos-settings /zos-settings
 
 FROM ${BASE_IMAGE}
 
-### BUILD zos-cli (Rust TUI)
+### BUILD Rust workspace (zos-cli + zos-settings)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo && \
-    cd /ctx/zos-cli && \
-    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel && \
+    cd /ctx && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
+    cargo build --release -p zos -p zos-settings && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
-    dnf5 remove -y rust cargo
+    cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
+    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel
 
 ### BUILD ReGreet (GTK4 login greeter)
 ARG GH_TOKEN

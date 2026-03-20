@@ -13,8 +13,25 @@ cp -r /ctx/system_files/etc/skel/.config/wezterm /etc/skel/.config/
 mkdir -p /etc/skel/.config
 cp /ctx/system_files/etc/skel/.config/starship.toml /etc/skel/.config/
 
-# --- Shell configuration ---
+# --- Shell configuration (system-level, not in skel — ~/.zshrc is the user's) ---
+mkdir -p /usr/share/zos
+cp /ctx/system_files/usr/share/zos/zshrc /usr/share/zos/zshrc
+
+# Source zOS config from global zshrc (loaded before ~/.zshrc)
+echo '' >> /etc/zshrc
+echo '# --- zOS shell configuration ---' >> /etc/zshrc
+echo '[ -f /usr/share/zos/zshrc ] && source /usr/share/zos/zshrc' >> /etc/zshrc
+
+# --- Oh My Zsh + Powerlevel10k (baked into skel for instant setup) ---
+export ZSH="/etc/skel/.oh-my-zsh"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+git clone --depth 1 https://github.com/zsh-users/zsh-autosuggestions ${ZSH}/custom/plugins/zsh-autosuggestions
+git clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting ${ZSH}/custom/plugins/zsh-syntax-highlighting
+git clone --depth 1 https://github.com/romkatv/powerlevel10k.git ${ZSH}/custom/themes/powerlevel10k
+
+# --- User .zshrc and .p10k.zsh ---
 cp /ctx/system_files/etc/skel/.zshrc /etc/skel/.zshrc
+cp /ctx/system_files/etc/skel/.p10k.zsh /etc/skel/.p10k.zsh
 
 # --- Git config (with delta integration + multi-account template) ---
 cp /ctx/system_files/etc/skel/.gitconfig /etc/skel/.gitconfig
@@ -26,6 +43,11 @@ chmod +x /etc/skel/.local/bin/dnf
 
 # --- Hyprpaper config (default wallpaper) ---
 cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr/
+
+# --- PipeWire virtual audio devices (VoiceMeeter-style routing) ---
+mkdir -p /etc/skel/.config/pipewire/pipewire.conf.d
+cp /ctx/system_files/etc/skel/.config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf \
+   /etc/skel/.config/pipewire/pipewire.conf.d/
 
 # --- System limits (nofile, nproc, memlock, core) ---
 mkdir -p /etc/security/limits.d
