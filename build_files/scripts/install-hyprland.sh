@@ -59,7 +59,9 @@ dnf5 install -y "$NWG_LOOK_URL" || true
 
 # --- greetd + ReGreet login ---
 dnf5 install -y greetd greetd-selinux
-useradd -r -s /sbin/nologin -M greeter || true
+if ! id greeter &>/dev/null; then
+    useradd -r -s /sbin/nologin -M -d /var/cache/regreet greeter
+fi
 usermod -aG video,input greeter
 mkdir -p /etc/greetd
 cp /ctx/system_files/etc/greetd/config.toml /etc/greetd/
