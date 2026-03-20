@@ -7,12 +7,13 @@ Built on [Bazzite](https://bazzite.gg/) (Fedora Atomic), delivered as a bootable
 ## What's Included
 
 ### Desktop
-- **KDE Plasma 6** — primary desktop environment, highly customizable
-- **Hyprland** — optional tiling window manager, selectable at login screen
-- **Catppuccin Mocha** — consistent theme across Hyprland, Waybar, Wezterm
+- **Hyprland** — tiling window manager with Windows/macOS-friendly keybinds
+- **greetd + ReGreet** — GTK4 login screen with per-monitor wallpaper
+- **Catppuccin Mocha** — consistent dark theme across everything
+- **System dark mode** — GTK, Qt, and Flatpak apps all respect dark preference
 
 ### Terminal & Shell
-- **Wezterm** — GPU-accelerated terminal with built-in multiplexer (tabs + splits, like iTerm2)
+- **Wezterm** — GPU-accelerated terminal with tabs + splits (iTerm2-style keys)
 - **Zsh** — default shell with sane defaults
 - **Starship** — fast cross-shell prompt with git/language context
 - **Modern CLI tools** — `eza`, `bat`, `ripgrep`, `fd`, `fzf`, `zoxide`, `btop`, `delta`
@@ -28,20 +29,19 @@ Built on [Bazzite](https://bazzite.gg/) (Fedora Atomic), delivered as a bootable
 - Docker + Podman + Buildah
 - Distrobox (run any distro's packages in containers)
 - GCC, Clang, CMake, Go, ShellCheck
-- **First-login setup** installs: Homebrew, mise, Node.js LTS, Python, pnpm, uv, Rust, GitHub CLI
+- **First-login setup** (`zos setup`): Homebrew, mise, Node.js LTS, Python, pnpm, uv, Rust, GitHub CLI
 
 ### Fonts
-- JetBrains Mono (system-wide)
+- JetBrains Mono + JetBrainsMono Nerd Font (system-wide)
 - Fira Code
 - Noto Sans/Serif/Emoji
-- JetBrainsMono Nerd Font (installed per-user on first login)
 
 ## Image Variants
 
 | Image | GPU Drivers | Install Command |
 |-------|-------------|-----------------|
-| `zos` | AMD (open source, Mesa) | `sudo bootc switch ghcr.io/zachhandley/zos:latest` |
-| `zos-nvidia` | NVIDIA (proprietary) | `sudo bootc switch ghcr.io/zachhandley/zos-nvidia:latest` |
+| `zos` | AMD (open source, Mesa) | `sudo bootc switch ghcr.io/blackleafdigital/zos:latest` |
+| `zos-nvidia` | NVIDIA (proprietary) | `sudo bootc switch ghcr.io/blackleafdigital/zos-nvidia:latest` |
 
 Both variants ship identical software — only the GPU driver stack differs.
 
@@ -51,10 +51,10 @@ Both variants ship identical software — only the GPU driver stack differs.
 
 ```bash
 # AMD GPU
-sudo bootc switch ghcr.io/zachhandley/zos:latest
+sudo bootc switch ghcr.io/blackleafdigital/zos:latest
 
 # NVIDIA GPU
-sudo bootc switch ghcr.io/zachhandley/zos-nvidia:latest
+sudo bootc switch ghcr.io/blackleafdigital/zos-nvidia:latest
 ```
 
 Reboot when the switch completes. Your home directory and user data are preserved.
@@ -69,18 +69,28 @@ Reboot when the switch completes. Your home directory and user data are preserve
 
 ### First login
 
-On first login, run `zos-first-login` (or it runs automatically if configured). This installs user-space tools:
+Run `zos setup` to install user-space dev tools:
 
 - Homebrew (CLI package manager)
-- mise (runtime version manager — manages Node.js, Python, etc.)
+- mise (runtime version manager — Node.js, Python, Go, etc.)
 - Node.js LTS + pnpm
 - Python + uv
 - Rust toolchain
 - GitHub CLI
-- JetBrainsMono Nerd Font
 - Sets zsh as default shell
 
-This only runs once (tracked by `~/.config/zos-setup-done`).
+### Installing software
+
+zOS is immutable — no `dnf` at runtime. Install software with:
+
+| What | How |
+|------|-----|
+| GUI apps | `flatpak install flathub <app>` |
+| Dev runtimes | `mise install node`, `mise install python` |
+| CLI tools | `brew install <tool>` |
+| Full Linux envs | `distrobox create --name dev --image fedora:43` |
+
+Or use `zos search <name>` / `zos install <name>` to search all sources at once.
 
 ## Updates & Rollback
 
@@ -99,59 +109,37 @@ sudo bootc status
 
 Daily automatic rebuilds ensure you get the latest Bazzite base + Fedora security patches.
 
-## Building Locally
+## Keybindings
 
-Requires `podman` and [`just`](https://github.com/casey/just).
-
-```bash
-# Build AMD image
-just build
-
-# Build NVIDIA image
-just build-nvidia
-
-# Build a VM disk image (QCOW2)
-just build-qcow2
-
-# Boot the VM
-just run-vm
-
-# Build an installable ISO
-just build-iso
-
-# Lint build scripts
-just lint
-
-# Clean build artifacts
-just clean
-```
-
-## Desktop Sessions
-
-At the SDDM login screen, you can choose between:
-
-| Session | Description |
-|---------|-------------|
-| **Plasma (Wayland)** | KDE Plasma 6 — full desktop with taskbar, system tray, app menu |
-| **Hyprland (zOS)** | Tiling WM — keyboard-driven, vim-style navigation, Waybar status bar |
-
-### Hyprland Keybindings (highlights)
+### Desktop (Hyprland)
 
 | Key | Action |
 |-----|--------|
-| `Super + Return` | Open Wezterm |
-| `Super + D` | App launcher (wofi) |
+| `Super + Space` | App launcher |
+| `Super + T` / `Return` | Terminal (Wezterm) |
+| `Super + E` | File manager |
 | `Super + Q` | Close window |
-| `Super + H/J/K/L` | Navigate windows (vim-style) |
+| `Super + D` | Show desktop |
+| `Super + L` | Lock screen |
+| `Super + F` | Fullscreen |
+| `Super + M` / `Down` | Minimize window |
+| `Super + Up` | Maximize window |
+| `Super + Arrow keys` | Navigate windows |
+| `Super + Shift + Arrows` | Move window |
+| `Super + Alt + Left/Right` | Move window to next monitor |
+| `Super + Ctrl + Arrows` | Resize window |
 | `Super + 1-9` | Switch workspace |
 | `Super + Shift + 1-9` | Move window to workspace |
 | `Super + V` | Toggle floating |
-| `Super + F` | Fullscreen |
+| `Super + N` | Notifications |
+| `Super + Shift + V` | Clipboard history |
+| `Super + Shift + D` | Display settings (saves layout) |
+| `Super + Shift + E` | Power menu |
+| `Super + F1` | Show all keybindings |
 | `Print` | Screenshot region |
+| `Super + hold mouse` | Drag to move/resize windows |
 
-Full config: `~/.config/hypr/hyprland.conf`
-
-### Wezterm Keybindings (highlights)
+### Terminal (Wezterm)
 
 | Key | Action |
 |-----|--------|
@@ -161,37 +149,69 @@ Full config: `~/.config/hypr/hyprland.conf`
 | `Super + W` | Close pane |
 | `Super + 1-9` | Switch to tab |
 | `Super + Alt + H/J/K/L` | Navigate panes |
+| `Super + F` | Search |
 
-Full config: `~/.config/wezterm/wezterm.lua`
+Full configs: `~/.config/hypr/` and `~/.config/wezterm/`
+
+## The `zos` CLI
+
+```bash
+zos                    # TUI dashboard
+zos setup              # First-login dev tool setup
+zos doctor             # System health diagnostics
+zos grub               # GRUB/dual-boot configuration
+zos migrate            # Config migration after OS updates
+zos update             # Check and apply OS updates
+zos search <name>      # Search Flatpak, Brew, and mise
+zos install <name>     # Install from the best available source
+```
+
+## Building Locally
+
+Requires `podman` and [`just`](https://github.com/casey/just).
+
+```bash
+just build             # Build AMD image
+just build-nvidia      # Build NVIDIA image
+just build-qcow2       # Build a VM disk image (QCOW2)
+just run-vm            # Boot the VM
+just build-iso         # Build an installable ISO
+just lint              # Lint build scripts
+just clean             # Clean build artifacts
+```
 
 ## Repo Structure
 
 ```
 zOS/
-├── Containerfile                        # Image build definition (single file, both variants)
+├── Containerfile                        # Image build definition (both variants)
 ├── Justfile                             # Local build/test commands
-├── .github/workflows/
-│   ├── build.yml                        # CI: builds zos + zos-nvidia daily, pushes to GHCR
+├── zos-cli/                             # Rust CLI tool (zos command)
+│   ├── Cargo.toml
+│   └── src/
+├── .forgejo/workflows/
+│   ├── build.yml                        # CI: builds zos + zos-nvidia, pushes to GHCR
 │   └── build-disk.yml                   # Manual: builds ISO/QCOW2 disk images
 ├── build_files/
 │   ├── build.sh                         # Core packages: CLI tools, fonts, services
 │   ├── scripts/
-│   │   ├── install-hyprland.sh          # Hyprland + waybar, wofi, mako, etc.
+│   │   ├── install-hyprland.sh          # Hyprland + greetd + ecosystem
 │   │   ├── install-dev-tools.sh         # Compilers, container tools, distrobox
 │   │   ├── install-user-configs.sh      # Copies dotfiles to /etc/skel
-│   │   └── zos-first-login.sh           # User-space setup (brew, mise, rust, etc.)
+│   │   └── zos-first-login.sh           # Legacy first-login script
 │   └── system_files/
+│       ├── etc/greetd/                  # Login screen config (greetd + ReGreet)
 │       ├── etc/skel/.config/
-│       │   ├── hypr/hyprland.conf       # Hyprland config (Catppuccin, vim keys)
-│       │   ├── waybar/config.jsonc      # Waybar modules and layout
-│       │   ├── waybar/style.css         # Waybar Catppuccin theme
-│       │   ├── wezterm/wezterm.lua      # Wezterm config (GPU, splits, iTerm2 keys)
-│       │   └── starship.toml            # Starship prompt config
-│       ├── etc/skel/.zshrc              # Zsh config (aliases, zoxide, fzf, starship)
-│       └── usr/share/wayland-sessions/
-│           └── hyprland-zos.desktop     # SDDM session entry for Hyprland
+│       │   ├── hypr/                    # Hyprland user config
+│       │   ├── waybar/                  # Waybar modules and theme
+│       │   ├── wezterm/                 # Wezterm terminal config
+│       │   └── starship.toml            # Prompt config
+│       ├── etc/skel/.zshrc              # Zsh config (aliases, integrations)
+│       └── usr/share/zos/
+│           ├── hypr/*.conf              # System-managed Hyprland configs
+│           └── scripts/                 # Helper scripts (monitor save, etc.)
 └── disk_config/
-    ├── disk.toml                        # QCOW2 VM disk layout (40GB root)
+    ├── disk.toml                        # QCOW2 VM disk layout
     ├── iso-kde.toml                     # Anaconda ISO config (AMD)
     └── iso-kde-nvidia.toml              # Anaconda ISO config (NVIDIA)
 ```
@@ -200,29 +220,18 @@ zOS/
 
 1. `Containerfile` extends a Bazzite base image using a multi-stage build
 2. Build scripts are **mounted** (not copied) via a `scratch` stage — they don't bloat the final image
-3. `build.sh` and `scripts/*.sh` run `dnf5 install` and `cp` commands to customize the image
-4. Files in `system_files/` get copied to their target locations in the image
-5. `/etc/skel/` files become defaults for new users
-6. GitHub Actions builds both variants daily and publishes signed images to GHCR
-7. Users receive updates via `bootc upgrade` (or automatic background updates)
-
-## GitHub Setup
-
-To enable CI builds on your fork:
-
-1. **Generate cosign keypair:**
-   ```bash
-   cosign generate-key-pair
-   ```
-2. **Add `SIGNING_SECRET`** — Go to repo Settings > Secrets > Actions, add the contents of `cosign.key` as `SIGNING_SECRET`
-3. **Add `cosign.pub`** — Commit the public key to the repo root (already in `.gitignore` for the private key)
-4. **Enable Actions** — The `build.yml` workflow triggers on push to `main`
+3. `build.sh` and `scripts/*.sh` install packages and copy configs into the image
+4. `zos-cli` is compiled from Rust source during the build
+5. ReGreet (login greeter) is compiled from source during the build
+6. `/etc/skel/` files become defaults for new users
+7. Forgejo Actions builds both variants daily and publishes images to GHCR
+8. Users receive updates via `bootc upgrade` (or automatic background updates)
 
 ## Upstream
 
 - **Base OS**: [Bazzite](https://bazzite.gg/) (Fedora Atomic + gaming optimizations)
 - **Build system**: [ublue-os/image-template](https://github.com/ublue-os/image-template) pattern
-- **Desktop**: [KDE Plasma 6](https://kde.org/plasma-desktop/) + [Hyprland](https://hyprland.org/)
+- **Desktop**: [Hyprland](https://hyprland.org/)
 - **Theme**: [Catppuccin Mocha](https://catppuccin.com/)
 
 ## License

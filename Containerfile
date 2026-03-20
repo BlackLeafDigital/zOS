@@ -25,6 +25,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo gtk4-devel git && \
+    touch /root/.gitconfig && \
     if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
     git clone --depth 1 https://github.com/rharish101/ReGreet.git /tmp/regreet && \
     cd /tmp/regreet && \
