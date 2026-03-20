@@ -12,12 +12,10 @@ FROM ${BASE_IMAGE}
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-    source $HOME/.cargo/env && \
+    export PATH="$HOME/.cargo/bin:$PATH" && \
     cd /ctx/zos-system && \
     cargo build --release && \
-    cp target/release/zos-system /usr/bin/zos-system && \
-    rustup self uninstall -y
+    cp target/release/zos-system /usr/bin/zos-system
 
 ### MODIFICATIONS
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
