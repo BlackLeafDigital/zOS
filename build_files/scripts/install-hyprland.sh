@@ -59,6 +59,8 @@ dnf5 install -y "$NWG_LOOK_URL" || true
 # --- Copy Hyprland session file for SDDM/login screen ---
 cp /ctx/system_files/usr/share/wayland-sessions/hyprland-zos.desktop \
    /usr/share/wayland-sessions/hyprland-zos.desktop
+rm -f /usr/share/wayland-sessions/hyprland.desktop
+rm -f /usr/share/wayland-sessions/hyprland-uwsm.desktop
 
 # --- Copy system-managed Hyprland configs (update with OS) ---
 mkdir -p /usr/share/zos/hypr

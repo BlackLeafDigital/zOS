@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Hyprland (zOS)
 Comment=zOS Hyprland tiling session
-Exec=Hyprland
+Exec=start-hyprland
 Type=Application
 DesktopNames=Hyprland
