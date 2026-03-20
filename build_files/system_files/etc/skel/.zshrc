@@ -25,6 +25,11 @@ alias grep='rg'
 alias find='fd'
 alias diff='delta'
 alias top='btop'
+alias du='dust'
+alias df='duf'
+alias ps='procs'
+alias http='xh'
+alias dig='doggo'
 alias ..='cd ..'
 alias ...='cd ../..'
 
@@ -37,25 +42,12 @@ alias gl='git log --oneline --graph -20'
 alias gd='git diff'
 alias gco='git checkout'
 alias gb='git branch'
+alias lg='lazygit'
+alias ld='lazydocker'
 
 # --- Docker/Podman ---
 alias docker='podman'
 alias dc='podman-compose'
-
-# --- zoxide (smart cd) ---
-if command -v zoxide &> /dev/null; then
-    eval "$(zoxide init zsh)"
-fi
-
-# --- fzf ---
-if command -v fzf &> /dev/null; then
-    source <(fzf --zsh) 2>/dev/null || true
-fi
-
-# --- Starship prompt ---
-if command -v starship &> /dev/null; then
-    eval "$(starship init zsh)"
-fi
 
 # --- Homebrew (if installed via first-login) ---
 if [ -d "$HOME/.linuxbrew" ]; then
@@ -67,4 +59,29 @@ fi
 # --- mise (dev tool version manager) ---
 if command -v mise &> /dev/null; then
     eval "$(mise activate zsh)"
+fi
+
+# --- zoxide (smart cd) ---
+if command -v zoxide &> /dev/null; then
+    eval "$(zoxide init zsh)"
+fi
+
+# --- fzf ---
+if command -v fzf &> /dev/null; then
+    source <(fzf --zsh) 2>/dev/null || true
+fi
+
+# --- atuin (shell history search) ---
+if command -v atuin &> /dev/null; then
+    eval "$(atuin init zsh)"
+fi
+
+# --- direnv (per-directory env vars) ---
+if command -v direnv &> /dev/null; then
+    eval "$(direnv hook zsh)"
+fi
+
+# --- Starship prompt (keep last — modifies PS1) ---
+if command -v starship &> /dev/null; then
+    eval "$(starship init zsh)"
 fi

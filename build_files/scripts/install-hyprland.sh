@@ -31,7 +31,6 @@ dnf5 install -y \
     playerctl \
     pamixer \
     wdisplays \
-    cliphist \
     wlogout \
     blueman \
     network-manager-applet \
@@ -41,6 +40,11 @@ dnf5 install -y \
     qt5ct \
     qt6ct \
     papirus-icon-theme
+
+# --- cliphist (clipboard history, not in Fedora 43 repos) ---
+CLIPHIST_VERSION=$(curl -fsSL https://api.github.com/repos/sentriz/cliphist/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL -o /usr/bin/cliphist "https://github.com/sentriz/cliphist/releases/download/v${CLIPHIST_VERSION}/v${CLIPHIST_VERSION}-linux-amd64"
+chmod +x /usr/bin/cliphist
 
 # --- Catppuccin Mocha cursors ---
 CURSOR_URL="https://github.com/catppuccin/cursors/releases/latest/download/catppuccin-mocha-dark-cursors.zip"
