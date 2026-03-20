@@ -18,6 +18,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/zos-system /usr/bin/zos-system && \
     dnf5 remove -y rust cargo
 
+### BUILD ReGreet (GTK4 login greeter)
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=tmpfs,dst=/tmp \
+    dnf5 install -y rust cargo gtk4-devel git && \
+    git clone --depth 1 https://github.com/rharish101/ReGreet.git /tmp/regreet && \
+    cd /tmp/regreet && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
+    cp /tmp/cargo-target/release/regreet /usr/bin/regreet && \
+    dnf5 remove -y rust cargo gtk4-devel git
+
 ### MODIFICATIONS
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

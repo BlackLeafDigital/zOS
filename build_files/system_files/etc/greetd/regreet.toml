@@ -1,0 +1,9 @@
+[background]
+path = "/usr/share/zos/wallpaper.png"
+fit = "Cover"
+
+[GTK]
+application_prefer_dark_theme = true
+cursor_theme_name = "catppuccin-mocha-dark-cursors"
+font_name = "JetBrains Mono 12"
+theme_name = "Adwaita-dark"

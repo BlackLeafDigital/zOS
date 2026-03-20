@@ -45,6 +45,10 @@ curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetB
     | tar -xJ -C /usr/share/fonts/jetbrains-mono-nerd/
 fc-cache -f /usr/share/fonts/jetbrains-mono-nerd/
 
+# --- Default wallpaper (Catppuccin Mocha gradient) ---
+mkdir -p /usr/share/zos
+magick -size 3840x2160 gradient:'#1e1e2e'-'#181825' /usr/share/zos/wallpaper.png
+
 # --- Enable services ---
 systemctl enable podman.socket
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket

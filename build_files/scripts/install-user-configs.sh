@@ -24,6 +24,9 @@ mkdir -p /etc/skel/.local/bin
 cp /ctx/system_files/etc/skel/.local/bin/dnf /etc/skel/.local/bin/dnf
 chmod +x /etc/skel/.local/bin/dnf
 
+# --- Hyprpaper config (default wallpaper) ---
+cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr/
+
 # --- System limits (nofile, nproc, memlock, core) ---
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/

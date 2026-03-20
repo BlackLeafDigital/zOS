@@ -57,13 +57,21 @@ rm /tmp/catppuccin-cursors.zip
 NWG_LOOK_URL="https://github.com/nwg-piotr/nwg-look/releases/latest/download/nwg-look-v0.2.7-1.x86_64.rpm"
 dnf5 install -y "$NWG_LOOK_URL" || true
 
-# --- SDDM single-monitor login ---
-mkdir -p /etc/sddm.conf.d
-cp /ctx/system_files/etc/sddm.conf.d/10-display.conf /etc/sddm.conf.d/
-cp /ctx/system_files/usr/share/sddm/scripts/Xsetup /usr/share/sddm/scripts/Xsetup
-chmod +x /usr/share/sddm/scripts/Xsetup
+# --- greetd + ReGreet login ---
+dnf5 install -y greetd greetd-selinux
+useradd -r -s /sbin/nologin -M greeter || true
+usermod -aG video,input greeter
+mkdir -p /etc/greetd
+cp /ctx/system_files/etc/greetd/config.toml /etc/greetd/
+cp /ctx/system_files/etc/greetd/hyprland.conf /etc/greetd/
+cp /ctx/system_files/etc/greetd/hyprpaper.conf /etc/greetd/
+cp /ctx/system_files/etc/greetd/regreet.toml /etc/greetd/
+mkdir -p /var/cache/regreet
+chown greeter:greeter /var/cache/regreet
+systemctl disable sddm || true
+systemctl enable greetd
 
-# --- Copy Hyprland session file for SDDM/login screen ---
+# --- Copy Hyprland session file for greetd ---
 cp /ctx/system_files/usr/share/wayland-sessions/hyprland-zos.desktop \
    /usr/share/wayland-sessions/hyprland-zos.desktop
 rm -f /usr/share/wayland-sessions/hyprland.desktop
