@@ -30,10 +30,16 @@ dnf5 install -y \
     direnv
 
 # --- Modern CLI tools (Fedora repos) ---
+# Note: duf already in Bazzite
 dnf5 install -y \
-    du-dust \
-    duf \
-    rust-procs
+    du-dust
+
+# --- procs (ps replacement, not in Fedora 43 repos) ---
+PROCS_VERSION=$(curl -fsSL https://api.github.com/repos/dalance/procs/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL -o /tmp/procs.zip "https://github.com/dalance/procs/releases/latest/download/procs-v${PROCS_VERSION}-x86_64-linux.zip"
+unzip -o /tmp/procs.zip -d /usr/bin/
+chmod +x /usr/bin/procs
+rm /tmp/procs.zip
 
 # --- atuin (shell history search) ---
 curl -fsSL -o /usr/bin/atuin https://github.com/atuinsh/atuin/releases/latest/download/atuin-x86_64-unknown-linux-musl
