@@ -31,7 +31,6 @@ dnf5 install -y \
     brightnessctl \
     playerctl \
     pamixer \
-    nwg-displays \
     wlogout \
     blueman \
     network-manager-applet \
@@ -54,6 +53,13 @@ CURSOR_URL="https://github.com/catppuccin/cursors/releases/latest/download/catpp
 curl -fsSL -o /tmp/catppuccin-cursors.zip "$CURSOR_URL"
 unzip -o /tmp/catppuccin-cursors.zip -d /usr/share/icons/
 rm /tmp/catppuccin-cursors.zip
+
+# --- nwg-displays (Hyprland monitor config GUI, not in Fedora repos) ---
+dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
+git clone --depth 1 https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
+cd /tmp/nwg-displays && python3 -m build --wheel --no-isolation
+python3 -m installer --destdir=/ dist/*.whl
+cd / && rm -rf /tmp/nwg-displays
 
 # --- nwg-look (GTK settings editor for wlroots) ---
 NWG_LOOK_URL="https://github.com/nwg-piotr/nwg-look/releases/latest/download/nwg-look-v0.2.7-1.x86_64.rpm"
