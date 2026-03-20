@@ -90,10 +90,6 @@ rm -f /usr/share/xsessions/plasma.desktop
 mkdir -p /usr/share/zos/hypr
 cp /ctx/system_files/usr/share/zos/hypr/*.conf /usr/share/zos/hypr/
 cp /ctx/system_files/usr/share/zos/version /usr/share/zos/version
-mkdir -p /usr/share/zos/scripts
-cp /ctx/system_files/usr/share/zos/scripts/*.sh /usr/share/zos/scripts/
-chmod +x /usr/share/zos/scripts/*.sh
-
 # --- Copy default Hyprland configs to skeleton (new user defaults) ---
 cp -r /ctx/system_files/etc/skel/.config/hypr /etc/skel/.config/
 cp -r /ctx/system_files/etc/skel/.config/waybar /etc/skel/.config/
