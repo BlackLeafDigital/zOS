@@ -57,7 +57,7 @@ rm /tmp/catppuccin-cursors.zip
 # --- nwg-displays (Hyprland monitor config GUI, not in Fedora repos) ---
 dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
 git clone --depth 1 https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
-cd /tmp/nwg-displays && ./install.sh
+cd /tmp/nwg-displays && /ctx/scripts/nwg-install.sh
 cd / && rm -rf /tmp/nwg-displays
 
 # --- nwg-look (GTK settings editor for wlroots) ---
