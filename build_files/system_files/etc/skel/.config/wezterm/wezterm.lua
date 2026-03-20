@@ -9,8 +9,8 @@ local config = wezterm.config_builder()
 -- --- Appearance ---
 config.color_scheme = "Catppuccin Mocha"
 config.font = wezterm.font_with_fallback({
-	{ family = "JetBrainsMono Nerd Font", weight = "Regular" },
 	{ family = "JetBrains Mono", weight = "Regular" },
+	{ family = "JetBrainsMono Nerd Font", weight = "Regular" },
 	"Noto Color Emoji",
 })
 config.font_size = 12.0

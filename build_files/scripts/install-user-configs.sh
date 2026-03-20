@@ -24,6 +24,10 @@ mkdir -p /etc/skel/.local/bin
 cp /ctx/system_files/etc/skel/.local/bin/dnf /etc/skel/.local/bin/dnf
 chmod +x /etc/skel/.local/bin/dnf
 
+# --- System limits (nofile, nproc, memlock, core) ---
+mkdir -p /etc/security/limits.d
+cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
+
 # --- zos-system is built from Rust in Containerfile, already at /usr/bin/zos-system ---
 
 # --- Auto-migration systemd user service ---
