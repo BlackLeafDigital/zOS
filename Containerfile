@@ -13,7 +13,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo && \
-    rm -rf /root/.cargo && mkdir -p /root/.cargo && \
     cd /ctx/zos-system && \
     CARGO_HOME=/tmp/cargo-home cargo build --release && \
     cp target/release/zos-system /usr/bin/zos-system && \
