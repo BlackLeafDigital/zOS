@@ -14,8 +14,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo && \
     cd /ctx/zos-system && \
-    CARGO_HOME=/tmp/cargo-home cargo build --release && \
-    cp target/release/zos-system /usr/bin/zos-system && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
+    cp /tmp/cargo-target/release/zos-system /usr/bin/zos-system && \
     dnf5 remove -y rust cargo
 
 ### MODIFICATIONS
