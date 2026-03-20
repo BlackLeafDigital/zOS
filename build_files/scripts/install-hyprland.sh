@@ -58,6 +58,7 @@ rm /tmp/catppuccin-cursors.zip
 dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
 git clone --depth 1 https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
 cd /tmp/nwg-displays && python3 -m build --wheel --no-isolation
+mkdir -p /usr/local/bin
 python3 -m installer --destdir=/ dist/*.whl
 cd / && rm -rf /tmp/nwg-displays
 
