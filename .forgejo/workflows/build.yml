@@ -5,8 +5,13 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**/README.md'
+    paths:
+      - 'Containerfile'
+      - 'build_files/**'
+      - 'zos-cli/**'
+      - 'zos-system/**'
+      - 'disk_config/**'
+      - 'Justfile'
   pull_request:
     branches:
       - main
