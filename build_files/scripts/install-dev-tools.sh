@@ -42,8 +42,10 @@ chmod +x /usr/bin/procs
 rm /tmp/procs.zip
 
 # --- atuin (shell history search) ---
-curl -fsSL -o /usr/bin/atuin https://github.com/atuinsh/atuin/releases/latest/download/atuin-x86_64-unknown-linux-musl
+curl -fsSL -o /tmp/atuin.tar.gz https://github.com/atuinsh/atuin/releases/latest/download/atuin-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf /tmp/atuin.tar.gz --strip-components=1 -C /usr/bin/ --wildcards '*/atuin'
 chmod +x /usr/bin/atuin
+rm /tmp/atuin.tar.gz
 
 # --- zellij (terminal multiplexer) ---
 curl -fsSL -o /tmp/zellij.tar.gz https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz
