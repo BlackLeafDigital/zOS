@@ -12,10 +12,11 @@ FROM ${BASE_IMAGE}
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    export PATH="$HOME/.cargo/bin:$PATH" && \
+    dnf5 install -y rust cargo && \
     cd /ctx/zos-system && \
     cargo build --release && \
-    cp target/release/zos-system /usr/bin/zos-system
+    cp target/release/zos-system /usr/bin/zos-system && \
+    dnf5 remove -y rust cargo
 
 ### MODIFICATIONS
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
