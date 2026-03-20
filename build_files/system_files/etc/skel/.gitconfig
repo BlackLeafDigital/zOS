@@ -1,0 +1,41 @@
+[init]
+    defaultBranch = main
+
+[core]
+    editor = nano
+    pager = delta
+
+[interactive]
+    diffFilter = delta --color-only
+
+[delta]
+    navigate = true
+    side-by-side = true
+    line-numbers = true
+
+[merge]
+    conflictstyle = zdiff3
+
+[diff]
+    colorMoved = default
+
+[pull]
+    rebase = true
+
+# --- Multi-account setup ---
+# Organize repos into directories, then uncomment and edit:
+#
+# [includeIf "gitdir:~/code/work/"]
+#     path = ~/.gitconfig-work
+#
+# [includeIf "gitdir:~/code/personal/"]
+#     path = ~/.gitconfig-personal
+#
+# Each included file can set:
+#   [user]
+#       name = Your Name
+#       email = you@work.com
+#   [core]
+#       sshCommand = ssh -i ~/.ssh/id_ed25519_work -o IdentitiesOnly=yes
+#
+# GitHub CLI: `gh auth login` multiple times, then `gh auth switch`

@@ -1,0 +1,12 @@
+#!/bin/bash
+# =============================================================================
+# zOS DNF wrapper — explains immutable OS alternatives
+# =============================================================================
+
+echo "zOS is an immutable OS — dnf is not available at runtime."
+echo ""
+echo "Install software using:"
+echo "  flatpak install <app>     — GUI applications"
+echo "  brew install <package>    — CLI tools (Homebrew)"
+echo "  distrobox enter           — Full mutable Linux environment"
+echo "  rpm-ostree install <pkg>  — System packages (requires reboot)"
