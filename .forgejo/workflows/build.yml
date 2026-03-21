@@ -7,9 +7,12 @@ on:
       - main
     paths:
       - 'Containerfile'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'build_files/**'
+      - 'zos-core/**'
       - 'zos-cli/**'
-      - 'zos-system/**'
+      - 'zos-settings/**'
       - 'disk_config/**'
       - 'Justfile'
   pull_request:
@@ -54,9 +57,38 @@ jobs:
         id: date
         run: echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
 
+      - name: Check if rebuild needed (scheduled builds only, skip if [release] in commit)
+        id: check
+        if: github.event_name == 'schedule' && !contains(github.event.head_commit.message, '[release]')
+        run: |
+          # Compare local repo hash with the label on the latest pushed image
+          REPO_HASH=$(git rev-parse HEAD)
+          echo "repo_hash=${REPO_HASH}" >> $GITHUB_OUTPUT
+
+          # Pull the manifest and check the commit label
+          REMOTE_HASH=$(sudo buildah inspect --format '{{index .Docker.Config.Labels "org.opencontainers.image.revision"}}' \
+            docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} 2>/dev/null || echo "none")
+
+          # Also check if the base image has been updated
+          LOCAL_BASE_DIGEST=$(sudo buildah inspect --format '{{.FromImageDigest}}' \
+            docker://${{ matrix.base_image }} 2>/dev/null || echo "unknown-local")
+          REMOTE_BASE_DIGEST=$(sudo buildah inspect --format '{{index .Docker.Config.Labels "zos.base.digest"}}' \
+            docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} 2>/dev/null || echo "unknown-remote")
+
+          if [ "$REPO_HASH" = "$REMOTE_HASH" ] && [ "$LOCAL_BASE_DIGEST" = "$REMOTE_BASE_DIGEST" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No changes detected — skipping rebuild"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Changes detected — rebuilding (repo: ${REPO_HASH:0:8} vs ${REMOTE_HASH:0:8}, base: ${LOCAL_BASE_DIGEST:0:16} vs ${REMOTE_BASE_DIGEST:0:16})"
+          fi
+
       - name: Build Image
         id: build
+        if: steps.check.outputs.skip != 'true'
         run: |
+          REPO_HASH=$(git rev-parse HEAD)
+          BASE_DIGEST=$(sudo buildah inspect --format '{{.FromImageDigest}}' docker://${{ matrix.base_image }} 2>/dev/null || echo "unknown")
           sudo buildah build \
             -f Containerfile \
             --build-arg BASE_IMAGE=${{ matrix.base_image }} \
@@ -67,16 +99,18 @@ jobs:
             --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --label "org.opencontainers.image.description=zOS - A curated Linux desktop that just works" \
             --label "org.opencontainers.image.title=${{ matrix.image_name }}" \
+            --label "org.opencontainers.image.revision=${REPO_HASH}" \
+            --label "zos.base.digest=${BASE_DIGEST}" \
             --label "containers.bootc=1" \
             .
 
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.check.outputs.skip != 'true'
         run: |
           echo "${{ secrets.GH_ACCESS_TOKEN }}" | sudo buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
 
       - name: Push to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.check.outputs.skip != 'true'
         run: |
           for tag in ${{ env.DEFAULT_TAG }} ${{ env.DEFAULT_TAG }}.${{ steps.date.outputs.date }} ${{ steps.date.outputs.date }}; do
             sudo buildah push ${{ matrix.image_name }}:${tag} docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${tag}
