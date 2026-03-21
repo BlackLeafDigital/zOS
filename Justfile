@@ -127,6 +127,22 @@ setup-mac:
     @echo "  QCOW2 VM: import output/qcow2/disk.qcow2"
     @echo "  ISO VM: blank 40G disk + mount ISO as CD-ROM"
 
+# Run zos-settings in dev mode
+dev:
+    cargo run -p zos-settings
+
+# Run zos-settings in release mode
+dev-release:
+    cargo run -p zos-settings --release
+
+# Run zos CLI TUI
+dev-cli:
+    cargo run -p zos
+
+# Check all crates compile
+check:
+    cargo check --workspace
+
 # Lint build scripts
 lint:
     shellcheck build_files/build.sh build_files/scripts/*.sh

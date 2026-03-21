@@ -30,6 +30,8 @@ pub struct ConfigState {
     pub zshrc: u32,
     #[serde(default)]
     pub gitconfig: u32,
+    #[serde(default)]
+    pub wezterm: u32,
 }
 
 /// Expand ~ to the user's home directory.

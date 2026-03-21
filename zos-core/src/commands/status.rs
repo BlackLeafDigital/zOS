@@ -146,5 +146,6 @@ fn read_system_config_versions() -> config::ConfigState {
         wlogout: 1,
         zshrc: 1,
         gitconfig: 1,
+        wezterm: 1,
     }
 }

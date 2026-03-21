@@ -29,6 +29,9 @@ config.initial_cols = 120
 config.initial_rows = 36
 config.enable_scroll_bar = false
 
+-- --- Mouse (Shift bypasses app mouse capture for paste) ---
+config.bypass_mouse_reporting_modifiers = "SHIFT"
+
 -- --- Tab bar (iTerm2-like) ---
 config.use_fancy_tab_bar = true
 config.tab_bar_at_bottom = false
@@ -85,7 +88,8 @@ config.keys = {
 	{ key = "-", mods = "SUPER", action = wezterm.action.DecreaseFontSize },
 	{ key = "0", mods = "SUPER", action = wezterm.action.ResetFontSize },
 
-	-- Copy/paste (Ctrl+Shift is standard Linux terminal, SUPER for macOS-like)
+	-- Copy/paste
+	{ key = "v", mods = "CTRL", action = wezterm.action.PasteFrom("Clipboard") },
 	{ key = "c", mods = "CTRL|SHIFT", action = wezterm.action.CopyTo("Clipboard") },
 	{ key = "v", mods = "CTRL|SHIFT", action = wezterm.action.PasteFrom("Clipboard") },
 	{ key = "c", mods = "SUPER", action = wezterm.action.CopyTo("Clipboard") },

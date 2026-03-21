@@ -15,251 +15,210 @@ zOS/
 │   └── src/
 │       ├── lib.rs
 │       ├── config.rs       # Paths, state, constants
-│       ├── colors.rs       # Catppuccin Mocha RGB values
-│       └── commands/       # All backend logic (extracted from zos-cli)
+│       └── commands/       # All backend logic
 │           ├── status.rs   # SystemInfo, config versions
 │           ├── doctor.rs   # Health checks
 │           ├── setup.rs    # First-login setup steps
 │           ├── install.rs  # Package search (Flatpak/Brew/mise)
-│           ├── update.rs   # OS update check/apply
+│           ├── update.rs   # OS update check/apply (bootc)
 │           ├── grub.rs     # GRUB/bootloader management
-│           └── migrate.rs  # Config migration
+│           └── migrate.rs  # Config migration (hypr, waybar, wezterm, etc.)
 ├── zos-cli/                # CLI/TUI (depends on zos-core)
 ├── zos-settings/           # GTK4 GUI (depends on zos-core)
 │   ├── Cargo.toml
-│   ├── build.rs
 │   ├── resources/
 │   │   └── style.css       # Catppuccin Mocha theme
 │   └── src/
 │       ├── main.rs         # Entry: AdwApplication + tray
-│       ├── app.rs          # Root: NavigationSplitView
-│       ├── pages/          # Settings pages
-│       ├── services/       # D-Bus, Hyprland IPC, PipeWire
+│       ├── app.rs          # Root: Sidebar + Stack navigation
 │       ├── tray.rs         # System tray icon (ksni)
-│       └── plugins/        # Hook system
+│       ├── pages/          # 9 settings pages
+│       │   ├── overview.rs     # System info + health
+│       │   ├── display.rs      # Monitor layout canvas + config
+│       │   ├── audio.rs        # VoiceMeeter-style mixer
+│       │   ├── appearance.rs   # Theme, cursor, wallpaper
+│       │   ├── input.rs        # Keyboard, mouse, touchpad
+│       │   ├── network.rs      # WiFi, ethernet, VPN
+│       │   ├── devsetup.rs     # First-login dev tools
+│       │   ├── power.rs        # Power actions + profiles
+│       │   └── boot.rs         # GRUB + dual boot
+│       └── services/       # Backend service modules
+│           ├── pipewire.rs     # wpctl/pw-link wrapper
+│           ├── hyprctl.rs      # Hyprland IPC wrapper
+│           └── power.rs        # logind D-Bus wrapper
 └── Containerfile
 ```
 
-## Dependencies
+## Current Status (What's Done)
 
-```toml
-[dependencies]
-zos-core = { path = "../zos-core" }
-relm4 = { version = "0.10.1", features = ["macros", "libadwaita", "gnome_47"] }
-relm4-components = "0.10.1"
-relm4-icons = "0.10.1"
-ksni = { version = "0.3.3", features = ["tokio"] }
-zbus = "5.14"
-hyprland = "0.4.0-beta.3"
-tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "sync", "macros"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
+### ✅ Complete
+- [x] Cargo workspace (zos-core, zos-cli, zos-settings)
+- [x] All 9 pages compile and render with real backends
+- [x] System tray with power menu (ksni)
+- [x] Catppuccin Mocha CSS theme
+- [x] Display: monitor canvas with position preview + Apply writes monitors.conf
+- [x] Audio: output/input device selection, volume, mute, virtual bus controls, PipeWire routing with port dropdowns
+- [x] Input: keyboard layout, repeat rate, mouse, touchpad — live apply + persists to user-settings.conf
+- [x] Network: WiFi scan, connect with password, IP details
+- [x] Appearance: dark mode toggle, cursor size, wallpaper picker
+- [x] Power: suspend/reboot/shutdown with confirmation dialogs
+- [x] Boot: GRUB timeout, Windows dual-boot detection
+- [x] Developer Setup: per-step install buttons from zos-core
+- [x] Overview: system info + health checks from zos-core
+- [x] Wezterm config migration in zos-core
+- [x] Desktop entry, autostart, SUPER+I keybind, window rule
+- [x] Polkit policy for GRUB elevation
+- [x] Shared services (hyprctl, power, pipewire)
+- [x] `just dev` / `just dev-release` / `just check` targets
+
+### 🔄 In Progress
+- [ ] Display: live monitor thumbnails via grim (periodic refresh)
+- [ ] Audio: VoiceMeeter-style mixer UI improvements
+
+### ❌ Not Started
+- [ ] Display: drag-to-arrange monitors
+- [ ] Display: live PipeWire screen capture (replace grim with real-time video)
+- [ ] Audio: per-app volume routing UI
+- [ ] Audio: gain controls, EQ integration
+- [ ] Appearance: Catppuccin flavor selector (cross-app theme switching)
+- [ ] Appearance: cursor theme picker, font picker
+- [ ] Network: VPN management, hotspot, WiFi toggle
+- [ ] Power: power profiles (performance/balanced/power-saver)
+- [ ] Power: screen lock / idle timeout settings
+- [ ] Packages page (search + install UI)
+- [ ] Hook system (shell hooks for events)
+- [ ] Window state persistence
+- [ ] Toast notifications for errors
+- [ ] About dialog
+- [ ] Tray: show/hide window communication (currently just prints)
+- [ ] Reactive page updates (convert static `build()` to Relm4 components)
+
+---
+
+## Future Milestones
+
+### v0.2 — Live Display Preview
+**Goal:** Show actual monitor content in the display canvas, refreshing periodically.
+
+- Capture via `grim -o <name> -t png -s 0.2 -` (stdout) every 2 seconds
+- Load as `cairo::ImageSurface` and paint into monitor rectangles
+- `glib::timeout_add_seconds_local` for periodic refresh + `canvas.queue_draw()`
+
+### v0.3 — PipeWire Screen Capture (True Live)
+**Goal:** Replace grim screenshots with real-time PipeWire video frames.
+
+**Approach:**
+1. Use `ashpd` crate to call `org.freedesktop.portal.ScreenCast` D-Bus API
+2. Start a screencast session per monitor
+3. Get PipeWire node IDs for each stream
+4. Use `pipewire-rs` crate (or build a minimal PipeWire consumer) to receive video frames
+5. Convert frames to `cairo::ImageSurface` and paint into canvas
+6. This is the same pipeline OBS, GNOME Screenshot, and other screen capture tools use
+
+**Dependencies needed:**
+- `ashpd` — Rust bindings for xdg-desktop-portal (screencast, screenshot, etc.)
+- `pipewire-rs` — Rust bindings for libpipewire (may need to write or fork if not mature enough)
+- `pipewire-devel` — already conflicts with Bazzite's build, may need to use the system libpipewire directly via FFI
+
+**Alternative:** If `pipewire-rs` is too immature, write a small C shim that does the PipeWire frame capture and exposes it via FFI to Rust.
+
+**Prerequisites:**
+- `xdg-desktop-portal-hyprland` — already installed, handles screencast portal
+- `pipewire` — already running as the audio/video server
+- `libpipewire-0.3` — already available at runtime (from Bazzite)
+
+### v0.4 — Drag-to-Arrange Monitors
+**Goal:** Users can drag monitor rectangles in the canvas to rearrange them.
+
+- `GestureDrag` controller on the DrawingArea
+- Hit-test on mouse down to select which monitor
+- Update monitor x/y positions as user drags
+- Snap-to-edge when rectangles are near each other
+- Apply writes the new positions to monitors.conf
+
+### v0.5 — VoiceMeeter-Style Audio Mixer
+**Goal:** Full audio routing interface like VoiceMeeter Potato.
+
+**Layout (columns):**
+- Left: Physical + virtual inputs (mics, monitors)
+- Center: Virtual buses (Main, Music, Chat) with volume faders
+- Right: Physical outputs (speakers, headphones, HDMI)
+- Routing: checkboxes or drag lines to connect input → bus → output
+
+**Features:**
+- Per-app routing: assign which bus each app sends audio to
+- Per-bus: volume, mute, solo, EQ preset selector
+- Per-output: volume, mute, device lock
+- Gain control per input/bus
+- VU meters showing live audio levels (read from PipeWire)
+- Save/load routing presets
+
+**Backend:** `pw-link` for connections, `wpctl` for volume, PipeWire config for persistence
+
+### v0.6 — Packages Page
+**Goal:** GUI package search and install across Flatpak, Brew, and mise.
+
+- Search bar with debounced input → `zos_core::commands::install::search()`
+- Results grouped by source with Install buttons
+- Installed packages list with Remove
+- Async search with per-source streaming results
+
+### v0.7 — Reactive Components
+**Goal:** Convert all pages from static `build() -> gtk::Box` to Relm4 `Component` with message passing.
+
+- Live data refresh on page switch
+- Background async operations (no UI freezing)
+- Toast notifications for success/failure
+- Window state persistence (size, position, last page)
+
+---
+
+## PipeWire Virtual Audio Config
+
+Ships at `~/.config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf`:
+
+```
+context.objects = [
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-main"
+          node.description = "Main Output"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-music"
+          node.description = "Music"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-chat"
+          node.description = "Chat / Voice"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+]
 ```
 
-**DO NOT use:** libadwaita 0.9.x or gtk4 0.11.x — incompatible with relm4 0.10.x.
-
-## Pages
-
-### 1. Overview / Dashboard
-- OS version, image name, kernel, uptime
-- Config sync status (system vs user versions)
-- Health check summary (green/yellow/red indicators)
-- "Check for Updates" button + pending update banner
-- **Backend:** `status::get_system_info()`, `doctor::run_doctor_checks()`, `update::check_for_updates()`
-- **Widgets:** `AdwStatusPage`, `AdwPreferencesGroup`, `AdwBanner`
-
-### 2. Display / Monitors
-- List connected monitors with resolution, refresh rate, scale
-- Drag-to-arrange canvas for monitor positions (2 bottom + 1 top, etc.)
-- Per-monitor settings: resolution dropdown, refresh rate, scale, rotation
-- "Apply" saves to `~/.config/hypr/monitors.conf` + applies live via hyprctl
-- **Backend:** `hyprland::data::Monitors::get()`, `hyprctl keyword monitor`
-- **Widgets:** Custom `gtk::DrawingArea` for layout, `AdwComboRow` for settings
-
-### 3. Audio / Sound
-- Output device selector (speakers, headphones, HDMI)
-- Input device selector (microphone)
-- Per-app volume routing (which app goes to which output)
-- PipeWire node graph visualization (simplified)
-- Link to qpwgraph for advanced routing
-- **Backend:** PipeWire D-Bus / `pw-cli` / `wpctl` (WirePlumber)
-- **Widgets:** `AdwComboRow` for device select, `gtk::Scale` for volume
-
-### 4. Power
-- Suspend / Reboot / Shut Down / Hibernate buttons
-- Power profile selector (performance / balanced / power saver)
-- Auto-suspend timeout
-- **Backend:** `zbus` proxy to `org.freedesktop.login1.Manager`
-- **Widgets:** `AdwPreferencesGroup`, `AdwActionRow` with buttons, `AdwComboRow`
-
-### 5. Appearance
-- Dark/Light mode toggle (currently forced dark)
-- Catppuccin flavor selector (Mocha, Macchiato, Frappe, Latte)
-- Cursor theme / size
-- Font settings
-- GTK theme propagation
-- **Backend:** `gsettings`, hyprctl env vars, GTK4 CSS reload
-- **Widgets:** `AdwSwitchRow`, `AdwComboRow`, `AdwSpinRow`
-
-### 6. Network
-- WiFi networks (scan, connect, saved)
-- Ethernet status
-- VPN connections
-- IP address, DNS info
-- **Backend:** NetworkManager D-Bus via `zbus`
-- **Widgets:** `AdwPreferencesGroup`, `AdwActionRow`, `AdwEntryRow`
-
-### 7. Keyboard & Input
-- Keyboard layout selector
-- Key repeat rate / delay
-- Touchpad settings (natural scroll, tap-to-click, speed)
-- Mouse sensitivity
-- **Backend:** `hyprctl keyword input:*`
-- **Widgets:** `AdwComboRow`, `AdwSwitchRow`, `AdwSpinRow`
-
-### 8. Packages
-- Search bar → searches Flatpak, Brew, mise simultaneously
-- Results grouped by source with "Install" buttons
-- Installed packages list with "Remove" option
-- **Backend:** `install::search()`, `install::search_and_install()`
-- **Widgets:** `AdwEntryRow`, `AdwActionRow` per result
-
-### 9. Developer Setup
-- First-login setup wizard (Homebrew, mise, Node, Python, pnpm, uv, Rust, gh, zsh)
-- Checklist with per-step install buttons + "Run All"
-- Progress indicators
-- Refuses to run as root
-- **Backend:** `setup::get_setup_steps()`, `setup::run_setup_step()`
-- **Widgets:** `AdwPreferencesGroup`, `AdwActionRow` with status icons
-
-### 10. Boot / GRUB
-- GRUB timeout slider
-- Windows dual-boot detection + BLS entry creation
-- Boot order info
-- Requires root (polkit elevation)
-- **Backend:** `grub::get_grub_status()`, `grub::apply_grub_timeout()`
-- **Widgets:** `AdwSpinRow`, `AdwActionRow`, `AdwBanner` for root warning
-
-### 11. Updates
-- Current image version + available update info
-- "Upgrade Now" button (runs `bootc upgrade`)
-- Rollback button (runs `bootc rollback`)
-- Auto-update toggle
-- **Backend:** `update::check_for_updates()`, `update::apply_update()`
-- **Widgets:** `AdwPreferencesGroup`, `AdwSwitchRow`, `AdwActionRow`
-
-### 12. About
-- `AdwAboutDialog` — app name, version, credits, license, links
-
-## System Tray
-
-Runs as a daemon on login via `exec-once = zos-settings --tray` in Hyprland autostart.
-
-- **Left-click:** Show/hide settings window
-- **Right-click menu:**
-  - Open Settings
-  - ---
-  - Suspend
-  - Reboot
-  - Shut Down
-  - ---
-  - Quit
-
-Uses `ksni` crate (StatusNotifierItem D-Bus protocol). Shows in Waybar's tray module.
-
-## Plugin / Hook System
-
-### v1: Shell Hooks
-```
-~/.config/zos/hooks/
-├── on-power-action/         # Before reboot/shutdown/suspend
-├── on-monitor-change/       # After display config saved
-├── on-theme-change/         # After appearance change
-├── on-update/               # After OS update applied
-├── on-package-install/      # After package installed
-└── on-startup/              # After tray daemon starts
-```
-
-Scripts run alphabetically, get `$ZOS_HOOK` and `$ZOS_HOOK_DATA` env vars. Must be executable.
-
-### v2: D-Bus Plugin Registry
-Plugins register as D-Bus services. Settings app discovers them and can embed their widgets.
-
-### v3: WASM Plugins
-Sandboxed WASM modules via wasmtime/extism for cross-platform, safe plugin execution.
-
-## Theming
-
-Force Catppuccin Mocha dark mode via:
-1. `AdwStyleManager::set_color_scheme(ForceDark)`
-2. App-level CSS with `@define-color` overrides for all libadwaita color variables
-3. CSS file embedded via `relm4::set_global_css(include_str!(...))`
-
-## Implementation Phases
-
-### Phase 1: Foundation
-- [ ] Create Cargo workspace root
-- [ ] Extract `zos-core` library from `zos-cli`
-- [ ] Make `zos-cli` depend on `zos-core`
-- [ ] Verify `cargo build --workspace` works
-- [ ] Scaffold `zos-settings` with empty `AdwApplicationWindow`
-
-### Phase 2: Core Pages
-- [ ] Overview page (system info + health checks)
-- [ ] Power page (reboot/shutdown/suspend via D-Bus)
-- [ ] Catppuccin CSS theme
-- [ ] System tray icon + right-click menu
-
-### Phase 3: Display & Audio
-- [ ] Display page (monitor list + config save)
-- [ ] Audio page (output/input selection, volume)
-- [ ] Monitor drag-to-arrange canvas
-
-### Phase 4: Settings Pages
-- [ ] Appearance page (dark mode, cursor, fonts)
-- [ ] Keyboard & Input page
-- [ ] Network page
-
-### Phase 5: Package & Dev Tools
-- [ ] Packages page (search + install)
-- [ ] Developer Setup wizard
-- [ ] Boot/GRUB page
-
-### Phase 6: Polish
-- [ ] Hook system
-- [ ] Desktop entry + autostart integration
-- [ ] Containerfile build integration
-- [ ] Error handling + toast notifications
-- [ ] Window state persistence (size, position)
-
-## Quick Start (on zOS machine)
+## Quick Start
 
 ```bash
-# Install GTK4 + libadwaita dev headers
-sudo rpm-ostree install gtk4-devel libadwaita-devel
-
-# Or in a toolbox/distrobox
-distrobox create --name zos-dev --image fedora:43
-distrobox enter zos-dev
-sudo dnf install gtk4-devel libadwaita-devel rust cargo
-
-# Clone and build
-cd ~/GitHub/zOS
-cargo build -p zos-settings
-
-# Run
-./target/debug/zos-settings
-
-# Run tray-only mode
-./target/debug/zos-settings --tray
+# Dev headers already installed in the zOS image
+just dev            # Launch settings app
+just dev --tray     # Launch tray-only mode
+just dev-release    # Release build
+just check          # Compile check workspace
+just build          # Build full OS image
 ```
-
-## Build Dependencies (for Containerfile)
-
-```bash
-dnf5 install -y rust cargo gtk4-devel libadwaita-devel
-```
-
-These are build-time only — the compiled binary has no dev header dependency at runtime. GTK4 and libadwaita shared libraries are already in Bazzite's base image.

@@ -1,0 +1,6 @@
+// =============================================================================
+// zOS Zellij Configuration
+// =============================================================================
+
+// Disable Kitty keyboard protocol so Wezterm paste keybinds (Ctrl+Shift+V) work
+support_kitty_keyboard_protocol false

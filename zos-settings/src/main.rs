@@ -1,42 +1,58 @@
 // === main.rs — zos-settings entry point ===
-//
-// GTK4/Adwaita settings application for zOS.
-// Phase 1 scaffold: minimal window.
 
-use libadwaita::prelude::*;
-use libadwaita::{Application, ApplicationWindow, HeaderBar};
-use gtk4::{Box, Label, Orientation};
+mod app;
+mod pages;
+mod services;
+mod tray;
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "zos-settings", about = "zOS Settings")]
+struct Cli {
+    #[arg(long)]
+    tray: bool,
+}
 
 fn main() {
-    let app = Application::builder()
-        .application_id("com.zos.Settings")
-        .build();
+    tracing_subscriber::fmt::init();
 
-    app.connect_activate(|app| {
-        let content = Box::new(Orientation::Vertical, 0);
+    // Ensure GTK4 colors.css exists to suppress theme parser warning
+    if let Ok(home) = std::env::var("HOME") {
+        let gtk4_dir = std::path::Path::new(&home).join(".config/gtk-4.0");
+        let colors_css = gtk4_dir.join("colors.css");
+        if !colors_css.exists() {
+            let _ = std::fs::create_dir_all(&gtk4_dir);
+            let _ = std::fs::write(&colors_css, "/* zOS Catppuccin Mocha — auto-generated */\n");
+        }
+    }
 
-        let header = HeaderBar::new();
-        content.append(&header);
+    let cli = Cli::parse();
 
-        let label = Label::builder()
-            .label("zOS Settings")
-            .margin_top(24)
-            .margin_bottom(24)
-            .margin_start(24)
-            .margin_end(24)
-            .build();
-        content.append(&label);
+    // If --tray is passed, start the system tray on a background thread.
+    // The tray handle is kept alive until the process exits.
+    let _tray_handle = if cli.tray {
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let handle = std::thread::spawn(move || {
+            rt.block_on(async {
+                match tray::run_tray().await {
+                    Ok(handle) => {
+                        tracing::info!("System tray started");
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to start system tray: {e}");
+                        None
+                    }
+                }
+            })
+        });
+        Some(handle)
+    } else {
+        None
+    };
 
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .title("zOS Settings")
-            .default_width(800)
-            .default_height(600)
-            .content(&content)
-            .build();
-
-        window.present();
-    });
-
-    app.run();
+    let app = relm4::RelmApp::new("com.zos.Settings");
+    relm4::set_global_css(include_str!("../resources/style.css"));
+    app.run::<app::App>(());
 }

@@ -79,6 +79,14 @@ pub fn plan_migrations() -> Vec<MigrationAction> {
         });
     }
 
+    if user_state.wezterm < system_versions.wezterm {
+        actions.push(MigrationAction {
+            area: "wezterm".into(),
+            description: "Update Wezterm config to latest version".into(),
+            applied: false,
+        });
+    }
+
     actions
 }
 
@@ -119,6 +127,11 @@ pub fn apply_migrations(actions: &mut [MigrationAction]) -> Result<()> {
                     &datestamp,
                 )?;
                 state.gitconfig = system_versions.gitconfig;
+                action.applied = true;
+            }
+            "wezterm" => {
+                apply_skel_migration(".config/wezterm", &backup_dir, &datestamp, "wezterm")?;
+                state.wezterm = system_versions.wezterm;
                 action.applied = true;
             }
             other => {
@@ -177,6 +190,7 @@ fn read_system_config_versions() -> config::ConfigState {
         wlogout: 1,
         zshrc: 1,
         gitconfig: 1,
+        wezterm: 1,
     }
 }
 

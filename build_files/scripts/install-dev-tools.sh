@@ -18,6 +18,8 @@ dnf5 install -y \
     clang-devel \
     rust \
     cargo \
+    clippy \
+    rustfmt \
     openssl-devel \
     pkg-config \
     python3-pip \
@@ -43,7 +45,8 @@ dnf5 install -y \
     pango-devel \
     cairo-devel \
     gdk-pixbuf2-devel \
-    gtk-layer-shell-devel
+    gtk-layer-shell-devel \
+    libayatana-appindicator-gtk3-devel
 
 # --- Multimedia dev libraries ---
 # Runtime libs already in Bazzite; these are the -devel headers

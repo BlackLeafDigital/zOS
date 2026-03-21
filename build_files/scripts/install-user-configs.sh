@@ -41,6 +41,10 @@ mkdir -p /etc/skel/.local/bin
 cp /ctx/system_files/etc/skel/.local/bin/dnf /etc/skel/.local/bin/dnf
 chmod +x /etc/skel/.local/bin/dnf
 
+# --- Zellij config (disable Kitty keyboard protocol for Wezterm paste) ---
+mkdir -p /etc/skel/.config/zellij
+cp /ctx/system_files/etc/skel/.config/zellij/config.kdl /etc/skel/.config/zellij/
+
 # --- Hyprpaper config (default wallpaper) ---
 cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr/
 
@@ -53,12 +57,25 @@ cp /ctx/system_files/etc/skel/.config/pipewire/pipewire.conf.d/10-zos-virtual-de
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
 
+# --- zos-settings desktop entry + polkit policy ---
+cp /ctx/system_files/usr/share/applications/zos-settings.desktop /usr/share/applications/
+mkdir -p /usr/share/polkit-1/actions
+cp /ctx/system_files/usr/share/polkit-1/actions/com.zos.settings.policy /usr/share/polkit-1/actions/
+
 # --- zos is built from Rust in Containerfile, already at /usr/bin/zos ---
 
 # --- Auto-migration systemd user service ---
 cp /ctx/system_files/usr/lib/systemd/user/zos-user-migrate.service \
    /usr/lib/systemd/user/zos-user-migrate.service
 systemctl --global enable zos-user-migrate.service
+
+# --- Set zsh as default shell for all users ---
+# chsh in first-login fails silently on Fedora Atomic; set it system-wide
+sed -i 's|^SHELL=.*|SHELL=/usr/bin/zsh|' /etc/default/useradd
+# Also update /etc/passwd template so new users get zsh
+if ! grep -q '/usr/bin/zsh' /etc/shells; then
+    echo '/usr/bin/zsh' >> /etc/shells
+fi
 
 # --- Legacy scripts (kept for compatibility, absorbed by zos) ---
 cp /ctx/scripts/zos-setup.sh /usr/bin/zos-setup
