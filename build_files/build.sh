@@ -49,7 +49,7 @@ mkdir -p /usr/share/zos
 magick -size 3840x2160 gradient:'#1e1e2e'-'#181825' /usr/share/zos/wallpaper.png
 
 # --- liquidctl udev rules (Fedora RPM doesn't ship them) ---
-curl -fsSL -o /etc/udev/rules.d/71-liquidctl.rules \
+curl -fsSL --retry 3 --retry-delay 5 -o /etc/udev/rules.d/71-liquidctl.rules \
     https://raw.githubusercontent.com/liquidctl/liquidctl/main/extra/linux/71-liquidctl.rules
 
 # --- Enable services ---

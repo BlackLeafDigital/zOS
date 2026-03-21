@@ -44,13 +44,13 @@ dnf5 install -y \
 # --- cliphist (clipboard history, not in Fedora 43 repos) ---
 CURL_GH_OPTS=(--connect-timeout 10 --retry 3)
 if [ -n "${GITHUB_TOKEN:-}" ]; then CURL_GH_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
-CLIPHIST_VERSION=$(curl -fsSL "${CURL_GH_OPTS[@]}" https://api.github.com/repos/sentriz/cliphist/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
-curl -fsSL "${CURL_GH_OPTS[@]}" -o /usr/bin/cliphist "https://github.com/sentriz/cliphist/releases/download/v${CLIPHIST_VERSION}/v${CLIPHIST_VERSION}-linux-amd64"
+CLIPHIST_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/sentriz/cliphist/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" -o /usr/bin/cliphist "https://github.com/sentriz/cliphist/releases/download/v${CLIPHIST_VERSION}/v${CLIPHIST_VERSION}-linux-amd64"
 chmod +x /usr/bin/cliphist
 
 # --- Catppuccin Mocha cursors ---
 CURSOR_URL="https://github.com/catppuccin/cursors/releases/latest/download/catppuccin-mocha-dark-cursors.zip"
-curl -fsSL -o /tmp/catppuccin-cursors.zip "$CURSOR_URL"
+curl -fsSL --retry 3 --retry-delay 5 -o /tmp/catppuccin-cursors.zip "$CURSOR_URL"
 unzip -o /tmp/catppuccin-cursors.zip -d /usr/share/icons/
 rm /tmp/catppuccin-cursors.zip
 

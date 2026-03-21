@@ -57,8 +57,10 @@ cp /ctx/system_files/etc/skel/.config/pipewire/pipewire.conf.d/10-zos-virtual-de
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
 
-# --- zos-settings desktop entry + polkit policy ---
+# --- zos-settings desktop entry, icon + polkit policy ---
 cp /ctx/system_files/usr/share/applications/zos-settings.desktop /usr/share/applications/
+mkdir -p /usr/share/icons/hicolor/scalable/apps
+cp /ctx/system_files/usr/share/icons/hicolor/scalable/apps/zos-settings.svg /usr/share/icons/hicolor/scalable/apps/
 mkdir -p /usr/share/polkit-1/actions
 cp /ctx/system_files/usr/share/polkit-1/actions/com.zos.settings.policy /usr/share/polkit-1/actions/
 

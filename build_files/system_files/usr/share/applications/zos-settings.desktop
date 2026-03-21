@@ -2,7 +2,7 @@
 Name=zOS Settings
 Comment=System settings for zOS
 Exec=zos-settings
-Icon=preferences-system
+Icon=zos-settings
 Type=Application
 Terminal=false
 Categories=Settings;System;

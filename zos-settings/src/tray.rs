@@ -17,7 +17,7 @@ impl ksni::Tray for ZosTray {
     }
 
     fn icon_name(&self) -> String {
-        "preferences-system-symbolic".into()
+        "zos-settings".into()
     }
 
     fn title(&self) -> String {

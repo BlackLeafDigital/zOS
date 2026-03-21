@@ -27,10 +27,10 @@ fn main() {
         }
     }
 
+    // Parse our args first — clap consumes --tray before GTK sees it
     let cli = Cli::parse();
 
-    // If --tray is passed, start the system tray on a background thread.
-    // The tray handle is kept alive until the process exits.
+    // Start system tray on a background thread if requested
     let _tray_handle = if cli.tray {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         let handle = std::thread::spawn(move || {
@@ -52,7 +52,18 @@ fn main() {
         None
     };
 
-    let app = relm4::RelmApp::new("com.zos.Settings");
+    // Filter args for GTK: keep program name, drop --tray (already consumed by clap),
+    // pass through any GTK-recognized args like --display, --name, etc.
+    let gtk_args: Vec<String> = std::env::args()
+        .enumerate()
+        .filter(|(_, arg)| arg != "--tray")
+        .map(|(_, arg)| arg)
+        .collect();
+
+    let mut app = relm4::RelmApp::new("com.zos.Settings").with_args(gtk_args);
+    if cli.tray {
+        app = app.visible_on_activate(false);
+    }
     relm4::set_global_css(include_str!("../resources/style.css"));
     app.run::<app::App>(());
 }

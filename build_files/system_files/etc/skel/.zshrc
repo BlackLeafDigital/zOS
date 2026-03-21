@@ -23,5 +23,9 @@ plugins=(
 
 [ -f "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"
 
+# --- Re-init tools that Oh My Zsh overwrites ---
+command -v atuin &> /dev/null && eval "$(atuin init zsh)"
+command -v zoxide &> /dev/null && eval "$(zoxide init zsh)"
+
 # --- Powerlevel10k config ---
 [ -f ~/.p10k.zsh ] && source ~/.p10k.zsh
