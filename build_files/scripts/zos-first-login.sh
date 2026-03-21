@@ -47,8 +47,12 @@ fi
 echo "[zOS] Installing uv (fast Python package manager)..."
 brew install uv
 
-# --- Rust toolchain is pre-installed via dnf (system-level) ---
-# No rustup needed — /usr/bin/rustc and /usr/bin/cargo are in the image
+# --- Rust toolchain via rustup (user-managed, supports nightly/targets) ---
+if [ ! -d "$HOME/.rustup" ]; then
+    echo "[zOS] Setting up Rust toolchain via rustup..."
+    rustup-init -y --default-toolchain stable --no-modify-path
+    source "$HOME/.cargo/env"
+fi
 
 # --- Install GitHub CLI ---
 if ! command -v gh &> /dev/null; then

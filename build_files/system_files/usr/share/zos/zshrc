@@ -22,6 +22,9 @@ if [[ -z "$ZSH_COMPDUMP" ]]; then
     zstyle ':completion:*' menu select
 fi
 
+# --- Claude Code (force zsh shell) ---
+alias claude='SHELL=/usr/bin/zsh command claude'
+
 # --- Aliases ---
 alias ls='eza --icons'
 alias ll='eza -la --icons --git'
@@ -54,6 +57,9 @@ alias ld='lazydocker'
 # --- Docker/Podman ---
 alias docker='podman'
 alias dc='podman-compose'
+
+# --- Rust/Cargo (user toolchain via rustup) ---
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 # --- Homebrew (if installed via first-login) ---
 if [ -d "$HOME/.linuxbrew" ]; then

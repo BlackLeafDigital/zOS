@@ -71,6 +71,9 @@ cp /ctx/system_files/usr/lib/systemd/user/zos-user-migrate.service \
    /usr/lib/systemd/user/zos-user-migrate.service
 systemctl --global enable zos-user-migrate.service
 
+# --- Global environment for all shells (profile.d) ---
+cp /ctx/system_files/etc/profile.d/zos-env.sh /etc/profile.d/zos-env.sh
+
 # --- Set zsh as default shell for all users ---
 # chsh in first-login fails silently on Fedora Atomic; set it system-wide
 sed -i 's|^SHELL=.*|SHELL=/usr/bin/zsh|' /etc/default/useradd
