@@ -42,7 +42,8 @@ dnf5 install -y \
     dbus-devel \
     pango-devel \
     cairo-devel \
-    gdk-pixbuf2-devel
+    gdk-pixbuf2-devel \
+    gtk-layer-shell-devel
 
 # --- Multimedia dev libraries ---
 # Runtime libs already in Bazzite; these are the -devel headers
