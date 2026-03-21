@@ -14,8 +14,8 @@ setopt HIST_IGNORE_ALL_DUPS
 setopt HIST_SAVE_NO_DUPS
 setopt SHARE_HISTORY
 
-# --- Completion (skip if Oh My Zsh handles it) ---
-if [[ -z "$ZSH" ]]; then
+# --- Completion (skip if Oh My Zsh is actually loaded) ---
+if [[ -z "$ZSH_COMPDUMP" ]]; then
     autoload -Uz compinit
     compinit
     zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
