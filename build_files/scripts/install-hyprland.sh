@@ -54,10 +54,12 @@ curl -fsSL --retry 3 --retry-delay 5 -o /tmp/catppuccin-cursors.zip "$CURSOR_URL
 unzip -o /tmp/catppuccin-cursors.zip -d /usr/share/icons/
 rm /tmp/catppuccin-cursors.zip
 
-# --- hyprswitch (macOS/Windows-style Alt+Tab window switcher) ---
-CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo install hyprswitch
-cp /tmp/cargo-target/release/hyprswitch /usr/bin/hyprswitch 2>/dev/null || cp $HOME/.cargo/bin/hyprswitch /usr/bin/hyprswitch
-chmod +x /usr/bin/hyprswitch
+# --- hyprswitch/hyprshell (macOS/Windows-style Alt+Tab window switcher) ---
+HYPRSHELL_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 https://api.github.com/repos/h3rmt/hyprswitch/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL --retry 3 --retry-delay 5 -o /tmp/hyprshell.tar.zst "https://github.com/h3rmt/hyprswitch/releases/download/v${HYPRSHELL_VERSION}/hyprshell-${HYPRSHELL_VERSION}-x86_64.tar.zst"
+tar --use-compress-program=unzstd -xf /tmp/hyprshell.tar.zst -C /usr/bin/
+chmod +x /usr/bin/hyprswitch 2>/dev/null || chmod +x /usr/bin/hyprshell 2>/dev/null
+rm /tmp/hyprshell.tar.zst
 
 # --- nwg-displays (Hyprland monitor config GUI, not in Fedora repos) ---
 dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
