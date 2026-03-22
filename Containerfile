@@ -17,13 +17,13 @@ FROM ${BASE_IMAGE}
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
     cargo build --release -p zos -p zos-settings && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
-    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel
+    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel
 
 ### BUILD ReGreet (GTK4 login greeter)
 ARG GH_TOKEN
