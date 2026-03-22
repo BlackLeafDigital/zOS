@@ -46,6 +46,7 @@ dnf5 install -y \
     cairo-devel \
     gdk-pixbuf2-devel \
     gtk-layer-shell-devel \
+    gtk4-layer-shell-devel \
     libayatana-appindicator-gtk3-devel
 
 # --- Multimedia dev libraries ---

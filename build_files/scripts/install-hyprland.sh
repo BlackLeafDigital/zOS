@@ -54,6 +54,11 @@ curl -fsSL --retry 3 --retry-delay 5 -o /tmp/catppuccin-cursors.zip "$CURSOR_URL
 unzip -o /tmp/catppuccin-cursors.zip -d /usr/share/icons/
 rm /tmp/catppuccin-cursors.zip
 
+# --- hyprswitch (macOS/Windows-style Alt+Tab window switcher) ---
+CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo install hyprswitch
+cp /tmp/cargo-target/release/hyprswitch /usr/bin/hyprswitch 2>/dev/null || cp $HOME/.cargo/bin/hyprswitch /usr/bin/hyprswitch
+chmod +x /usr/bin/hyprswitch
+
 # --- nwg-displays (Hyprland monitor config GUI, not in Fedora repos) ---
 dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
 git clone --depth 1 https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
