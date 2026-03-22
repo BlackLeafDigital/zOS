@@ -1,6 +1,5 @@
 // === tui/doctor.rs — Doctor diagnostics view ===
 
-use zos_core::commands::doctor::{self, CheckStatus, DoctorCheck};
 use crate::tui::theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
+use zos_core::commands::doctor::{self, CheckStatus, DoctorCheck};
 
 #[derive(Debug)]
 pub struct DoctorView {

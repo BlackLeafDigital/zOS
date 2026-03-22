@@ -48,6 +48,11 @@ cp /ctx/system_files/etc/skel/.config/zellij/config.kdl /etc/skel/.config/zellij
 # --- Hyprpaper config (default wallpaper) ---
 cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr/
 
+# --- Hyprshell config (window switcher + launcher) ---
+mkdir -p /etc/skel/.config/hyprshell
+cp /ctx/system_files/etc/skel/.config/hyprshell/config.ron /etc/skel/.config/hyprshell/
+cp /ctx/system_files/etc/skel/.config/hyprshell/styles.css /etc/skel/.config/hyprshell/
+
 # --- PipeWire virtual audio devices (VoiceMeeter-style routing) ---
 mkdir -p /etc/skel/.config/pipewire/pipewire.conf.d
 cp /ctx/system_files/etc/skel/.config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf \

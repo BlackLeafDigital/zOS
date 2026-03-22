@@ -33,9 +33,7 @@ pub fn build() -> gtk::Box {
     };
 
     let banner_group = adw::PreferencesGroup::builder().build();
-    let banner_row = adw::ActionRow::builder()
-        .title(&banner_text)
-        .build();
+    let banner_row = adw::ActionRow::builder().title(&banner_text).build();
     let banner_icon = gtk::Image::from_icon_name(if config::is_setup_done() {
         "emblem-ok-symbolic"
     } else {

@@ -2970,15 +2970,20 @@ name = "zos-settings"
 version = "0.1.0"
 dependencies = [
  "cairo-rs 0.21.5",
- "clap",
- "gtk",
- "libayatana-appindicator",
  "relm4",
  "serde_json",
  "tracing",
  "tracing-subscriber",
  "zbus",
  "zos-core",
+]
+
+[[package]]
+name = "zos-tray"
+version = "0.1.0"
+dependencies = [
+ "gtk",
+ "libayatana-appindicator",
 ]
 
 [[package]]

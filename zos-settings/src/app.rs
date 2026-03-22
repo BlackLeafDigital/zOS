@@ -142,9 +142,7 @@ impl SimpleComponent for App {
             row_box.append(&icon);
             row_box.append(&label);
 
-            let list_row = gtk::ListBoxRow::builder()
-                .child(&row_box)
-                .build();
+            let list_row = gtk::ListBoxRow::builder().child(&row_box).build();
             sidebar_list.append(&list_row);
         }
 

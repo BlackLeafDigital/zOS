@@ -23,6 +23,7 @@ dnf5 install -y \
     htop \
     tldr \
     git-delta \
+    git-crypt \
     liquidctl
 
 # --- eza (not in Fedora repos, install from GitHub release) ---

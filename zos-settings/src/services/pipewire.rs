@@ -107,12 +107,7 @@ fn parse_device_section(status: &str, section: &str, device_type: DeviceType) ->
 
             let volume = bracket_content
                 .strip_prefix("vol:")
-                .and_then(|s| {
-                    s.replace("MUTED", "")
-                        .trim()
-                        .parse::<f32>()
-                        .ok()
-                });
+                .and_then(|s| s.replace("MUTED", "").trim().parse::<f32>().ok());
 
             (name, volume, muted)
         } else {
@@ -200,14 +195,24 @@ pub fn set_default(device_id: u32) {
 /// List all available output ports (sources of audio data).
 pub fn list_output_ports() -> Vec<String> {
     run_cmd("pw-link", &["--output"])
-        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .map(|s| {
+            s.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// List all available input ports (destinations for audio data).
 pub fn list_input_ports() -> Vec<String> {
     run_cmd("pw-link", &["--input"])
-        .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .map(|s| {
+            s.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
         .unwrap_or_default()
 }
 

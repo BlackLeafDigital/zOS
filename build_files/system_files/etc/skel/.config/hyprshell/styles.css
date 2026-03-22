@@ -1,0 +1,16 @@
+/* =============================================================================
+ * zOS Hyprshell Theme — Catppuccin Mocha
+ * ============================================================================= */
+
+:root {
+    --bg-color: rgba(30, 30, 46, 0.92);           /* base */
+    --bg-color-hover: rgba(49, 50, 68, 1);        /* surface0 */
+    --bg-window-color: rgba(30, 30, 46, 0.92);    /* base */
+    --text-color: rgba(205, 214, 244, 1);          /* text */
+    --border-color: rgba(137, 180, 250, 0.4);      /* blue */
+    --border-color-active: rgba(203, 166, 247, 0.9); /* mauve */
+    --border-radius: 12px;
+    --border-size: 3px;
+    --border-style: solid;
+    --popover-bg-color: rgba(30, 30, 46, 0.95);   /* base */
+}

@@ -1,0 +1,80 @@
+// =============================================================================
+// zOS Hyprshell Configuration (v4.9.4+)
+// Window switcher, overview, and application launcher
+// =============================================================================
+#![enable(implicit_some, unwrap_newtypes, unwrap_variant_newtypes)]
+(
+    version: 3,
+    windows: (
+        scale: 5.5,
+        items_per_row: 5,
+
+        // --- Overview + Launcher (Super key) ---
+        overview: (
+            key: "Super_L",
+            modifier: "super",
+            filter_by: [],
+            hide_filtered: false,
+            exclude_special_workspaces: "",
+            launcher: (
+                launch_modifier: "ctrl",
+                width: 650,
+                max_items: 5,
+                show_when_empty: true,
+                plugins: (
+                    applications: (
+                        run_cache_weeks: 8,
+                        show_execs: true,
+                        show_actions_submenu: true,
+                    ),
+                    terminal: (),
+                    shell: None,
+                    websearch: (
+                        engines: [
+                            (
+                                url: "https://www.google.com/search?q={}",
+                                name: "Google",
+                                key: 'g',
+                            ),
+                            (
+                                url: "https://en.wikipedia.org/wiki/Special:Search?search={}",
+                                name: "Wikipedia",
+                                key: 'w',
+                            ),
+                        ],
+                    ),
+                    calc: (),
+                    path: (),
+                    actions: (
+                        actions: [
+                            lock_screen,
+                            hibernate,
+                            logout,
+                            reboot,
+                            shutdown,
+                            suspend,
+                        ],
+                    ),
+                ),
+            ),
+        ),
+
+        // --- Window Switcher (Alt + Tab) ---
+        switch: (
+            modifier: "alt",
+            key: "Tab",
+            filter_by: [],
+            switch_workspaces: false,
+            exclude_special_workspaces: "",
+        ),
+
+        // --- Window Switcher (Super + Tab) ---
+        switch_2: (
+            modifier: "super",
+            key: "Tab",
+            filter_by: [],
+            switch_workspaces: false,
+            exclude_special_workspaces: "",
+        ),
+    ),
+)

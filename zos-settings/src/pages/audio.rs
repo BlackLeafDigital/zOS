@@ -86,9 +86,7 @@ fn icon_for_device_type(dt: &DeviceType) -> &'static str {
 }
 
 fn build_output_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Output")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Output").build();
 
     let sinks = pipewire::list_sinks();
 
@@ -96,7 +94,15 @@ fn build_output_section() -> adw::PreferencesGroup {
     let model = gtk::StringList::new(&[]);
     let mut default_idx: u32 = 0;
     for (i, sink) in sinks.iter().enumerate() {
-        let label = format!("{} ({})", sink.name, if sink.device_type == DeviceType::Sink { "sink" } else { "source" });
+        let label = format!(
+            "{} ({})",
+            sink.name,
+            if sink.device_type == DeviceType::Sink {
+                "sink"
+            } else {
+                "source"
+            }
+        );
         model.append(&label);
         if sink.is_default {
             default_idx = i as u32;
@@ -104,7 +110,10 @@ fn build_output_section() -> adw::PreferencesGroup {
     }
 
     // Use device_type icon for the combo row
-    let device_icon = sinks.first().map(|s| icon_for_device_type(&s.device_type)).unwrap_or("audio-speakers-symbolic");
+    let device_icon = sinks
+        .first()
+        .map(|s| icon_for_device_type(&s.device_type))
+        .unwrap_or("audio-speakers-symbolic");
     let combo = adw::ComboRow::builder()
         .title("Device")
         .icon_name(device_icon)
@@ -126,12 +135,11 @@ fn build_output_section() -> adw::PreferencesGroup {
     // falling back to the parsed wpctl status value.
     let default_sink = sinks.iter().find(|s| s.is_default);
     let live_vol = pipewire::get_default_volume();
-    let current_vol = live_vol.unwrap_or_else(|| default_sink.and_then(|s| s.volume).unwrap_or(1.0));
+    let current_vol =
+        live_vol.unwrap_or_else(|| default_sink.and_then(|s| s.volume).unwrap_or(1.0));
     let default_id = default_sink.map(|s| s.id).unwrap_or(0);
 
-    let volume_row = adw::ActionRow::builder()
-        .title("Volume")
-        .build();
+    let volume_row = adw::ActionRow::builder().title("Volume").build();
 
     let vol_label = gtk::Label::builder()
         .label(&format!("{}%", (current_vol * 100.0).round() as i32))
@@ -163,9 +171,7 @@ fn build_output_section() -> adw::PreferencesGroup {
     group.add(&volume_row);
 
     // --- Mute toggle ---
-    let mute_row = adw::ActionRow::builder()
-        .title("Mute")
-        .build();
+    let mute_row = adw::ActionRow::builder().title("Mute").build();
 
     // Use is_default_muted() for a live reading of the default sink mute state.
     let muted = pipewire::is_default_muted();
@@ -202,9 +208,7 @@ fn build_output_section() -> adw::PreferencesGroup {
 // ---------------------------------------------------------------------------
 
 fn build_input_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Input")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Input").build();
 
     let sources = pipewire::list_sources();
 
@@ -212,14 +216,25 @@ fn build_input_section() -> adw::PreferencesGroup {
     let model = gtk::StringList::new(&[]);
     let mut default_idx: u32 = 0;
     for (i, source) in sources.iter().enumerate() {
-        let label = format!("{} ({})", source.name, if source.device_type == DeviceType::Source { "source" } else { "sink" });
+        let label = format!(
+            "{} ({})",
+            source.name,
+            if source.device_type == DeviceType::Source {
+                "source"
+            } else {
+                "sink"
+            }
+        );
         model.append(&label);
         if source.is_default {
             default_idx = i as u32;
         }
     }
 
-    let device_icon = sources.first().map(|s| icon_for_device_type(&s.device_type)).unwrap_or("audio-input-microphone-symbolic");
+    let device_icon = sources
+        .first()
+        .map(|s| icon_for_device_type(&s.device_type))
+        .unwrap_or("audio-input-microphone-symbolic");
     let combo = adw::ComboRow::builder()
         .title("Device")
         .icon_name(device_icon)
@@ -241,9 +256,7 @@ fn build_input_section() -> adw::PreferencesGroup {
     let current_vol = default_source.and_then(|s| s.volume).unwrap_or(1.0);
     let default_id = default_source.map(|s| s.id).unwrap_or(0);
 
-    let volume_row = adw::ActionRow::builder()
-        .title("Volume")
-        .build();
+    let volume_row = adw::ActionRow::builder().title("Volume").build();
 
     let vol_label = gtk::Label::builder()
         .label(&format!("{}%", (current_vol * 100.0).round() as i32))
@@ -275,9 +288,7 @@ fn build_input_section() -> adw::PreferencesGroup {
     group.add(&volume_row);
 
     // --- Mute toggle ---
-    let mute_row = adw::ActionRow::builder()
-        .title("Mute")
-        .build();
+    let mute_row = adw::ActionRow::builder().title("Mute").build();
 
     let muted = default_source.map(|s| s.muted).unwrap_or(false);
     let mute_btn = gtk::ToggleButton::builder()
@@ -485,17 +496,15 @@ fn build_routing_section() -> adw::PreferencesGroup {
     let output_ports = pipewire::list_output_ports();
     let input_ports = pipewire::list_input_ports();
 
-    let output_model = gtk::StringList::new(
-        &output_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    );
+    let output_model =
+        gtk::StringList::new(&output_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>());
     let output_dropdown = gtk::DropDown::builder()
         .model(&output_model)
         .valign(gtk::Align::Center)
         .build();
 
-    let input_model = gtk::StringList::new(
-        &input_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    );
+    let input_model =
+        gtk::StringList::new(&input_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>());
     let input_dropdown = gtk::DropDown::builder()
         .model(&input_model)
         .valign(gtk::Align::Center)
@@ -552,8 +561,7 @@ fn build_routing_section() -> adw::PreferencesGroup {
 /// Return the path to the user's PipeWire virtual-devices config file.
 fn virtual_devices_config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
-    PathBuf::from(home)
-        .join(".config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf")
+    PathBuf::from(home).join(".config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf")
 }
 
 /// Map internal sink names to user-friendly labels.
@@ -571,9 +579,7 @@ fn friendly_bus_name(name: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 fn build_advanced_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Advanced")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Advanced").build();
 
     // --- qpwgraph ---
     let graph_row = adw::ActionRow::builder()

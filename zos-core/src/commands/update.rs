@@ -71,9 +71,7 @@ pub fn reboot_message() -> &'static str {
 // --- Internal helpers ---
 
 fn get_current_image() -> String {
-    let output = Command::new("bootc")
-        .args(["status", "--json"])
-        .output();
+    let output = Command::new("bootc").args(["status", "--json"]).output();
 
     match output {
         Ok(o) if o.status.success() => {

@@ -1,6 +1,5 @@
 // === tui/migrate.rs — Migration view with selection and apply ===
 
-use zos_core::commands::migrate::{apply_migrations, plan_migrations, MigrationAction};
 use crate::tui::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -10,6 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
+use zos_core::commands::migrate::{apply_migrations, plan_migrations, MigrationAction};
 
 #[derive(Debug)]
 pub struct MigrateView {

@@ -1,7 +1,5 @@
 // === tui/setup.rs — First-login setup checklist view ===
 
-use zos_core::commands::setup::{self, SetupStep};
-use zos_core::config;
 use crate::tui::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -11,6 +9,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
+use zos_core::commands::setup::{self, SetupStep};
+use zos_core::config;
 
 #[derive(Debug)]
 pub struct SetupView {

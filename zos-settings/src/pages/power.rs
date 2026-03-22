@@ -6,9 +6,7 @@ use relm4::gtk;
 
 /// Show a confirmation dialog before executing a power action.
 fn confirm_power_action(btn: &gtk::Button, title: &str, body: &str, action: fn()) {
-    let window = btn
-        .root()
-        .and_then(|r| r.downcast::<gtk::Window>().ok());
+    let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
 
     #[allow(deprecated)]
     let dialog = gtk::MessageDialog::builder()

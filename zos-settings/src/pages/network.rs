@@ -18,9 +18,7 @@ pub fn build() -> gtk::Box {
         .build();
 
     // --- Connection Status ---
-    let conn_group = adw::PreferencesGroup::builder()
-        .title("Connection")
-        .build();
+    let conn_group = adw::PreferencesGroup::builder().title("Connection").build();
 
     let active_connections = get_active_connections();
     if active_connections.is_empty() {
@@ -44,9 +42,7 @@ pub fn build() -> gtk::Box {
     page.append(&conn_group);
 
     // --- WiFi Networks ---
-    let wifi_group = adw::PreferencesGroup::builder()
-        .title("WiFi")
-        .build();
+    let wifi_group = adw::PreferencesGroup::builder().title("WiFi").build();
 
     let networks = get_wifi_networks();
     if networks.is_empty() {
@@ -93,9 +89,7 @@ pub fn build() -> gtk::Box {
     page.append(&wifi_group);
 
     // --- IP Details ---
-    let details_group = adw::PreferencesGroup::builder()
-        .title("Details")
-        .build();
+    let details_group = adw::PreferencesGroup::builder().title("Details").build();
 
     let (ip, gateway, dns) = get_ip_details();
 
@@ -157,7 +151,14 @@ pub fn build() -> gtk::Box {
 /// Parse active connections from nmcli.
 fn get_active_connections() -> Vec<(String, String, String)> {
     let output = Command::new("nmcli")
-        .args(["-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"])
+        .args([
+            "-t",
+            "-f",
+            "NAME,TYPE,DEVICE",
+            "connection",
+            "show",
+            "--active",
+        ])
         .output();
 
     match output {

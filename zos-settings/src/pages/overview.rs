@@ -57,7 +57,10 @@ pub fn build() -> gtk::Box {
 
     let health_group = adw::PreferencesGroup::builder()
         .title("Health Checks")
-        .description(format!("{} passed, {} warnings, {} failed", pass, warn, fail))
+        .description(format!(
+            "{} passed, {} warnings, {} failed",
+            pass, warn, fail
+        ))
         .build();
 
     for check in &checks {

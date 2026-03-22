@@ -114,9 +114,7 @@ pub fn build() -> gtk::Box {
 // ---------------------------------------------------------------------------
 
 fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Keyboard")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Keyboard").build();
 
     let layout_options = ["us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "kr"];
     let layout_model = gtk::StringList::new(&layout_options);
@@ -198,14 +196,10 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
 // ---------------------------------------------------------------------------
 
 fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Mouse")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Mouse").build();
 
     // --- Sensitivity slider ---
-    let sensitivity_row = adw::ActionRow::builder()
-        .title("Sensitivity")
-        .build();
+    let sensitivity_row = adw::ActionRow::builder().title("Sensitivity").build();
 
     let sens_adj = gtk::Adjustment::new(0.0, -1.0, 1.0, 0.1, 0.5, 0.0);
     let sens_scale = gtk::Scale::builder()
@@ -268,9 +262,7 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
 // ---------------------------------------------------------------------------
 
 fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Touchpad")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Touchpad").build();
 
     // --- Natural scroll ---
     let natural_row = adw::ActionRow::builder()

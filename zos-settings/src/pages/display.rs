@@ -137,8 +137,20 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
     cr.new_sub_path();
     cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
     cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
-    cr.arc(x + r, y + h - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-    cr.arc(x + r, y + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+    cr.arc(
+        x + r,
+        y + h - r,
+        r,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+    );
+    cr.arc(
+        x + r,
+        y + r,
+        r,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    );
     cr.close_path();
 }
 
@@ -152,10 +164,7 @@ fn build_monitor_canvas(configs: &Arc<Mutex<Vec<MonitorConfig>>>) -> gtk::Drawin
     let initial_thumbs: Vec<Option<gtk::cairo::ImageSurface>> = {
         let cfgs = configs.lock().unwrap();
         cfgs.iter()
-            .map(|cfg| {
-                capture_monitor_png(&cfg.name)
-                    .and_then(|png| png_to_surface(&png))
-            })
+            .map(|cfg| capture_monitor_png(&cfg.name).and_then(|png| png_to_surface(&png)))
             .collect()
     };
     let thumbnails: Arc<Mutex<Vec<Option<gtk::cairo::ImageSurface>>>> =
@@ -173,7 +182,11 @@ fn build_monitor_canvas(configs: &Arc<Mutex<Vec<MonitorConfig>>>) -> gtk::Drawin
         let canvas_h = canvas_h as f64;
 
         // Fill background with Catppuccin Base
-        cr.set_source_rgb(0x1e as f64 / 255.0, 0x1e as f64 / 255.0, 0x2e as f64 / 255.0);
+        cr.set_source_rgb(
+            0x1e as f64 / 255.0,
+            0x1e as f64 / 255.0,
+            0x2e as f64 / 255.0,
+        );
         cr.paint().ok();
 
         // Calculate bounding box of all monitors
@@ -228,24 +241,44 @@ fn build_monitor_canvas(configs: &Arc<Mutex<Vec<MonitorConfig>>>) -> gtk::Drawin
                 cr.restore().ok();
             } else {
                 // Fallback: Surface0 (#313244)
-                cr.set_source_rgb(0x31 as f64 / 255.0, 0x32 as f64 / 255.0, 0x44 as f64 / 255.0);
+                cr.set_source_rgb(
+                    0x31 as f64 / 255.0,
+                    0x32 as f64 / 255.0,
+                    0x44 as f64 / 255.0,
+                );
                 rounded_rect(cr, rx, ry, rw, rh, corner);
                 cr.fill().ok();
             }
 
             // Border: Blue (#89b4fa) for first monitor, Surface1 (#45475a) for others
             if i == 0 {
-                cr.set_source_rgb(0x89 as f64 / 255.0, 0xb4 as f64 / 255.0, 0xfa as f64 / 255.0);
+                cr.set_source_rgb(
+                    0x89 as f64 / 255.0,
+                    0xb4 as f64 / 255.0,
+                    0xfa as f64 / 255.0,
+                );
             } else {
-                cr.set_source_rgb(0x45 as f64 / 255.0, 0x47 as f64 / 255.0, 0x5a as f64 / 255.0);
+                cr.set_source_rgb(
+                    0x45 as f64 / 255.0,
+                    0x47 as f64 / 255.0,
+                    0x5a as f64 / 255.0,
+                );
             }
             cr.set_line_width(2.0);
             rounded_rect(cr, rx, ry, rw, rh, corner);
             cr.stroke().ok();
 
             // Monitor name — Text color (#cdd6f4)
-            cr.set_source_rgb(0xcd as f64 / 255.0, 0xd6 as f64 / 255.0, 0xf4 as f64 / 255.0);
-            cr.select_font_face("sans-serif", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Bold);
+            cr.set_source_rgb(
+                0xcd as f64 / 255.0,
+                0xd6 as f64 / 255.0,
+                0xf4 as f64 / 255.0,
+            );
+            cr.select_font_face(
+                "sans-serif",
+                gtk::cairo::FontSlant::Normal,
+                gtk::cairo::FontWeight::Bold,
+            );
             cr.set_font_size(14.0);
             let name = &cfg.name;
             if let Ok(extents) = cr.text_extents(name) {
@@ -256,8 +289,16 @@ fn build_monitor_canvas(configs: &Arc<Mutex<Vec<MonitorConfig>>>) -> gtk::Drawin
             }
 
             // Resolution text — Subtext color (#a6adc8)
-            cr.set_source_rgb(0xa6 as f64 / 255.0, 0xad as f64 / 255.0, 0xc8 as f64 / 255.0);
-            cr.select_font_face("sans-serif", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
+            cr.set_source_rgb(
+                0xa6 as f64 / 255.0,
+                0xad as f64 / 255.0,
+                0xc8 as f64 / 255.0,
+            );
+            cr.select_font_face(
+                "sans-serif",
+                gtk::cairo::FontSlant::Normal,
+                gtk::cairo::FontWeight::Normal,
+            );
             cr.set_font_size(11.0);
             let res_text = format!("{}x{}", cfg.width, cfg.height);
             if let Ok(extents) = cr.text_extents(&res_text) {
@@ -305,9 +346,7 @@ fn build_monitors_section(
     shared_configs: &Arc<Mutex<Vec<MonitorConfig>>>,
     monitors: &[MonitorConfig],
 ) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Displays")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Displays").build();
 
     if monitors.is_empty() {
         let empty_row = adw::ActionRow::builder()
@@ -319,7 +358,12 @@ fn build_monitors_section(
     }
 
     let resolution_options = [
-        "1920x1080", "2560x1440", "3840x2160", "1920x1200", "2560x1600", "3440x1440",
+        "1920x1080",
+        "2560x1440",
+        "3840x2160",
+        "1920x1200",
+        "2560x1600",
+        "3440x1440",
     ];
     let scale_options = ["1.0", "1.25", "1.5", "1.75", "2.0"];
     let transform_options = [
@@ -481,9 +525,7 @@ fn build_monitors_section(
                 Err(e) => tracing::error!("Failed to write monitor config: {}", e),
             }
 
-            let _ = std::process::Command::new("hyprctl")
-                .arg("reload")
-                .status();
+            let _ = std::process::Command::new("hyprctl").arg("reload").status();
             tracing::info!("Hyprland config reloaded");
         });
     }
@@ -500,9 +542,7 @@ fn build_monitors_section(
 // ---------------------------------------------------------------------------
 
 fn build_tools_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Tools")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Tools").build();
 
     let nwg_row = adw::ActionRow::builder()
         .title("Open nwg-displays")
@@ -514,12 +554,12 @@ fn build_tools_section() -> adw::PreferencesGroup {
         .valign(gtk::Align::Center)
         .build();
 
-    nwg_btn.connect_clicked(|_| {
-        match std::process::Command::new("nwg-displays").spawn() {
+    nwg_btn.connect_clicked(
+        |_| match std::process::Command::new("nwg-displays").spawn() {
             Ok(_) => tracing::info!("Launched nwg-displays"),
             Err(e) => tracing::error!("Failed to launch nwg-displays: {}", e),
-        }
-    });
+        },
+    );
 
     nwg_row.add_suffix(&nwg_btn);
     nwg_row.set_activatable_widget(Some(&nwg_btn));

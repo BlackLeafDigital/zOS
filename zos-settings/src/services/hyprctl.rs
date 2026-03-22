@@ -10,7 +10,5 @@ pub fn keyword(key: &str, value: &str) {
 /// Reload Hyprland configuration.
 #[allow(dead_code)]
 pub fn reload() {
-    let _ = Command::new("hyprctl")
-        .args(["reload"])
-        .status();
+    let _ = Command::new("hyprctl").args(["reload"]).status();
 }

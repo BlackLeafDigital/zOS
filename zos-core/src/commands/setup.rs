@@ -186,4 +186,3 @@ fn is_zsh_default() -> bool {
         })
         .unwrap_or(false)
 }
-

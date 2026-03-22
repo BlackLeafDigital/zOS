@@ -1,6 +1,5 @@
 // === tui/grub.rs — GRUB management view ===
 
-use zos_core::commands::grub;
 use crate::tui::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -10,6 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
+use zos_core::commands::grub;
 
 #[derive(Debug, PartialEq)]
 enum GrubMode {

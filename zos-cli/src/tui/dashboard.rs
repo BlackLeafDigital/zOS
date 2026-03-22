@@ -1,6 +1,5 @@
 // === tui/dashboard.rs — Main dashboard view ===
 
-use zos_core::commands::status::{get_config_status, get_system_info};
 use crate::tui::theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Frame,
 };
+use zos_core::commands::status::{get_config_status, get_system_info};
 
 pub fn render(frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()

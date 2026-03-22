@@ -34,9 +34,7 @@ pub fn build() -> gtk::Box {
     }
 
     // --- GRUB Settings ---
-    let boot_group = adw::PreferencesGroup::builder()
-        .title("Boot")
-        .build();
+    let boot_group = adw::PreferencesGroup::builder().title("Boot").build();
 
     let timeout_val = status.current_timeout.unwrap_or(0) as f64;
     let timeout_row = adw::ActionRow::builder()
@@ -94,17 +92,12 @@ pub fn build() -> gtk::Box {
     page.append(&boot_group);
 
     // --- Dual Boot / Windows ---
-    let windows_group = adw::PreferencesGroup::builder()
-        .title("Windows")
-        .build();
+    let windows_group = adw::PreferencesGroup::builder().title("Windows").build();
 
     let detected_row = adw::ActionRow::builder()
         .title("Windows Detected")
         .subtitle(if status.windows_detected {
-            status
-                .windows_path
-                .as_deref()
-                .unwrap_or("Yes")
+            status.windows_path.as_deref().unwrap_or("Yes")
         } else {
             "No"
         })
@@ -131,17 +124,15 @@ pub fn build() -> gtk::Box {
             .valign(gtk::Align::Center)
             .css_classes(["suggested-action"])
             .build();
-        create_btn.connect_clicked(move |btn| {
-            match grub::create_windows_bls() {
-                Ok(()) => {
-                    tracing::info!("Windows BLS entry created");
-                    btn.set_label("Created");
-                    btn.set_sensitive(false);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create Windows BLS entry: {}", e);
-                    btn.set_label("Error");
-                }
+        create_btn.connect_clicked(move |btn| match grub::create_windows_bls() {
+            Ok(()) => {
+                tracing::info!("Windows BLS entry created");
+                btn.set_label("Created");
+                btn.set_sensitive(false);
+            }
+            Err(e) => {
+                tracing::error!("Failed to create Windows BLS entry: {}", e);
+                btn.set_label("Error");
             }
         });
         create_row.add_suffix(&create_btn);

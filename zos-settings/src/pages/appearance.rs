@@ -130,9 +130,7 @@ pub fn build() -> gtk::Box {
 // ---------------------------------------------------------------------------
 
 fn build_theme_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Theme")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Theme").build();
 
     // --- Dark/Light mode ---
     let current_scheme = gsettings_get("org.gnome.desktop.interface", "color-scheme");
@@ -177,9 +175,7 @@ fn build_theme_section() -> adw::PreferencesGroup {
 // ---------------------------------------------------------------------------
 
 fn build_cursor_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Cursor")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Cursor").build();
 
     let size_options = ["16", "24", "32", "48"];
     let size_model = gtk::StringList::new(&size_options);
@@ -209,9 +205,7 @@ fn build_cursor_section() -> adw::PreferencesGroup {
 // ---------------------------------------------------------------------------
 
 fn build_font_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Font")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Font").build();
 
     let current_font = gsettings_get("org.gnome.desktop.interface", "font-name");
     let font_row = adw::ActionRow::builder()
@@ -228,9 +222,7 @@ fn build_font_section() -> adw::PreferencesGroup {
 // ---------------------------------------------------------------------------
 
 fn build_wallpaper_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Wallpaper")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Wallpaper").build();
 
     let current_wp = read_wallpaper_path();
 
@@ -259,9 +251,7 @@ fn build_wallpaper_section() -> adw::PreferencesGroup {
         filter.add_mime_type("image/webp");
         filter.set_name(Some("Images"));
 
-        let window = btn
-            .root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
 
         #[allow(deprecated)]
         let chooser = gtk::FileChooserDialog::new(

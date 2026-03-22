@@ -22,9 +22,7 @@ dnf5 install -y \
     hyprpicker \
     hyprland-guiutils \
     xdg-desktop-portal-hyprland \
-    waybar \
     wofi \
-    SwayNotificationCenter \
     grim \
     slurp \
     swappy \
@@ -32,14 +30,21 @@ dnf5 install -y \
     playerctl \
     pamixer \
     wlogout \
-    blueman \
-    network-manager-applet \
     qpwgraph \
     easyeffects \
     pavucontrol \
     qt5ct \
     qt6ct \
     papirus-icon-theme
+
+# --- HyprPanel (Ubuntu-style panel with quick settings, replaces waybar+swaync+blueman+nm-applet) ---
+# Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
+dnf5 install -y \
+    hyprpanel \
+    libgtop2
+
+# Keep waybar as fallback (user can switch in autostart)
+dnf5 install -y waybar
 
 # --- cliphist (clipboard history, not in Fedora 43 repos) ---
 CURL_GH_OPTS=(--connect-timeout 10 --retry 3)

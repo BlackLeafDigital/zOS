@@ -10,6 +10,7 @@ COPY Cargo.lock /Cargo.lock
 COPY zos-core /zos-core
 COPY zos-cli /zos-cli
 COPY zos-settings /zos-settings
+COPY zos-tray /zos-tray
 
 FROM ${BASE_IMAGE}
 
@@ -20,9 +21,10 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
-    cargo build --release -p zos -p zos-settings && \
+    cargo build --release -p zos -p zos-settings -p zos-tray && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
+    cp /tmp/cargo-target/release/zos-tray /usr/bin/zos-tray && \
     dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel
 
 ### BUILD ReGreet (GTK4 login greeter)
