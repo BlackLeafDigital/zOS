@@ -162,7 +162,8 @@ impl SimpleComponent for App {
 
         // --- Build content stack ---
         let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
+            .transition_type(gtk::StackTransitionType::SlideLeftRight)
+            .transition_duration(200)
             .hexpand(true)
             .vexpand(true)
             .build();

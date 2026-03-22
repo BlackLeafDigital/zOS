@@ -1,87 +1,54 @@
-// === tray.rs — System tray icon for zOS Settings ===
+// === tray.rs — System tray icon via libayatana-appindicator ===
 //
-// Provides a StatusNotifierItem tray using ksni.
-// Left-click toggles the settings window (TODO), right-click
-// shows power actions and a quit option.
+// Uses GTK3-based AppIndicator (same protocol as nm-applet, blueman).
+// Runs on a separate thread from the GTK4 main app.
 
-use ksni::TrayMethods;
+use gtk3::prelude::*;
+use libayatana_appindicator::{AppIndicator, AppIndicatorStatus};
 
 use crate::services::power;
 
-#[derive(Debug)]
-pub(crate) struct ZosTray;
+/// Run the system tray. Blocks forever (calls gtk3::main).
+/// Must be called from a dedicated thread — NOT the GTK4 main thread.
+pub fn run_tray() {
+    gtk3::init().expect("failed to init GTK3 for tray");
 
-impl ksni::Tray for ZosTray {
-    fn id(&self) -> String {
-        "zos-settings".into()
-    }
+    let mut indicator = AppIndicator::new("zos-settings", "zos-settings");
+    indicator.set_status(AppIndicatorStatus::Active);
+    indicator.set_title("zOS Settings");
 
-    fn icon_name(&self) -> String {
-        "zos-settings".into()
-    }
+    let mut menu = gtk3::Menu::new();
 
-    fn title(&self) -> String {
-        "zOS Settings".into()
-    }
+    let open_item = gtk3::MenuItem::with_label("Open Settings");
+    open_item.connect_activate(|_| {
+        std::process::Command::new("zos-settings").spawn().ok();
+    });
+    menu.append(&open_item);
 
-    fn category(&self) -> ksni::Category {
-        ksni::Category::SystemServices
-    }
+    menu.append(&gtk3::SeparatorMenuItem::new());
 
-    fn activate(&mut self, _x: i32, _y: i32) {
-        // TODO: show/hide window
-        println!("TODO: show/hide window");
-    }
+    let suspend_item = gtk3::MenuItem::with_label("Suspend");
+    suspend_item.connect_activate(|_| power::suspend());
+    menu.append(&suspend_item);
 
-    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::*;
-        vec![
-            StandardItem {
-                label: "Open Settings".into(),
-                activate: Box::new(|_| {
-                    // TODO: show/hide window
-                    println!("TODO: show/hide window");
-                }),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-            StandardItem {
-                label: "Suspend".into(),
-                icon_name: "system-suspend-symbolic".into(),
-                activate: Box::new(|_| power::suspend()),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: "Reboot".into(),
-                icon_name: "system-reboot-symbolic".into(),
-                activate: Box::new(|_| power::reboot()),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: "Shut Down".into(),
-                icon_name: "system-shutdown-symbolic".into(),
-                activate: Box::new(|_| power::shutdown()),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-            StandardItem {
-                label: "Quit".into(),
-                icon_name: "application-exit".into(),
-                activate: Box::new(|_| std::process::exit(0)),
-                ..Default::default()
-            }
-            .into(),
-        ]
-    }
-}
+    let reboot_item = gtk3::MenuItem::with_label("Reboot");
+    reboot_item.connect_activate(|_| power::reboot());
+    menu.append(&reboot_item);
 
-/// Spawn the system tray icon. Returns the handle; the tray runs
-/// until the handle is dropped or the process exits.
-pub async fn run_tray() -> Result<ksni::Handle<ZosTray>, ksni::Error> {
-    let tray = ZosTray;
-    tray.spawn().await
+    let shutdown_item = gtk3::MenuItem::with_label("Shut Down");
+    shutdown_item.connect_activate(|_| power::shutdown());
+    menu.append(&shutdown_item);
+
+    menu.append(&gtk3::SeparatorMenuItem::new());
+
+    let quit_item = gtk3::MenuItem::with_label("Quit");
+    quit_item.connect_activate(|_| {
+        std::process::exit(0);
+    });
+    menu.append(&quit_item);
+
+    menu.show_all();
+    indicator.set_menu(&mut menu);
+
+    gtk3::main();
 }

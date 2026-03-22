@@ -202,30 +202,36 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
         .title("Mouse")
         .build();
 
-    // --- Sensitivity ---
+    // --- Sensitivity slider ---
     let sensitivity_row = adw::ActionRow::builder()
         .title("Sensitivity")
-        .subtitle("-1.0 (slow) to 1.0 (fast)")
         .build();
 
     let sens_adj = gtk::Adjustment::new(0.0, -1.0, 1.0, 0.1, 0.5, 0.0);
-    let sens_spin = gtk::SpinButton::builder()
+    let sens_scale = gtk::Scale::builder()
         .adjustment(&sens_adj)
+        .orientation(gtk::Orientation::Horizontal)
+        .draw_value(true)
         .digits(1)
+        .hexpand(true)
+        .width_request(200)
         .valign(gtk::Align::Center)
         .build();
+    sens_scale.add_mark(-1.0, gtk::PositionType::Bottom, Some("Slow"));
+    sens_scale.add_mark(0.0, gtk::PositionType::Bottom, Some("Default"));
+    sens_scale.add_mark(1.0, gtk::PositionType::Bottom, Some("Fast"));
 
     {
         let state = Arc::clone(&state);
-        sens_spin.connect_value_changed(move |spin| {
-            let val = spin.value();
+        sens_scale.connect_value_changed(move |scale| {
+            let val = scale.value();
             hyprctl::keyword("input:sensitivity", &format!("{:.1}", val));
             state.lock().unwrap().sensitivity = val;
             persist_state(&state);
         });
     }
 
-    sensitivity_row.add_suffix(&sens_spin);
+    sensitivity_row.add_suffix(&sens_scale);
     group.add(&sensitivity_row);
 
     // --- Acceleration profile ---

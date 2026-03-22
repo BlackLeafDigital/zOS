@@ -29,9 +29,33 @@
 @define-color error_fg_color #1e1e2e;
 @define-color error_color #f38ba8;
 
-.navigation-sidebar { background-color: #181825; }
-.navigation-sidebar row:selected { background-color: #313244; }
-.navigation-sidebar row:hover { background-color: alpha(#45475a, 0.5); }
+/* --- Sidebar --- */
+.navigation-sidebar {
+    background-color: #181825;
+    padding: 8px;
+}
+
+.navigation-sidebar row {
+    border-radius: 8px;
+    margin: 2px 4px;
+    padding: 4px 0;
+    transition: background-color 200ms ease;
+}
+
+.navigation-sidebar row:selected {
+    background-color: alpha(#89b4fa, 0.15);
+    border-left: 3px solid #89b4fa;
+}
+
+.navigation-sidebar row:selected image {
+    color: #89b4fa;
+}
+
+.navigation-sidebar row:hover:not(:selected) {
+    background-color: alpha(#45475a, 0.4);
+}
+
+/* --- Health indicators --- */
 .health-pass { color: #a6e3a1; }
 .health-warn { color: #f9e2af; }
 .health-fail { color: #f38ba8; }

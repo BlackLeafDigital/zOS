@@ -1,10 +1,46 @@
 // === pages/audio.rs — Audio management page (VoiceMeeter-inspired) ===
 
+use std::path::PathBuf;
+
 use relm4::adw;
 use relm4::adw::prelude::*;
 use relm4::gtk;
 
 use crate::services::pipewire::{self, DeviceType};
+
+const VIRTUAL_DEVICES_CONFIG: &str = r#"context.objects = [
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-main"
+          node.description = "Main Output"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-music"
+          node.description = "Music"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+    { factory = adapter
+      args = {
+          factory.name   = support.null-audio-sink
+          node.name       = "zos-chat"
+          node.description = "Chat / Voice"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }
+    }
+]
+"#;
 
 /// Build the audio page widget.
 pub fn build() -> gtk::Box {
@@ -289,11 +325,66 @@ fn build_virtual_buses_section() -> adw::PreferencesGroup {
         .collect();
 
     if virtual_sinks.is_empty() {
-        let empty_row = adw::ActionRow::builder()
-            .title("No virtual buses detected")
-            .subtitle("zOS audio buses will appear here when PipeWire is running")
-            .build();
-        group.add(&empty_row);
+        let config_path = virtual_devices_config_path();
+        if config_path.exists() {
+            let empty_row = adw::ActionRow::builder()
+                .title("No virtual buses detected")
+                .subtitle("Config exists but PipeWire hasn't loaded it — try restarting PipeWire")
+                .build();
+            group.add(&empty_row);
+        } else {
+            let setup_row = adw::ActionRow::builder()
+                .title("Virtual audio buses aren't set up yet")
+                .subtitle("Create the PipeWire config and restart the audio server")
+                .build();
+
+            let setup_btn = gtk::Button::builder()
+                .label("Set Up Now")
+                .valign(gtk::Align::Center)
+                .css_classes(["suggested-action"])
+                .build();
+
+            setup_btn.connect_clicked(move |btn| {
+                let path = virtual_devices_config_path();
+                if let Some(parent) = path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        tracing::error!("Failed to create directory {:?}: {}", parent, e);
+                        btn.set_label("Error");
+                        btn.set_sensitive(false);
+                        return;
+                    }
+                }
+                if let Err(e) = std::fs::write(&path, VIRTUAL_DEVICES_CONFIG) {
+                    tracing::error!("Failed to write config {:?}: {}", path, e);
+                    btn.set_label("Error");
+                    btn.set_sensitive(false);
+                    return;
+                }
+                tracing::info!("Wrote virtual devices config to {:?}", path);
+
+                match std::process::Command::new("systemctl")
+                    .args(["--user", "restart", "pipewire"])
+                    .status()
+                {
+                    Ok(status) if status.success() => {
+                        tracing::info!("Restarted PipeWire");
+                    }
+                    Ok(status) => {
+                        tracing::error!("systemctl restart pipewire exited with {}", status);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to restart PipeWire: {}", e);
+                    }
+                }
+
+                btn.set_label("Done — reopen Audio page");
+                btn.set_sensitive(false);
+            });
+
+            setup_row.add_suffix(&setup_btn);
+            setup_row.set_activatable_widget(Some(&setup_btn));
+            group.add(&setup_row);
+        }
         return group;
     }
 
@@ -456,6 +547,13 @@ fn build_routing_section() -> adw::PreferencesGroup {
     group.add(&connect_row);
 
     group
+}
+
+/// Return the path to the user's PipeWire virtual-devices config file.
+fn virtual_devices_config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
+    PathBuf::from(home)
+        .join(".config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf")
 }
 
 /// Map internal sink names to user-friendly labels.

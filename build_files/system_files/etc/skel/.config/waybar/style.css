@@ -79,3 +79,28 @@ window#waybar {
 #tray {
     color: #cdd6f4;
 }
+
+/* --- Tray dropdown menus (Catppuccin Mocha) --- */
+#tray menu {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+#tray menu menuitem {
+    padding: 6px 12px;
+    border-radius: 6px;
+    min-height: 24px;
+}
+
+#tray menu menuitem:hover {
+    background-color: rgba(137, 180, 250, 0.15);
+}
+
+#tray menu separator {
+    background-color: #45475a;
+    margin: 4px 8px;
+    min-height: 1px;
+}
