@@ -63,6 +63,14 @@ mkdir -p /etc/skel/.config/pipewire/pipewire.conf.d
 cp /ctx/system_files/etc/skel/.config/pipewire/pipewire.conf.d/10-zos-virtual-devices.conf \
    /etc/skel/.config/pipewire/pipewire.conf.d/
 
+# --- Flatpak overrides for dev apps (full filesystem access) ---
+mkdir -p /var/lib/flatpak/overrides
+cat > /var/lib/flatpak/overrides/com.visualstudio.code << 'FLATPAK_EOF'
+[Context]
+filesystems=home;host;/tmp;
+sockets=ssh-auth;
+FLATPAK_EOF
+
 # --- System limits (nofile, nproc, memlock, core) ---
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
