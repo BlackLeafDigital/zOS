@@ -41,7 +41,8 @@ dnf5 install -y \
 # Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
 dnf5 install -y \
     hyprpanel \
-    libgtop2
+    libgtop2 \
+    swww
 
 # Keep waybar as fallback (user can switch in autostart)
 dnf5 install -y waybar

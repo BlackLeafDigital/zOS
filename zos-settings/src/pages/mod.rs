@@ -6,4 +6,5 @@ pub mod display;
 pub mod input;
 pub mod network;
 pub mod overview;
+pub mod panel;
 pub mod power;

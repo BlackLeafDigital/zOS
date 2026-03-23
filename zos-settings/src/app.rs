@@ -15,6 +15,7 @@ pub enum Page {
     Display,
     Audio,
     Appearance,
+    Panel,
     Input,
     Network,
     DevSetup,
@@ -29,6 +30,7 @@ impl Page {
             Page::Display => "Display",
             Page::Audio => "Audio",
             Page::Appearance => "Appearance",
+            Page::Panel => "Panel",
             Page::Input => "Input",
             Page::Network => "Network",
             Page::DevSetup => "Developer Setup",
@@ -43,6 +45,7 @@ impl Page {
             Page::Display => "video-display-symbolic",
             Page::Audio => "audio-volume-high-symbolic",
             Page::Appearance => "applications-graphics-symbolic",
+            Page::Panel => "view-app-grid-symbolic",
             Page::Input => "input-keyboard-symbolic",
             Page::Network => "network-wireless-symbolic",
             Page::DevSetup => "utilities-terminal-symbolic",
@@ -57,6 +60,7 @@ impl Page {
             Page::Display => "display",
             Page::Audio => "audio",
             Page::Appearance => "appearance",
+            Page::Panel => "panel",
             Page::Input => "input",
             Page::Network => "network",
             Page::DevSetup => "devsetup",
@@ -71,6 +75,7 @@ const ALL_PAGES: &[Page] = &[
     Page::Display,
     Page::Audio,
     Page::Appearance,
+    Page::Panel,
     Page::Input,
     Page::Network,
     Page::DevSetup,
@@ -177,6 +182,9 @@ impl SimpleComponent for App {
 
         let appearance_page = pages::appearance::build();
         stack.add_named(&appearance_page, Some(Page::Appearance.stack_name()));
+
+        let panel_page = pages::panel::build();
+        stack.add_named(&panel_page, Some(Page::Panel.stack_name()));
 
         let input_page = pages::input::build();
         stack.add_named(&input_page, Some(Page::Input.stack_name()));

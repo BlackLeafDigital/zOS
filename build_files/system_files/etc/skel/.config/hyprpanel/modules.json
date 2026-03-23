@@ -1,0 +1,11 @@
+{
+    "custom/zos-settings": {
+        "icon": "",
+        "label": "",
+        "tooltip": "zOS Settings",
+        "actions": {
+            "onLeftClick": "zos-settings",
+            "onRightClick": "hyprpanel -t settingsDialog"
+        }
+    }
+}
