@@ -146,7 +146,7 @@ fn check_pipewire() -> DoctorCheck {
 
 fn check_expected_packages() -> Vec<DoctorCheck> {
     let packages = [
-        "waybar", "wofi", "swaync", "cliphist", "swaylock", "grim", "slurp", "wl-copy",
+        "waybar", "clipse", "wl-clip-persist", "hyprlock", "grim", "slurp", "wl-copy",
     ];
 
     packages

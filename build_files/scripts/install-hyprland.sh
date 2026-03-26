@@ -42,17 +42,24 @@ dnf5 install -y \
 dnf5 install -y \
     hyprpanel \
     libgtop2 \
-    swww
+    swww \
+    xwaylandvideobridge
 
 # Keep waybar as fallback (user can switch in autostart)
 dnf5 install -y waybar
 
-# --- cliphist (clipboard history, not in Fedora 43 repos) ---
+# --- clipse (pretty clipboard TUI with image previews, replaces cliphist+wofi) ---
 CURL_GH_OPTS=(--connect-timeout 10 --retry 3)
 if [ -n "${GITHUB_TOKEN:-}" ]; then CURL_GH_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
-CLIPHIST_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/sentriz/cliphist/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
-curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" -o /usr/bin/cliphist "https://github.com/sentriz/cliphist/releases/download/v${CLIPHIST_VERSION}/v${CLIPHIST_VERSION}-linux-amd64"
-chmod +x /usr/bin/cliphist
+CLIPSE_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/savedra1/clipse/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" -o /tmp/clipse.tar.gz "https://github.com/savedra1/clipse/releases/download/v${CLIPSE_VERSION}/clipse_v${CLIPSE_VERSION}_linux_wayland_amd64.tar.gz"
+tar -xzf /tmp/clipse.tar.gz -C /tmp/
+mv /tmp/clipse-linux-wayland-amd64 /usr/bin/clipse
+chmod +x /usr/bin/clipse
+rm /tmp/clipse.tar.gz
+
+# --- wl-clip-persist is built in a separate Containerfile stage ---
+# Binary is already at /usr/bin/wl-clip-persist
 
 # --- Catppuccin Mocha cursors ---
 CURSOR_URL="https://github.com/catppuccin/cursors/releases/latest/download/catppuccin-mocha-dark-cursors.zip"

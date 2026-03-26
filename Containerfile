@@ -11,20 +11,22 @@ COPY zos-core /zos-core
 COPY zos-cli /zos-cli
 COPY zos-settings /zos-settings
 COPY zos-tray /zos-tray
+COPY zos-dock /zos-dock
 
 FROM ${BASE_IMAGE}
 
-### BUILD Rust workspace (zos-cli + zos-settings)
+### BUILD Rust workspace (zos-cli + zos-settings + zos-tray + zos-dock)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
-    cargo build --release -p zos -p zos-settings -p zos-tray && \
+    cargo build --release -p zos -p zos-settings -p zos-tray -p zos-dock && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
     cp /tmp/cargo-target/release/zos-tray /usr/bin/zos-tray && \
+    cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
     dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel
 
 ### BUILD ReGreet (GTK4 login greeter)
@@ -40,6 +42,21 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
     cp /tmp/cargo-target/release/regreet /usr/bin/regreet && \
     dnf5 remove -y rust cargo gtk4-devel git
+
+### BUILD wl-clip-persist (keeps clipboard data after source app closes)
+ARG GH_TOKEN
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=tmpfs,dst=/tmp \
+    dnf5 install -y rust cargo git && \
+    export HOME=/tmp && \
+    if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
+    git clone --depth 1 https://github.com/Linus789/wl-clip-persist.git /tmp/wl-clip-persist && \
+    cd /tmp/wl-clip-persist && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
+    cp /tmp/cargo-target/release/wl-clip-persist /usr/bin/wl-clip-persist && \
+    chmod +x /usr/bin/wl-clip-persist && \
+    dnf5 remove -y rust cargo git
 
 ### MODIFICATIONS
 ARG GH_TOKEN

@@ -1,0 +1,31 @@
+#!/bin/bash
+# =============================================================================
+# zOS Skeleton Sync — deploy missing configs from /etc/skel to user's home
+# Runs on login via Hyprland autostart. Only copies files that DON'T exist.
+# =============================================================================
+
+SKEL_DIRS=(
+    ".config/hyprshell"
+    ".config/hyprpanel"
+    ".config/pipewire/pipewire.conf.d"
+    ".config/wezterm"
+    ".config/hypr"
+    ".config/waybar"
+    ".config/wlogout"
+)
+
+for dir in "${SKEL_DIRS[@]}"; do
+    if [ -d "/etc/skel/$dir" ]; then
+        mkdir -p "$HOME/$dir"
+        for f in /etc/skel/"$dir"/*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            [ -f "$HOME/$dir/$base" ] || cp "$f" "$HOME/$dir/$base"
+        done
+    fi
+done
+
+# Single files from skel
+for f in .p10k.zsh .gitconfig; do
+    [ -f "/etc/skel/$f" ] && [ ! -f "$HOME/$f" ] && cp "/etc/skel/$f" "$HOME/$f"
+done

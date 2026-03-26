@@ -93,11 +93,6 @@ tar -xzf /tmp/atuin.tar.gz --strip-components=1 -C /usr/bin/ --wildcards '*/atui
 chmod +x /usr/bin/atuin
 rm /tmp/atuin.tar.gz
 
-# --- zellij (terminal multiplexer) ---
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/zellij.tar.gz https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz
-tar -xzf /tmp/zellij.tar.gz -C /usr/bin/
-chmod +x /usr/bin/zellij
-rm /tmp/zellij.tar.gz
 
 # --- lazygit (git TUI) ---
 LAZYGIT_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')

@@ -1,6 +1,6 @@
 -- =============================================================================
 -- zOS Wezterm Configuration
--- iTerm2-like experience: tabs, splits, GPU-accelerated
+-- Full terminal with tabs, splits, panes — no Zellij needed
 -- =============================================================================
 
 local wezterm = require("wezterm")
@@ -32,7 +32,7 @@ config.enable_scroll_bar = false
 -- --- Mouse (Shift bypasses app mouse capture for paste) ---
 config.bypass_mouse_reporting_modifiers = "SHIFT"
 
--- --- Tab bar (iTerm2-like) ---
+-- --- Tab bar ---
 config.use_fancy_tab_bar = true
 config.tab_bar_at_bottom = false
 config.hide_tab_bar_if_only_one_tab = false
@@ -50,31 +50,44 @@ config.scrollback_lines = 10000
 config.front_end = "WebGpu"
 config.webgpu_power_preference = "HighPerformance"
 
--- --- Key bindings (iTerm2-inspired) ---
+-- --- Key bindings ---
+-- All use Ctrl+Shift (never intercepted by Hyprland)
 config.keys = {
-	-- Split panes (like iTerm2)
-	{ key = "d", mods = "SUPER", action = wezterm.action.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
-	{ key = "d", mods = "SUPER|SHIFT", action = wezterm.action.SplitVertical({ domain = "CurrentPaneDomain" }) },
+	-- =======================================================================
+	-- PANE MANAGEMENT (splits, navigate, resize, zoom)
+	-- =======================================================================
 
-	-- Navigate panes
-	{ key = "[", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Prev") },
-	{ key = "]", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Next") },
-	{ key = "h", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Left") },
-	{ key = "l", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Right") },
-	{ key = "k", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Up") },
-	{ key = "j", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Down") },
+	-- Split panes
+	{ key = "d", mods = "CTRL|SHIFT", action = wezterm.action.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
+	{ key = "e", mods = "CTRL|SHIFT", action = wezterm.action.SplitVertical({ domain = "CurrentPaneDomain" }) },
 
-	-- Tabs (Ctrl+Shift+T new tab, Ctrl+Shift+W close — Shift variants work inside Zellij)
+	-- Navigate panes (vim-style)
+	{ key = "h", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Left") },
+	{ key = "j", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Down") },
+	{ key = "k", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Up") },
+	{ key = "l", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Right") },
+
+	-- Resize panes (vim-style + Alt)
+	{ key = "h", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize({ "Left", 5 }) },
+	{ key = "j", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize({ "Down", 5 }) },
+	{ key = "k", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize({ "Up", 5 }) },
+	{ key = "l", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize({ "Right", 5 }) },
+
+	-- Zoom pane (toggle fullscreen for one pane)
+	{ key = "z", mods = "CTRL|SHIFT", action = wezterm.action.TogglePaneZoomState },
+
+	-- =======================================================================
+	-- TAB MANAGEMENT
+	-- =======================================================================
+
 	{ key = "t", mods = "CTRL|SHIFT", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
 	{ key = "t", mods = "CTRL", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
-	{ key = "t", mods = "SUPER", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
 	{ key = "w", mods = "CTRL|SHIFT", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "w", mods = "CTRL", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
-	{ key = "w", mods = "SUPER", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "Tab", mods = "CTRL", action = wezterm.action.ActivateTabRelative(1) },
 	{ key = "Tab", mods = "CTRL|SHIFT", action = wezterm.action.ActivateTabRelative(-1) },
 
-	-- Navigate tabs by number (Ctrl+Alt+# since SUPER+# is Hyprland workspaces)
+	-- Navigate tabs by number
 	{ key = "1", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(0) },
 	{ key = "2", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(1) },
 	{ key = "3", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(2) },
@@ -85,23 +98,23 @@ config.keys = {
 	{ key = "8", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(7) },
 	{ key = "9", mods = "CTRL|ALT", action = wezterm.action.ActivateTab(8) },
 
-	-- Font size
-	{ key = "=", mods = "SUPER", action = wezterm.action.IncreaseFontSize },
-	{ key = "-", mods = "SUPER", action = wezterm.action.DecreaseFontSize },
-	{ key = "0", mods = "SUPER", action = wezterm.action.ResetFontSize },
+	-- =======================================================================
+	-- COPY / PASTE
+	-- =======================================================================
 
-	-- Copy/paste
-	{ key = "v", mods = "CTRL", action = wezterm.action.PasteFrom("Clipboard") },
 	{ key = "c", mods = "CTRL|SHIFT", action = wezterm.action.CopyTo("Clipboard") },
 	{ key = "v", mods = "CTRL|SHIFT", action = wezterm.action.PasteFrom("Clipboard") },
-	{ key = "c", mods = "SUPER", action = wezterm.action.CopyTo("Clipboard") },
-	{ key = "v", mods = "SUPER", action = wezterm.action.PasteFrom("Clipboard") },
+	{ key = "v", mods = "CTRL", action = wezterm.action.PasteFrom("Clipboard") },
 
-	-- Fullscreen
-	{ key = "Enter", mods = "SUPER", action = wezterm.action.ToggleFullScreen },
+	-- =======================================================================
+	-- OTHER
+	-- =======================================================================
 
-	-- Search
-	{ key = "f", mods = "SUPER", action = wezterm.action.Search({ CaseInSensitiveString = "" }) },
+	{ key = "=", mods = "CTRL", action = wezterm.action.IncreaseFontSize },
+	{ key = "-", mods = "CTRL", action = wezterm.action.DecreaseFontSize },
+	{ key = "0", mods = "CTRL", action = wezterm.action.ResetFontSize },
+	{ key = "Enter", mods = "CTRL|SHIFT", action = wezterm.action.ToggleFullScreen },
+	{ key = "f", mods = "CTRL|SHIFT", action = wezterm.action.Search({ CaseInSensitiveString = "" }) },
 }
 
 -- --- Mouse ---

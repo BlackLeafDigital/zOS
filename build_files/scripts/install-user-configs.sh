@@ -24,7 +24,12 @@ echo '[ -f /usr/share/zos/zshrc ] && source /usr/share/zos/zshrc' >> /etc/zshrc
 
 # --- Oh My Zsh + Powerlevel10k (baked into skel for instant setup) ---
 export ZSH="/etc/skel/.oh-my-zsh"
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+export KEEP_ZSHRC=yes
+export HOME=/tmp/omz-build
+mkdir -p "$HOME"
+touch "$HOME/.zshrc"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended --keep-zshrc
+unset HOME
 git clone --depth 1 https://github.com/zsh-users/zsh-autosuggestions ${ZSH}/custom/plugins/zsh-autosuggestions
 git clone --depth 1 https://github.com/zsh-users/zsh-syntax-highlighting ${ZSH}/custom/plugins/zsh-syntax-highlighting
 git clone --depth 1 https://github.com/romkatv/powerlevel10k.git ${ZSH}/custom/themes/powerlevel10k
@@ -40,10 +45,6 @@ cp /ctx/system_files/etc/skel/.gitconfig /etc/skel/.gitconfig
 mkdir -p /etc/skel/.local/bin
 cp /ctx/system_files/etc/skel/.local/bin/dnf /etc/skel/.local/bin/dnf
 chmod +x /etc/skel/.local/bin/dnf
-
-# --- Zellij config (disable Kitty keyboard protocol for Wezterm paste) ---
-mkdir -p /etc/skel/.config/zellij
-cp /ctx/system_files/etc/skel/.config/zellij/config.kdl /etc/skel/.config/zellij/
 
 # --- Hyprpaper config (default wallpaper) ---
 cp /ctx/system_files/etc/skel/.config/hypr/hyprpaper.conf /etc/skel/.config/hypr/
@@ -69,6 +70,13 @@ cat > /var/lib/flatpak/overrides/com.visualstudio.code << 'FLATPAK_EOF'
 [Context]
 filesystems=home;host;/tmp;
 sockets=ssh-auth;
+FLATPAK_EOF
+
+# Floorp browser — allow mDNS (.local) resolution + filesystem access
+cat > /var/lib/flatpak/overrides/one.ablaze.floorp << 'FLATPAK_EOF'
+[Context]
+filesystems=home;
+sockets=system-bus;session-bus;
 FLATPAK_EOF
 
 # --- System limits (nofile, nproc, memlock, core) ---
@@ -109,6 +117,10 @@ sed -i 's|^SHELL=.*|SHELL=/usr/bin/zsh|' /etc/default/useradd
 if ! grep -q '/usr/bin/zsh' /etc/shells; then
     echo '/usr/bin/zsh' >> /etc/shells
 fi
+
+# --- zos-skel-sync (deploy missing skel configs on login) ---
+cp /ctx/system_files/usr/bin/zos-skel-sync /usr/bin/zos-skel-sync
+chmod +x /usr/bin/zos-skel-sync
 
 # --- Legacy scripts (kept for compatibility, absorbed by zos) ---
 cp /ctx/scripts/zos-setup.sh /usr/bin/zos-setup
