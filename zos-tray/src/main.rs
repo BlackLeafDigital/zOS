@@ -10,7 +10,7 @@ use std::process::Command;
 fn main() {
     gtk::init().expect("failed to init GTK for tray");
 
-    let mut indicator = AppIndicator::new("zos-tray", "zos-settings");
+    let mut indicator = AppIndicator::new("zos-tray", "zos-settings-symbolic");
     indicator.set_status(AppIndicatorStatus::Active);
     indicator.set_title("zOS Settings");
 

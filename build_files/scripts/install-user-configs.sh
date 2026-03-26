@@ -79,12 +79,14 @@ cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
 cp /ctx/system_files/usr/share/applications/zos-settings.desktop /usr/share/applications/
 mkdir -p /usr/share/icons/hicolor/scalable/apps
 cp /ctx/system_files/usr/share/icons/hicolor/scalable/apps/zos-settings.svg /usr/share/icons/hicolor/scalable/apps/
+cp /ctx/system_files/usr/share/icons/hicolor/scalable/apps/zos-settings-symbolic.svg /usr/share/icons/hicolor/scalable/apps/
 
-# Generate PNG icons at all standard sizes from the SVG
+# Generate PNG icons at all standard sizes from both SVGs
 for size in 16 24 32 48 64 128 256; do
     dir=/usr/share/icons/hicolor/${size}x${size}/apps
     mkdir -p $dir
     magick /usr/share/icons/hicolor/scalable/apps/zos-settings.svg -resize ${size}x${size} $dir/zos-settings.png
+    magick /usr/share/icons/hicolor/scalable/apps/zos-settings-symbolic.svg -resize ${size}x${size} $dir/zos-settings-symbolic.png
 done
 gtk-update-icon-cache /usr/share/icons/hicolor/ 2>/dev/null || true
 mkdir -p /usr/share/polkit-1/actions

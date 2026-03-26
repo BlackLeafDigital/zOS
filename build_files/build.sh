@@ -53,6 +53,13 @@ magick -size 3840x2160 gradient:'#1e1e2e'-'#181825' /usr/share/zos/wallpaper.png
 curl -fsSL --retry 3 --retry-delay 5 -o /etc/udev/rules.d/71-liquidctl.rules \
     https://raw.githubusercontent.com/liquidctl/liquidctl/main/extra/linux/71-liquidctl.rules
 
+# --- Netbird (mesh VPN) ---
+NETBIRD_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 https://api.github.com/repos/netbirdio/netbird/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird_${NETBIRD_VERSION}_linux_amd64.tar.gz"
+tar -xzf /tmp/netbird.tar.gz -C /usr/bin/ netbird
+chmod +x /usr/bin/netbird
+rm /tmp/netbird.tar.gz
+
 # --- Enable services ---
 systemctl enable podman.socket
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket

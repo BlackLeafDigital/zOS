@@ -64,9 +64,11 @@ config.keys = {
 	{ key = "k", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Up") },
 	{ key = "j", mods = "SUPER|ALT", action = wezterm.action.ActivatePaneDirection("Down") },
 
-	-- Tabs (Ctrl+T new tab, Ctrl+W close, Ctrl+Tab/Ctrl+Shift+Tab cycle)
+	-- Tabs (Ctrl+Shift+T new tab, Ctrl+Shift+W close — Shift variants work inside Zellij)
+	{ key = "t", mods = "CTRL|SHIFT", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
 	{ key = "t", mods = "CTRL", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
 	{ key = "t", mods = "SUPER", action = wezterm.action.SpawnTab("CurrentPaneDomain") },
+	{ key = "w", mods = "CTRL|SHIFT", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "w", mods = "CTRL", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "w", mods = "SUPER", action = wezterm.action.CloseCurrentPane({ confirm = true }) },
 	{ key = "Tab", mods = "CTRL", action = wezterm.action.ActivateTabRelative(1) },

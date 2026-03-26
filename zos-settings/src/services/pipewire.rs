@@ -192,7 +192,248 @@ pub fn set_default(device_id: u32) {
         .status();
 }
 
+/// An active audio playback stream (application currently producing audio).
+#[derive(Debug, Clone)]
+pub struct AudioStream {
+    pub id: u32,
+    pub name: String,
+}
+
+/// List currently-active playback streams by parsing the `Streams:` section of
+/// `wpctl status`.  Each stream line looks like:
+///
+/// ```text
+///  └─ Streams:
+///         71. Floorp
+///             46. → HyperX QuadCast Analog Stereo
+/// ```
+///
+/// We capture the top-level numbered entries (the app) and ignore the
+/// indented sub-entries (the sink they are connected to).
+pub fn list_streams() -> Vec<AudioStream> {
+    let status = match wpctl_status() {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let mut streams = Vec::new();
+    let mut in_streams = false;
+
+    for line in status.lines() {
+        let cleaned: String = line
+            .replace('\u{2502}', " ") // │
+            .replace('\u{251c}', " ") // ├
+            .replace('\u{2514}', " ") // └
+            .replace('\u{2500}', " "); // ─
+        let trimmed = cleaned.trim();
+
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Detect section headers
+        if trimmed.ends_with(':') {
+            if trimmed == "Streams:" {
+                in_streams = true;
+                continue;
+            } else if in_streams {
+                break;
+            }
+            continue;
+        }
+
+        if !in_streams {
+            continue;
+        }
+
+        // Skip sub-entries that start with an arrow (→) after the id — these
+        // are the target sink, not the app itself.
+        if trimmed.contains("\u{2192}") {
+            continue;
+        }
+
+        // Strip default marker
+        let cleaned_line = trimmed.trim_start_matches('*').trim();
+
+        let dot_pos = match cleaned_line.find('.') {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let id: u32 = match cleaned_line[..dot_pos].trim().parse() {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+
+        let rest = cleaned_line[dot_pos + 1..].trim();
+        // Strip any trailing bracket info like [vol: 0.50]
+        let name = if let Some(bracket) = rest.rfind('[') {
+            rest[..bracket].trim().to_string()
+        } else {
+            rest.to_string()
+        };
+
+        if name.is_empty() {
+            continue;
+        }
+
+        streams.push(AudioStream { id, name });
+    }
+
+    streams
+}
+
+/// Route a stream to a virtual sink by disconnecting its current output links
+/// and creating new ones to the target sink.
+///
+/// `stream_id` is the PipeWire node id of the playback stream.
+/// `sink_name` is the node name of the target sink (e.g. "zos-music").
+///
+/// Uses `wpctl set-default` on the sink first, then `pw-link` to wire things up.
+pub fn route_stream_to_sink(stream_id: u32, sink_name: &str) {
+    // Use pw-link to find the stream's output ports and the sink's input ports,
+    // then connect them.  First, disconnect existing links from this stream.
+    let stream_id_str = stream_id.to_string();
+
+    // Get output ports for this stream node
+    let stream_ports: Vec<String> = run_cmd("pw-link", &["--output", "--id"])
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    // Lines look like: "  42 node_name:port_name"
+                    // We want ports belonging to the stream node.
+                    // pw-link --output --id shows: <id> <port>
+                    let parts: Vec<&str> = l.splitn(2, char::is_whitespace).collect();
+                    if parts.len() == 2 {
+                        let port = parts[1].trim();
+                        // Check if this port belongs to our stream node
+                        // Port names start with the node name or we can check node ids
+                        Some(port.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Find which output ports belong to this stream's node by querying pw-cli
+    let node_ports: Vec<String> = run_cmd("pw-link", &["--output"])
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    if l.is_empty() {
+                        return None;
+                    }
+                    Some(l.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Get the stream's node name from pw-cli info
+    let stream_node_name = run_cmd("pw-cli", &["info", &stream_id_str]).and_then(|info| {
+        for line in info.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("node.name") {
+                // node.name = "Firefox"
+                if let Some(val) = trimmed.split('=').nth(1) {
+                    return Some(val.trim().trim_matches('"').trim_matches('\'').to_string());
+                }
+            }
+        }
+        None
+    });
+
+    let stream_prefix = match stream_node_name {
+        Some(ref n) => n.clone(),
+        None => return, // Can't identify stream ports
+    };
+
+    // Find output ports belonging to this stream
+    let my_outputs: Vec<String> = node_ports
+        .iter()
+        .filter(|p| p.starts_with(&stream_prefix))
+        .cloned()
+        .collect();
+
+    if my_outputs.is_empty() {
+        // Fallback: try moving via wpctl
+        let _ = Command::new("wpctl")
+            .args(["set-default", &stream_id_str])
+            .status();
+        return;
+    }
+
+    // Find input ports belonging to the target sink
+    let sink_inputs: Vec<String> = run_cmd("pw-link", &["--input"])
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    if l.starts_with(sink_name) {
+                        Some(l.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if sink_inputs.is_empty() {
+        return;
+    }
+
+    // Disconnect existing links from our stream's output ports
+    if let Some(links_output) = run_cmd("pw-link", &["--links"]) {
+        let mut current_output: Option<String> = None;
+        for line in links_output.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
+                if let Some(ref out) = current_output {
+                    if my_outputs.iter().any(|p| p == out) {
+                        let input = trimmed
+                            .trim_start_matches("|->")
+                            .trim_start_matches("\\->")
+                            .trim();
+                        remove_link(out, input);
+                    }
+                }
+            } else {
+                current_output = Some(trimmed.to_string());
+            }
+        }
+    }
+
+    // Create new links: pair FL->FL, FR->FR by matching channel suffixes
+    for out_port in &my_outputs {
+        // Get the channel suffix (e.g. ":output_FL")
+        let out_channel = out_port.rsplit(':').next().unwrap_or("");
+        let channel_suffix = out_channel.trim_start_matches("output_");
+
+        // Find matching input port
+        for inp_port in &sink_inputs {
+            let inp_channel = inp_port.rsplit(':').next().unwrap_or("");
+            let inp_suffix = inp_channel.trim_start_matches("input_");
+            if channel_suffix == inp_suffix {
+                create_link(out_port, inp_port);
+                break;
+            }
+        }
+    }
+
+    // Also disconnect from any unused stream_ports
+    drop(stream_ports);
+}
+
 /// List all available output ports (sources of audio data).
+#[allow(dead_code)]
 pub fn list_output_ports() -> Vec<String> {
     run_cmd("pw-link", &["--output"])
         .map(|s| {
@@ -205,6 +446,7 @@ pub fn list_output_ports() -> Vec<String> {
 }
 
 /// List all available input ports (destinations for audio data).
+#[allow(dead_code)]
 pub fn list_input_ports() -> Vec<String> {
     run_cmd("pw-link", &["--input"])
         .map(|s| {
@@ -220,6 +462,7 @@ pub fn list_input_ports() -> Vec<String> {
 ///
 /// Parses the output of `pw-link --links`, which lists connected
 /// port pairs one per line as `output -> input`.
+#[allow(dead_code)]
 pub fn list_links() -> Vec<(String, String)> {
     let output = match run_cmd("pw-link", &["--links"]) {
         Some(o) => o,

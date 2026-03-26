@@ -56,7 +56,7 @@ pub fn build() -> gtk::Box {
     page.append(&build_output_section());
     page.append(&build_input_section());
     page.append(&build_virtual_buses_section());
-    page.append(&build_routing_section());
+    page.append(&build_app_routing_section());
     page.append(&build_advanced_section());
 
     let scrolled = gtk::ScrolledWindow::builder()
@@ -441,119 +441,70 @@ fn build_virtual_buses_section() -> adw::PreferencesGroup {
 }
 
 // ---------------------------------------------------------------------------
-// Routing section
+// App routing section
 // ---------------------------------------------------------------------------
 
-fn build_routing_section() -> adw::PreferencesGroup {
+/// The virtual bus targets a stream can be routed to.
+const BUS_OPTIONS: &[(&str, &str)] = &[
+    ("Default", ""),
+    ("Main Output", "zos-main"),
+    ("Music", "zos-music"),
+    ("Chat / Voice", "zos-chat"),
+];
+
+fn build_app_routing_section() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("Routing")
-        .description("Active PipeWire links between ports")
+        .title("App Routing")
+        .description("Route application audio to a virtual bus")
         .build();
 
-    let links = pipewire::list_links();
+    let streams = pipewire::list_streams();
 
-    if links.is_empty() {
+    if streams.is_empty() {
         let empty_row = adw::ActionRow::builder()
-            .title("No active links")
-            .subtitle("PipeWire port links will appear here")
+            .title("No active audio streams")
+            .subtitle("Start playing audio in an app and it will appear here")
             .build();
         group.add(&empty_row);
         return group;
     }
 
-    for (output_port, input_port) in &links {
+    let bus_labels: Vec<&str> = BUS_OPTIONS.iter().map(|(label, _)| *label).collect();
+    let bus_sink_names: Vec<String> = BUS_OPTIONS
+        .iter()
+        .map(|(_, sink)| sink.to_string())
+        .collect();
+
+    for stream in &streams {
         let row = adw::ActionRow::builder()
-            .title(output_port.as_str())
-            .subtitle(input_port.as_str())
+            .title(&stream.name)
+            .subtitle(&format!("ID {}", stream.id))
             .build();
 
-        let out = output_port.clone();
-        let inp = input_port.clone();
-        let disconnect_btn = gtk::Button::builder()
-            .icon_name("edit-delete-symbolic")
-            .tooltip_text("Disconnect link")
+        let model = gtk::StringList::new(&bus_labels);
+        let dropdown = gtk::DropDown::builder()
+            .model(&model)
+            .selected(0) // Default
             .valign(gtk::Align::Center)
-            .css_classes(["flat"])
             .build();
 
-        disconnect_btn.connect_clicked(move |btn| {
-            if pipewire::remove_link(&out, &inp) {
-                tracing::info!("Removed link: {} -> {}", out, inp);
-                // Hide the row after disconnecting
-                if let Some(parent) = btn.parent() {
-                    parent.set_visible(false);
+        let stream_id = stream.id;
+        let sinks = bus_sink_names.clone();
+        dropdown.connect_selected_notify(move |dd| {
+            let sel = dd.selected() as usize;
+            if let Some(sink_name) = sinks.get(sel) {
+                if sink_name.is_empty() {
+                    // "Default" — move stream back to the default sink
+                    pipewire::set_default(stream_id);
+                } else {
+                    pipewire::route_stream_to_sink(stream_id, sink_name);
                 }
-            } else {
-                tracing::error!("Failed to remove link: {} -> {}", out, inp);
             }
         });
 
-        row.add_suffix(&disconnect_btn);
+        row.add_suffix(&dropdown);
         group.add(&row);
     }
-
-    // --- Quick-link creation with dropdown selectors ---
-    let output_ports = pipewire::list_output_ports();
-    let input_ports = pipewire::list_input_ports();
-
-    let output_model =
-        gtk::StringList::new(&output_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-    let output_dropdown = gtk::DropDown::builder()
-        .model(&output_model)
-        .valign(gtk::Align::Center)
-        .build();
-
-    let input_model =
-        gtk::StringList::new(&input_ports.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-    let input_dropdown = gtk::DropDown::builder()
-        .model(&input_model)
-        .valign(gtk::Align::Center)
-        .build();
-
-    let output_row = adw::ActionRow::builder()
-        .title("Output Port")
-        .subtitle("Source of audio data")
-        .build();
-    output_row.add_suffix(&output_dropdown);
-    group.add(&output_row);
-
-    let input_row = adw::ActionRow::builder()
-        .title("Input Port")
-        .subtitle("Destination for audio data")
-        .build();
-    input_row.add_suffix(&input_dropdown);
-    group.add(&input_row);
-
-    let connect_btn = gtk::Button::builder()
-        .label("Connect")
-        .tooltip_text("Create link between selected ports")
-        .valign(gtk::Align::Center)
-        .css_classes(["suggested-action"])
-        .build();
-
-    let out_dd = output_dropdown.clone();
-    let inp_dd = input_dropdown.clone();
-    let out_ports = output_ports.clone();
-    let inp_ports = input_ports.clone();
-    connect_btn.connect_clicked(move |_| {
-        let out_idx = out_dd.selected() as usize;
-        let inp_idx = inp_dd.selected() as usize;
-        if let (Some(out_port), Some(inp_port)) = (out_ports.get(out_idx), inp_ports.get(inp_idx)) {
-            if pipewire::create_link(out_port, inp_port) {
-                tracing::info!("Created link: {} -> {}", out_port, inp_port);
-            } else {
-                tracing::error!("Failed to create link: {} -> {}", out_port, inp_port);
-            }
-        }
-    });
-
-    let connect_row = adw::ActionRow::builder()
-        .title("Create Link")
-        .subtitle("Connect the selected output to the selected input")
-        .build();
-    connect_row.add_suffix(&connect_btn);
-    connect_row.set_activatable_widget(Some(&connect_btn));
-    group.add(&connect_row);
 
     group
 }

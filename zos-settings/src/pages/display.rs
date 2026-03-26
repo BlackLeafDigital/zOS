@@ -6,6 +6,24 @@ use relm4::gtk;
 use relm4::gtk::glib;
 use std::sync::{Arc, Mutex};
 
+/// A single resolution + refresh rate mode reported by the monitor.
+#[derive(Debug, Clone)]
+struct Mode {
+    width: i64,
+    height: i64,
+    refresh_rate: f64,
+}
+
+impl Mode {
+    /// Label shown in the combo: `2560x1440 @ 144Hz`
+    fn label(&self) -> String {
+        format!(
+            "{}x{} @ {:.0}Hz",
+            self.width, self.height, self.refresh_rate
+        )
+    }
+}
+
 /// Monitor configuration state shared between UI callbacks and Apply.
 struct MonitorConfig {
     name: String,
@@ -16,6 +34,19 @@ struct MonitorConfig {
     transform: i64,
     x: i64,
     y: i64,
+    available_modes: Vec<Mode>,
+}
+
+/// Parse an `availableModes` entry like `"2560x1440@143.97Hz"` into a `Mode`.
+fn parse_mode_string(s: &str) -> Option<Mode> {
+    let s = s.trim().trim_end_matches("Hz");
+    let (res, rate) = s.split_once('@')?;
+    let (w, h) = res.split_once('x')?;
+    Some(Mode {
+        width: w.parse().ok()?,
+        height: h.parse().ok()?,
+        refresh_rate: rate.parse().ok()?,
+    })
 }
 
 /// Query connected monitors via `hyprctl monitors -j` and parse with serde_json.
@@ -50,6 +81,17 @@ fn query_monitors() -> Vec<MonitorConfig> {
             let transform = m.get("transform")?.as_i64().unwrap_or(0);
             let x = m.get("x")?.as_i64().unwrap_or(0);
             let y = m.get("y")?.as_i64().unwrap_or(0);
+
+            let available_modes = m
+                .get("availableModes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|entry| entry.as_str().and_then(parse_mode_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
             Some(MonitorConfig {
                 name,
                 width,
@@ -59,6 +101,7 @@ fn query_monitors() -> Vec<MonitorConfig> {
                 transform,
                 x,
                 y,
+                available_modes,
             })
         })
         .collect()
@@ -105,6 +148,7 @@ pub fn build() -> gtk::Box {
                 transform: mon.transform,
                 x: mon.x,
                 y: mon.y,
+                available_modes: mon.available_modes.clone(),
             });
         }
     }
@@ -357,29 +401,19 @@ fn build_monitors_section(
         return group;
     }
 
-    let resolution_options = [
-        "1920x1080",
-        "2560x1440",
-        "3840x2160",
-        "1920x1200",
-        "2560x1600",
-        "3440x1440",
-    ];
     let scale_options = ["1.0", "1.25", "1.5", "1.75", "2.0"];
     let transform_options = [
         "Normal",
-        "90°",
-        "180°",
-        "270°",
+        "90\u{b0}",
+        "180\u{b0}",
+        "270\u{b0}",
         "Flipped",
-        "Flipped 90°",
-        "Flipped 180°",
-        "Flipped 270°",
+        "Flipped 90\u{b0}",
+        "Flipped 180\u{b0}",
+        "Flipped 270\u{b0}",
     ];
 
     for (idx, monitor) in monitors.iter().enumerate() {
-        let current_res = format!("{}x{}", monitor.width, monitor.height);
-
         let expander = adw::ExpanderRow::builder()
             .title(&monitor.name)
             .subtitle(&format!(
@@ -388,48 +422,59 @@ fn build_monitors_section(
             ))
             .build();
 
-        // --- Resolution combo ---
-        let res_model = gtk::StringList::new(&resolution_options);
-        let mut res_idx: u32 = gtk::INVALID_LIST_POSITION;
-        for (i, opt) in resolution_options.iter().enumerate() {
-            if *opt == current_res {
-                res_idx = i as u32;
+        // --- Resolution / mode combo ---
+        // Build the list of modes from the monitor's reported available modes.
+        // Each entry shows "WIDTHxHEIGHT @ RATEHz".
+        let modes: Vec<Mode> = if monitor.available_modes.is_empty() {
+            // Fallback: just the current mode
+            vec![Mode {
+                width: monitor.width,
+                height: monitor.height,
+                refresh_rate: monitor.refresh_rate,
+            }]
+        } else {
+            monitor.available_modes.clone()
+        };
+
+        let mode_labels: Vec<String> = modes.iter().map(|m| m.label()).collect();
+        let mode_label_refs: Vec<&str> = mode_labels.iter().map(|s| s.as_str()).collect();
+        let mode_model = gtk::StringList::new(&mode_label_refs);
+
+        // Find the index of the currently-active mode
+        let current_label = format!(
+            "{}x{} @ {:.0}Hz",
+            monitor.width, monitor.height, monitor.refresh_rate
+        );
+        let mut mode_idx: u32 = 0;
+        for (i, label) in mode_labels.iter().enumerate() {
+            if *label == current_label {
+                mode_idx = i as u32;
+                break;
             }
         }
-        if res_idx == gtk::INVALID_LIST_POSITION {
-            res_model.append(&current_res);
-            res_idx = resolution_options.len() as u32;
-        }
 
-        let res_combo = adw::ComboRow::builder()
+        let mode_combo = adw::ComboRow::builder()
             .title("Resolution")
-            .model(&res_model)
-            .selected(res_idx)
+            .model(&mode_model)
+            .selected(mode_idx)
             .build();
 
         {
-            let configs = Arc::clone(&shared_configs);
-            let res_opts: Vec<String> = resolution_options.iter().map(|s| s.to_string()).collect();
-            let extra_res = current_res.clone();
-            res_combo.connect_selected_notify(move |row| {
+            let configs = Arc::clone(shared_configs);
+            let modes_clone = modes.clone();
+            mode_combo.connect_selected_notify(move |row| {
                 let sel = row.selected() as usize;
-                let chosen = if sel < res_opts.len() {
-                    &res_opts[sel]
-                } else {
-                    &extra_res
-                };
-                if let Some((w, h)) = chosen.split_once('x') {
-                    if let (Ok(width), Ok(height)) = (w.parse::<i64>(), h.parse::<i64>()) {
-                        let mut cfgs = configs.lock().unwrap();
-                        if let Some(cfg) = cfgs.get_mut(idx) {
-                            cfg.width = width;
-                            cfg.height = height;
-                        }
+                if let Some(mode) = modes_clone.get(sel) {
+                    let mut cfgs = configs.lock().unwrap();
+                    if let Some(cfg) = cfgs.get_mut(idx) {
+                        cfg.width = mode.width;
+                        cfg.height = mode.height;
+                        cfg.refresh_rate = mode.refresh_rate;
                     }
                 }
             });
         }
-        expander.add_row(&res_combo);
+        expander.add_row(&mode_combo);
 
         // --- Scale combo ---
         let scale_model = gtk::StringList::new(&scale_options);
@@ -453,7 +498,7 @@ fn build_monitors_section(
             .build();
 
         {
-            let configs = Arc::clone(&shared_configs);
+            let configs = Arc::clone(shared_configs);
             let s_opts: Vec<String> = scale_options.iter().map(|s| s.to_string()).collect();
             scale_combo.connect_selected_notify(move |row| {
                 let sel = row.selected() as usize;
@@ -479,7 +524,7 @@ fn build_monitors_section(
             .build();
 
         {
-            let configs = Arc::clone(&shared_configs);
+            let configs = Arc::clone(shared_configs);
             transform_combo.connect_selected_notify(move |row| {
                 let sel = row.selected() as i64;
                 let mut cfgs = configs.lock().unwrap();
@@ -506,13 +551,19 @@ fn build_monitors_section(
         .build();
 
     {
-        let configs = Arc::clone(&shared_configs);
+        let configs = Arc::clone(shared_configs);
         apply_btn.connect_clicked(move |_| {
             let cfgs = configs.lock().unwrap();
             let home = std::env::var("HOME").unwrap_or_default();
-            let path = format!("{}/.config/hypr/monitors.conf", home);
+            let conf_dir = format!("{}/.config/hypr", home);
+            if let Err(e) = std::fs::create_dir_all(&conf_dir) {
+                tracing::error!("Failed to create {}: {}", conf_dir, e);
+                return;
+            }
+            let path = format!("{}/monitors.conf", conf_dir);
 
-            let mut content = String::from("# zOS Monitor Config — managed by zos-settings\n");
+            let mut content =
+                String::from("# zOS Monitor Config \u{2014} managed by zos-settings\n");
             for cfg in cfgs.iter() {
                 content.push_str(&format!(
                     "monitor={},{}x{}@{:.2},auto,{:.2},transform,{}\n",
@@ -525,7 +576,7 @@ fn build_monitors_section(
                 Err(e) => tracing::error!("Failed to write monitor config: {}", e),
             }
 
-            let _ = std::process::Command::new("hyprctl").arg("reload").status();
+            crate::services::hyprctl::reload();
             tracing::info!("Hyprland config reloaded");
         });
     }
