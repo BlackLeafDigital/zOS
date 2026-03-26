@@ -165,7 +165,9 @@ fn resolve_icon(icon: &str) -> Option<PathBuf> {
         "places",
         "status",
     ];
-    let sizes = ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"];
+    let sizes = [
+        "scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+    ];
     let extensions = ["svg", "png"];
     let base_dirs = [
         PathBuf::from("/usr/share/icons"),

@@ -4,10 +4,7 @@ use crate::config::DockConfig;
 use crate::hypr::{self, HyprWindow};
 use crate::icons::IconResolver;
 use iced::widget::{center, column, container, mouse_area, row, svg, text, Space};
-use iced::{
-    event, Background, Border, Color, Element, Event, Length, Subscription, Task,
-    Theme,
-};
+use iced::{event, Background, Border, Color, Element, Event, Length, Subscription, Task, Theme};
 use iced_anim::Spring;
 use iced_layershell::to_layer_message;
 use std::collections::HashMap;
@@ -278,14 +275,12 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
             .spacing(2)
             .align_x(iced::Alignment::Center);
 
-        let item_widget = mouse_area(
-            container(item_column).padding(2).style(
-                move |_theme: &Theme| container::Style {
-                    background: None,
-                    ..Default::default()
-                },
-            ),
-        )
+        let item_widget = mouse_area(container(item_column).padding(2).style(
+            move |_theme: &Theme| container::Style {
+                background: None,
+                ..Default::default()
+            },
+        ))
         .on_press(Message::ItemClicked(i));
 
         items_row = items_row.push(item_widget);
@@ -326,8 +321,7 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     // When animating, tick at ~60fps for smooth spring physics.
     if any_animating {
         subs.push(
-            iced::time::every(Duration::from_millis(16))
-                .map(|_| Message::Tick(Instant::now())),
+            iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
         );
     }
 
