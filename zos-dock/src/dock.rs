@@ -6,6 +6,7 @@ use crate::icons::IconResolver;
 use iced::widget::{center, column, container, mouse_area, row, svg, text, Space};
 use iced::{event, Background, Border, Color, Element, Event, Length, Subscription, Task, Theme};
 use iced_anim::Spring;
+use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
 use iced_layershell::to_layer_message;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -75,6 +76,16 @@ impl DockItem {
     }
 }
 
+/// State for an open right-click context menu popup.
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub id: iced::window::Id,
+    pub app_id: String,
+    pub is_running: bool,
+    pub is_pinned: bool,
+    pub is_minimized: bool,
+}
+
 /// Main dock application state.
 pub struct Dock {
     pub items: Vec<DockItem>,
@@ -90,10 +101,14 @@ pub struct Dock {
     pub hidden: bool,
     /// When the cursor last left the dock (for auto-hide delay).
     pub hide_timer: Option<Instant>,
+    /// Last observed modification time of the config file.
+    pub config_mtime: Option<std::time::SystemTime>,
+    /// Currently open context menu, if any.
+    pub context_menu: Option<ContextMenuState>,
 }
 
 /// Messages handled by the dock.
-#[to_layer_message]
+#[to_layer_message(multi)]
 #[derive(Debug, Clone)]
 pub enum Message {
     /// Animation/physics tick.
@@ -110,10 +125,18 @@ pub enum Message {
     RefreshWindows,
     /// Toggle pin state for an app.
     TogglePin(String),
-    /// Auto-hide timer triggered — check if we should hide.
-    HideCheck,
-    /// Show the dock (mouse entered trigger zone).
-    ShowDock,
+    /// Check if config file changed on disk.
+    CheckConfig,
+    /// Close a window from context menu.
+    ContextMenuClose(String),
+    /// Pin/unpin from context menu.
+    ContextMenuPin(String),
+    /// Unminimize from context menu.
+    ContextMenuRestore(String),
+    /// Launch app from context menu.
+    ContextMenuLaunch(String),
+    /// Dismiss the context menu.
+    DismissMenu,
 }
 
 pub fn boot() -> Dock {
@@ -130,6 +153,8 @@ pub fn boot() -> Dock {
         active_address: hypr::get_active_window_address(),
         hidden: false,
         hide_timer: None,
+        config_mtime: DockConfig::config_mtime(),
+        context_menu: None,
     };
     dock.rebuild_items(&windows);
     dock
@@ -159,7 +184,6 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     if dock.hidden && dock.config.auto_hide {
                         dock.hidden = false;
                         dock.hide_timer = None;
-                        return Task::done(Message::ShowDock);
                     }
                     dock.cursor_x = Some(position.x);
                     dock.update_magnification();
@@ -211,32 +235,45 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         }
         Message::ItemRightClicked(index) => {
             if let Some(item) = dock.items.get(index) {
-                let app_id = item.app_id.clone();
-                if item.is_running() {
-                    // Close the first window.
-                    if let Some(window) = item.windows.first() {
-                        tracing::info!(
-                            "Right-click: closing window '{}' of {}",
-                            window.title,
-                            app_id
-                        );
-                        hypr::close_window(&window.address);
-                    }
-                } else if item.pinned {
-                    // Unpin the item.
-                    tracing::info!("Right-click: unpinning {}", app_id);
-                    dock.config.toggle_pin(&app_id);
-                    dock.config.save();
-                    let windows = hypr::get_windows();
-                    dock.rebuild_items(&windows);
+                // Close any existing context menu first
+                let mut tasks: Vec<Task<Message>> = Vec::new();
+                if let Some(old_cm) = dock.context_menu.take() {
+                    tasks.push(Task::done(Message::RemoveWindow(old_cm.id)));
                 }
+
+                let menu_height: u32 = 2 * 36 + 16;
+                let (menu_id, open_task) = Message::menu_open(IcedNewMenuSettings {
+                    size: (180, menu_height),
+                    direction: MenuDirection::Up,
+                });
+
+                dock.context_menu = Some(ContextMenuState {
+                    id: menu_id,
+                    app_id: item.app_id.clone(),
+                    is_running: item.is_running(),
+                    is_pinned: item.pinned,
+                    is_minimized: item.minimized,
+                });
+
+                tasks.push(open_task);
+                Task::batch(tasks)
+            } else {
+                Task::none()
             }
-            Task::none()
         }
         Message::RefreshWindows => {
             let windows = hypr::get_windows();
             dock.active_address = hypr::get_active_window_address();
             dock.rebuild_items(&windows);
+            // Auto-hide check
+            if dock.config.auto_hide {
+                if let Some(timer_start) = dock.hide_timer {
+                    if timer_start.elapsed() >= Duration::from_millis(800) && dock.cursor_x.is_none() {
+                        dock.hidden = true;
+                        dock.hide_timer = None;
+                    }
+                }
+            }
             Task::none()
         }
         Message::TogglePin(app_id) => {
@@ -246,28 +283,79 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             dock.rebuild_items(&windows);
             Task::none()
         }
-        Message::HideCheck => {
-            if dock.config.auto_hide {
-                if let Some(timer_start) = dock.hide_timer {
-                    if timer_start.elapsed() >= Duration::from_millis(800)
-                        && dock.cursor_x.is_none()
-                    {
-                        dock.hidden = true;
-                        dock.hide_timer = None;
-                        return Task::done(Message::SizeChange((0, 4)));
-                    }
-                }
+        Message::CheckConfig => {
+            let new_mtime = DockConfig::config_mtime();
+            if new_mtime != dock.config_mtime {
+                dock.config_mtime = new_mtime;
+                dock.config = DockConfig::load();
+                let windows = hypr::get_windows();
+                dock.rebuild_items(&windows);
             }
             Task::none()
         }
-        Message::ShowDock => Task::done(Message::SizeChange((0, 68))),
+        Message::ContextMenuClose(app_id) => {
+            if let Some(item) = dock.items.iter().find(|i| i.app_id == app_id) {
+                if let Some(w) = item.windows.first() {
+                    hypr::close_window(&w.address);
+                }
+            }
+            if let Some(cm) = dock.context_menu.take() {
+                Task::done(Message::RemoveWindow(cm.id))
+            } else {
+                Task::none()
+            }
+        }
+        Message::ContextMenuPin(app_id) => {
+            dock.config.toggle_pin(&app_id);
+            dock.config.save();
+            let windows = hypr::get_windows();
+            dock.rebuild_items(&windows);
+            if let Some(cm) = dock.context_menu.take() {
+                Task::done(Message::RemoveWindow(cm.id))
+            } else {
+                Task::none()
+            }
+        }
+        Message::ContextMenuRestore(app_id) => {
+            let minimized = hypr::get_minimized_windows();
+            if let Some(w) = minimized.iter().find(|w| w.class.to_lowercase() == app_id.to_lowercase()) {
+                hypr::unminimize_window(&w.address);
+            }
+            if let Some(cm) = dock.context_menu.take() {
+                Task::done(Message::RemoveWindow(cm.id))
+            } else {
+                Task::none()
+            }
+        }
+        Message::ContextMenuLaunch(app_id) => {
+            hypr::launch_app(&app_id);
+            if let Some(cm) = dock.context_menu.take() {
+                Task::done(Message::RemoveWindow(cm.id))
+            } else {
+                Task::none()
+            }
+        }
+        Message::DismissMenu => {
+            if let Some(cm) = dock.context_menu.take() {
+                Task::done(Message::RemoveWindow(cm.id))
+            } else {
+                Task::none()
+            }
+        }
         // Layer shell action messages are handled by the framework.
         _ => Task::none(),
     }
 }
 
-pub fn view(dock: &Dock) -> Element<'_, Message> {
+pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
     let icon_size = dock.config.icon_size;
+
+    // If this is a context menu popup, render the menu
+    if let Some(ref cm) = dock.context_menu {
+        if cm.id == window_id {
+            return render_context_menu(cm);
+        }
+    }
 
     if dock.hidden {
         return container(Space::new())
@@ -446,10 +534,10 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
         );
     }
 
-    // When auto-hide timer is running, poll at 100ms to check if delay has elapsed.
-    if dock.config.auto_hide && dock.hide_timer.is_some() {
-        subs.push(iced::time::every(Duration::from_millis(100)).map(|_| Message::HideCheck));
-    }
+    // Poll for config file changes every second.
+    subs.push(
+        iced::time::every(Duration::from_secs(1)).map(|_| Message::CheckConfig),
+    );
 
     Subscription::batch(subs)
 }
@@ -476,6 +564,64 @@ fn separator<'a>() -> Element<'a, Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// Render the right-click context menu popup.
+fn render_context_menu(cm: &ContextMenuState) -> Element<'_, Message> {
+    let app_id = cm.app_id.clone();
+    let mut items = column![].spacing(2).padding(8);
+
+    if cm.is_minimized {
+        let id = app_id.clone();
+        items = items.push(menu_button("Restore", Message::ContextMenuRestore(id)));
+        let id = app_id.clone();
+        items = items.push(menu_button("Close", Message::ContextMenuClose(id)));
+    } else if cm.is_running {
+        let id = app_id.clone();
+        items = items.push(menu_button("Close", Message::ContextMenuClose(id)));
+        let id = app_id.clone();
+        let label = if cm.is_pinned { "Unpin" } else { "Pin" };
+        items = items.push(menu_button(label, Message::ContextMenuPin(id)));
+    } else {
+        let id = app_id.clone();
+        items = items.push(menu_button("Launch", Message::ContextMenuLaunch(id)));
+        let id = app_id.clone();
+        items = items.push(menu_button("Unpin", Message::ContextMenuPin(id)));
+    }
+
+    container(items)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(BG_COLOR)),
+            border: Border {
+                color: SURFACE_COLOR,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Create a styled menu button.
+fn menu_button(label: &str, msg: Message) -> Element<'_, Message> {
+    mouse_area(
+        container(text(label).size(14).color(TEXT_COLOR))
+            .padding([6, 12])
+            .width(Length::Fill)
+            .style(|_theme: &Theme| container::Style {
+                background: None,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }),
+    )
+    .on_press(msg)
+    .into()
 }
 
 impl Dock {

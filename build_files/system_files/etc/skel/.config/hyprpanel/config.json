@@ -413,5 +413,8 @@
     },
     "bar.customModules.storage.paths": [
         "/"
+    ],
+    "bar.systray.ignore": [
+        "Xwayland Video Bridge_pipewireToXProxy"
     ]
 }

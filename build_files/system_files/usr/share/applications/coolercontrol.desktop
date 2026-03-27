@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=CoolerControl
+Comment=Monitor and control cooling devices
+Exec=coolercontrol
+Icon=coolercontrol
+Type=Application
+Categories=System;Monitor;
+StartupWMClass=coolercontrol

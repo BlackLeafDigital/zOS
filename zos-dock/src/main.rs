@@ -6,10 +6,10 @@ mod hypr;
 mod icons;
 
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
-use iced_layershell::settings::{LayerShellSettings, Settings};
+use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 
 fn main() -> iced_layershell::Result {
-    iced_layershell::application(dock::boot, dock::namespace, dock::update, dock::view)
+    iced_layershell::daemon(dock::boot, dock::namespace, dock::update, dock::view)
         .subscription(dock::subscription)
         .style(dock::style)
         .settings(Settings {
@@ -21,6 +21,7 @@ fn main() -> iced_layershell::Result {
                 margin: (0, 0, 8, 0),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 events_transparent: false,
+                start_mode: StartMode::AllScreens,
                 ..Default::default()
             },
             antialiasing: true,

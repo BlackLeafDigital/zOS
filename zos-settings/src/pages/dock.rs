@@ -144,8 +144,7 @@ pub fn build() -> gtk::Box {
         let mag_val = (mag_scale_clone.value() * 10.0).round() / 10.0;
         config["magnification"] = serde_json::Value::from(mag_val);
         save_dock_config(&config);
-        btn.set_label("Applied — restart dock to take effect");
-        btn.set_sensitive(false);
+        btn.set_label("Applied");
     });
 
     page.append(&apply_btn);

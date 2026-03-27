@@ -85,6 +85,9 @@ cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
 
 # --- zos-settings desktop entry, icon + polkit policy ---
 cp /ctx/system_files/usr/share/applications/zos-settings.desktop /usr/share/applications/
+
+# --- CoolerControl desktop entry ---
+cp /ctx/system_files/usr/share/applications/coolercontrol.desktop /usr/share/applications/
 mkdir -p /usr/share/icons/hicolor/scalable/apps
 cp /ctx/system_files/usr/share/icons/hicolor/scalable/apps/zos-settings.svg /usr/share/icons/hicolor/scalable/apps/
 cp /ctx/system_files/usr/share/icons/hicolor/scalable/apps/zos-settings-symbolic.svg /usr/share/icons/hicolor/scalable/apps/

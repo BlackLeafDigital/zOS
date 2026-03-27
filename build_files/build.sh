@@ -100,6 +100,12 @@ curl -fsSL --retry 3 --retry-delay 5 -o /usr/bin/coolercontrol \
     "https://gitlab.com/coolercontrol/coolercontrol/-/releases/4.1.0/downloads/packages/coolercontrol_4.1.0"
 chmod +x /usr/bin/coolercontrol
 
+# --- CoolerControl icon ---
+curl -fsSL --retry 3 --retry-delay 5 -o /usr/share/icons/hicolor/scalable/apps/coolercontrol.svg \
+    "https://gitlab.com/coolercontrol/coolercontrol/-/raw/main/coolercontrol-ui/src-tauri/icons/icon.svg" || \
+curl -fsSL --retry 3 --retry-delay 5 -o /usr/share/icons/hicolor/256x256/apps/coolercontrol.png \
+    "https://gitlab.com/coolercontrol/coolercontrol/-/raw/main/coolercontrol-ui/src-tauri/icons/128x128@2x.png" || true
+
 cat > /usr/lib/systemd/system/coolercontrold.service << 'COOLER_SVC'
 [Unit]
 Description=CoolerControl Daemon

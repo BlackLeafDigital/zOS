@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Dock configuration persisted to ~/.config/zos/dock.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,12 @@ impl DockConfig {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = fs::write(&path, json);
         }
+    }
+
+    /// Get the modification time of the config file, if it exists.
+    pub fn config_mtime() -> Option<SystemTime> {
+        let path = Self::config_path();
+        std::fs::metadata(&path).ok()?.modified().ok()
     }
 
     /// Check whether a given app ID is pinned.
