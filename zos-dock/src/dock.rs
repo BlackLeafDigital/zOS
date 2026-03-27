@@ -56,6 +56,8 @@ pub struct DockItem {
     pub pinned: bool,
     /// Hyprland windows belonging to this app.
     pub windows: Vec<HyprWindow>,
+    /// Whether this item represents a minimized window.
+    pub minimized: bool,
     /// Current visual scale (animated via spring).
     pub scale: Spring<f32>,
 }
@@ -84,6 +86,10 @@ pub struct Dock {
     pub item_positions: Vec<f32>,
     /// Address of the currently focused window (from hyprctl activewindow -j).
     pub active_address: Option<String>,
+    /// Whether the dock is currently hidden (auto-hide mode).
+    pub hidden: bool,
+    /// When the cursor last left the dock (for auto-hide delay).
+    pub hide_timer: Option<Instant>,
 }
 
 /// Messages handled by the dock.
@@ -104,6 +110,10 @@ pub enum Message {
     RefreshWindows,
     /// Toggle pin state for an app.
     TogglePin(String),
+    /// Auto-hide timer triggered — check if we should hide.
+    HideCheck,
+    /// Show the dock (mouse entered trigger zone).
+    ShowDock,
 }
 
 pub fn boot() -> Dock {
@@ -118,6 +128,8 @@ pub fn boot() -> Dock {
         cursor_x: None,
         item_positions: Vec::new(),
         active_address: hypr::get_active_window_address(),
+        hidden: false,
+        hide_timer: None,
     };
     dock.rebuild_items(&windows);
     dock
@@ -144,12 +156,20 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         Message::IcedEvent(event) => {
             match event {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    if dock.hidden && dock.config.auto_hide {
+                        dock.hidden = false;
+                        dock.hide_timer = None;
+                        return Task::done(Message::ShowDock);
+                    }
                     dock.cursor_x = Some(position.x);
                     dock.update_magnification();
                 }
                 Event::Mouse(iced::mouse::Event::CursorLeft) => {
                     dock.cursor_x = None;
                     dock.reset_magnification();
+                    if dock.config.auto_hide {
+                        dock.hide_timer = Some(Instant::now());
+                    }
                 }
                 _ => {}
             }
@@ -158,12 +178,20 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         Message::MouseLeft => {
             dock.cursor_x = None;
             dock.reset_magnification();
+            if dock.config.auto_hide {
+                dock.hide_timer = Some(Instant::now());
+            }
             Task::none()
         }
         Message::ItemClicked(index) => {
             tracing::info!("Dock: ItemClicked index={}", index);
             if let Some(item) = dock.items.get(index) {
-                if item.is_running() {
+                if item.minimized {
+                    // Unminimize the window: move it back to the current workspace and focus.
+                    if let Some(window) = item.windows.first() {
+                        hypr::unminimize_window(&window.address);
+                    }
+                } else if item.is_running() {
                     // Cycle through windows: focus the most recently unfocused one,
                     // or if already focused and there are multiple, focus the next.
                     if let Some(window) = item
@@ -187,7 +215,11 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 if item.is_running() {
                     // Close the first window.
                     if let Some(window) = item.windows.first() {
-                        tracing::info!("Right-click: closing window '{}' of {}", window.title, app_id);
+                        tracing::info!(
+                            "Right-click: closing window '{}' of {}",
+                            window.title,
+                            app_id
+                        );
                         hypr::close_window(&window.address);
                     }
                 } else if item.pinned {
@@ -214,6 +246,21 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             dock.rebuild_items(&windows);
             Task::none()
         }
+        Message::HideCheck => {
+            if dock.config.auto_hide {
+                if let Some(timer_start) = dock.hide_timer {
+                    if timer_start.elapsed() >= Duration::from_millis(800)
+                        && dock.cursor_x.is_none()
+                    {
+                        dock.hidden = true;
+                        dock.hide_timer = None;
+                        return Task::done(Message::SizeChange((0, 4)));
+                    }
+                }
+            }
+            Task::none()
+        }
+        Message::ShowDock => Task::done(Message::SizeChange((0, 68))),
         // Layer shell action messages are handled by the framework.
         _ => Task::none(),
     }
@@ -222,16 +269,31 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
 pub fn view(dock: &Dock) -> Element<'_, Message> {
     let icon_size = dock.config.icon_size;
 
+    if dock.hidden {
+        return container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+
     let mut items_row = row![].spacing(4).align_y(iced::Alignment::End);
 
     let mut has_pinned = false;
     let mut started_running = false;
+    let mut started_minimized = false;
 
     for (i, item) in dock.items.iter().enumerate() {
         // Insert separator between pinned and unpinned-running items.
-        if !item.pinned && !started_running && has_pinned {
+        if !item.pinned && !item.minimized && !started_running && has_pinned {
             started_running = true;
             items_row = items_row.push(separator());
+        }
+        // Insert separator between running items and minimized items.
+        if item.minimized && !started_minimized {
+            started_minimized = true;
+            if has_pinned || started_running {
+                items_row = items_row.push(separator());
+            }
         }
         if item.pinned {
             has_pinned = true;
@@ -239,6 +301,7 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
 
         let scale = *item.scale.value();
         let scaled_size = (icon_size as f32 * scale) as u16;
+        let icon_opacity: f32 = if item.minimized { 0.5 } else { 1.0 };
 
         // Build the icon widget.
         let icon_widget: Element<'_, Message> = if let Some(path) = &item.icon_path {
@@ -246,11 +309,13 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
                 svg(svg::Handle::from_path(path))
                     .width(Length::Fixed(scaled_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
+                    .opacity(icon_opacity)
                     .into()
             } else {
                 iced::widget::image(path.to_string_lossy().to_string())
                     .width(Length::Fixed(scaled_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
+                    .opacity(icon_opacity)
                     .into()
             }
         } else {
@@ -262,13 +327,25 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
                 .unwrap_or('?')
                 .to_uppercase()
                 .to_string();
+            let fallback_text_color = Color {
+                a: icon_opacity,
+                ..TEXT_COLOR
+            };
+            let fallback_bg_color = Color {
+                a: icon_opacity,
+                ..SURFACE_COLOR
+            };
             container(
-                center(text(label).size(scaled_size as f32 * 0.5).color(TEXT_COLOR))
-                    .width(Length::Fixed(scaled_size as f32))
-                    .height(Length::Fixed(scaled_size as f32)),
+                center(
+                    text(label)
+                        .size(scaled_size as f32 * 0.5)
+                        .color(fallback_text_color),
+                )
+                .width(Length::Fixed(scaled_size as f32))
+                .height(Length::Fixed(scaled_size as f32)),
             )
             .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(SURFACE_COLOR)),
+                background: Some(Background::Color(fallback_bg_color)),
                 border: Border {
                     color: Color::TRANSPARENT,
                     width: 0.0,
@@ -280,7 +357,20 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
         };
 
         // Active indicator dot below the icon.
-        let dot: Element<'_, Message> = if item.is_running() {
+        let dot: Element<'_, Message> = if item.minimized {
+            // Minimized items get a dimmed/muted dot.
+            container(Space::new().width(6).height(6))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Color(SEPARATOR_COLOR)),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 3.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else if item.is_running() {
             let dot_color = if item.is_focused(&dock.active_address) {
                 ACCENT_BLUE
             } else {
@@ -354,6 +444,11 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
         subs.push(
             iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
         );
+    }
+
+    // When auto-hide timer is running, poll at 100ms to check if delay has elapsed.
+    if dock.config.auto_hide && dock.hide_timer.is_some() {
+        subs.push(iced::time::every(Duration::from_millis(100)).map(|_| Message::HideCheck));
     }
 
     Subscription::batch(subs)
@@ -432,6 +527,7 @@ impl Dock {
                 icon_path,
                 pinned: true,
                 windows: item_windows,
+                minimized: false,
                 scale,
             });
         }
@@ -465,6 +561,7 @@ impl Dock {
                 icon_path,
                 pinned: false,
                 windows: group_windows,
+                minimized: false,
                 scale,
             });
         }
@@ -472,6 +569,38 @@ impl Dock {
         // Sort running items by name for stable ordering.
         running_items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         self.items.extend(running_items);
+
+        // Third: add minimized windows.
+        let minimized_windows = hypr::get_minimized_windows();
+        let mut minimized_items: Vec<DockItem> = Vec::new();
+        for w in &minimized_windows {
+            let entry = self.icon_resolver.lookup(&w.class);
+            let name = entry
+                .map(|e| e.name.clone())
+                .unwrap_or_else(|| w.class.clone());
+            let icon_path = entry.and_then(|e| e.icon_path.clone());
+            let app_id = entry
+                .map(|e| e.app_id.clone())
+                .unwrap_or_else(|| w.class.clone());
+            let key = w.class.to_lowercase();
+
+            let scale = old_scales
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| Spring::new(1.0));
+
+            minimized_items.push(DockItem {
+                app_id,
+                name,
+                icon_path,
+                pinned: false,
+                windows: vec![w.clone()],
+                minimized: true,
+                scale,
+            });
+        }
+        minimized_items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        self.items.extend(minimized_items);
 
         // Recompute approximate item positions.
         self.recompute_positions();
@@ -489,11 +618,18 @@ impl Dock {
 
         let mut has_pinned = false;
         let mut started_running = false;
+        let mut started_minimized = false;
 
         for item in &self.items {
-            if !item.pinned && !started_running && has_pinned {
+            if !item.pinned && !item.minimized && !started_running && has_pinned {
                 started_running = true;
                 x += 6.0; // separator width + spacing
+            }
+            if item.minimized && !started_minimized {
+                started_minimized = true;
+                if has_pinned || started_running {
+                    x += 6.0; // separator width + spacing
+                }
             }
             if item.pinned {
                 has_pinned = true;

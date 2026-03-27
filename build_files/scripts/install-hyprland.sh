@@ -48,15 +48,7 @@ dnf5 install -y \
 # Keep waybar as fallback (user can switch in autostart)
 dnf5 install -y waybar
 
-# --- clipse (pretty clipboard TUI with image previews, replaces cliphist+wofi) ---
-CURL_GH_OPTS=(--connect-timeout 10 --retry 3)
-if [ -n "${GITHUB_TOKEN:-}" ]; then CURL_GH_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
-CLIPSE_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/savedra1/clipse/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
-curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" -o /tmp/clipse.tar.gz "https://github.com/savedra1/clipse/releases/download/v${CLIPSE_VERSION}/clipse_v${CLIPSE_VERSION}_linux_wayland_amd64.tar.gz"
-tar -xzf /tmp/clipse.tar.gz -C /tmp/
-mv /tmp/clipse-linux-wayland-amd64 /usr/bin/clipse
-chmod +x /usr/bin/clipse
-rm /tmp/clipse.tar.gz
+# --- cursor-clip (clipboard manager) is built in the Containerfile Rust stage ---
 
 # --- wl-clip-persist is built in a separate Containerfile stage ---
 # Binary is already at /usr/bin/wl-clip-persist

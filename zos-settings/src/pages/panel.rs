@@ -3,6 +3,7 @@
 use relm4::adw;
 use relm4::adw::prelude::*;
 use relm4::gtk;
+use relm4::gtk::gio;
 
 const THEMES_DIR: &str = "/usr/share/hyprpanel/themes";
 
@@ -161,10 +162,13 @@ fn build_theme_section() -> adw::PreferencesGroup {
 
     let combo = adw::ComboRow::builder()
         .title("Panel Theme")
-        .icon_name("applications-graphics-symbolic")
         .model(&model)
         .selected(gtk::INVALID_LIST_POSITION)
         .build();
+
+    let icon = gtk::Image::from_icon_name("applications-graphics-symbolic");
+    icon.set_valign(gtk::Align::Center);
+    combo.add_prefix(&icon);
 
     let themes_for_combo = themes.clone();
     combo.connect_selected_notify(move |row| {
@@ -292,33 +296,24 @@ fn build_quick_actions_section() -> adw::PreferencesGroup {
         filter.add_mime_type("image/webp");
         filter.set_name(Some("Images"));
 
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk::FileDialog::builder()
+            .title("Select Wallpaper")
+            .filters(&filters)
+            .build();
+
         let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
 
-        #[allow(deprecated)]
-        let chooser = gtk::FileChooserDialog::new(
-            Some("Select Wallpaper"),
-            window.as_ref(),
-            gtk::FileChooserAction::Open,
-            &[
-                ("Cancel", gtk::ResponseType::Cancel),
-                ("Open", gtk::ResponseType::Accept),
-            ],
-        );
-        chooser.add_filter(&filter);
-
-        chooser.connect_response(move |dialog, response| {
-            if response == gtk::ResponseType::Accept {
-                if let Some(file) = dialog.file() {
-                    if let Some(path) = file.path() {
-                        let path_str = path.to_string_lossy().to_string();
-                        hyprpanel_run(&["setWallpaper", &path_str]);
-                    }
+        dialog.open(window.as_ref(), None::<&gio::Cancellable>, move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    let path_str = path.to_string_lossy().to_string();
+                    hyprpanel_run(&["setWallpaper", &path_str]);
                 }
             }
-            dialog.close();
         });
-
-        chooser.show();
     });
 
     wallpaper_row.add_suffix(&wallpaper_btn);

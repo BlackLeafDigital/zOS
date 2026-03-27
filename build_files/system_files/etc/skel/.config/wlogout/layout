@@ -34,3 +34,9 @@
     "text" : "Reboot",
     "keybind" : "r"
 }
+{
+    "label" : "windows",
+    "action" : "pkexec efibootmgr --bootnext 0000 && systemctl reboot",
+    "text" : "Windows",
+    "keybind" : "w"
+}

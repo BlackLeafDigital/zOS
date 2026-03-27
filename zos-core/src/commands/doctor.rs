@@ -147,7 +147,7 @@ fn check_pipewire() -> DoctorCheck {
 fn check_expected_packages() -> Vec<DoctorCheck> {
     let packages = [
         "waybar",
-        "clipse",
+        "cursor-clip",
         "wl-clip-persist",
         "hyprlock",
         "grim",

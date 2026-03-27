@@ -12,6 +12,14 @@ pub fn shutdown() {
     logind_action("PowerOff");
 }
 
+pub fn reboot_to_windows() {
+    // Set Windows as next boot via EFI
+    let _ = Command::new("pkexec")
+        .args(["efibootmgr", "--bootnext", "0000"])
+        .status();
+    logind_action("Reboot");
+}
+
 fn logind_action(method: &str) {
     let _ = Command::new("dbus-send")
         .args([

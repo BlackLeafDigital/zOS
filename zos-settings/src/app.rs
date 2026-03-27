@@ -18,7 +18,7 @@ pub enum Page {
     Panel,
     Input,
     Network,
-    DevSetup,
+    Dock,
     Power,
     Boot,
 }
@@ -33,7 +33,7 @@ impl Page {
             Page::Panel => "Panel",
             Page::Input => "Input",
             Page::Network => "Network",
-            Page::DevSetup => "Developer Setup",
+            Page::Dock => "Dock",
             Page::Power => "Power",
             Page::Boot => "Boot",
         }
@@ -48,7 +48,7 @@ impl Page {
             Page::Panel => "view-app-grid-symbolic",
             Page::Input => "input-keyboard-symbolic",
             Page::Network => "network-wireless-symbolic",
-            Page::DevSetup => "utilities-terminal-symbolic",
+            Page::Dock => "view-paged-symbolic",
             Page::Power => "system-shutdown-symbolic",
             Page::Boot => "drive-harddisk-symbolic",
         }
@@ -63,7 +63,7 @@ impl Page {
             Page::Panel => "panel",
             Page::Input => "input",
             Page::Network => "network",
-            Page::DevSetup => "devsetup",
+            Page::Dock => "dock",
             Page::Power => "power",
             Page::Boot => "boot",
         }
@@ -78,7 +78,7 @@ const ALL_PAGES: &[Page] = &[
     Page::Panel,
     Page::Input,
     Page::Network,
-    Page::DevSetup,
+    Page::Dock,
     Page::Power,
     Page::Boot,
 ];
@@ -192,8 +192,8 @@ impl SimpleComponent for App {
         let network_page = pages::network::build();
         stack.add_named(&network_page, Some(Page::Network.stack_name()));
 
-        let devsetup_page = pages::devsetup::build();
-        stack.add_named(&devsetup_page, Some(Page::DevSetup.stack_name()));
+        let dock_page = pages::dock::build();
+        stack.add_named(&dock_page, Some(Page::Dock.stack_name()));
 
         let power_page = pages::power::build();
         stack.add_named(&power_page, Some(Page::Power.stack_name()));

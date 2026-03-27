@@ -423,9 +423,12 @@ fn get_ip_details() -> (String, String, String) {
         .output()
         .ok()
         .and_then(|o| {
-            if !o.status.success() { return None; }
+            if !o.status.success() {
+                return None;
+            }
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            stdout.lines()
+            stdout
+                .lines()
                 .filter_map(|l| {
                     let parts: Vec<&str> = l.split(':').collect();
                     if parts.len() >= 3
@@ -447,7 +450,14 @@ fn get_ip_details() -> (String, String, String) {
     }
 
     let output = Command::new("nmcli")
-        .args(["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", &device])
+        .args([
+            "-t",
+            "-f",
+            "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
+            "device",
+            "show",
+            &device,
+        ])
         .output();
 
     let mut ip = String::from("N/A");

@@ -123,6 +123,57 @@ pub fn create_windows_bls() -> Result<()> {
     Ok(())
 }
 
+/// Get the EFI boot entry number for Windows Boot Manager.
+pub fn get_windows_boot_num() -> Option<String> {
+    let output = Command::new("efibootmgr").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("Windows Boot Manager") {
+            // Line format: "Boot0000* Windows Boot Manager"
+            return line
+                .strip_prefix("Boot")
+                .and_then(|s| s.get(..4))
+                .map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// Set Windows as the next boot target via EFI bootnext, then reboot.
+pub fn reboot_to_windows() -> Result<()> {
+    let boot_num = get_windows_boot_num()
+        .ok_or_else(|| eyre!("No Windows Boot Manager found in EFI entries"))?;
+
+    let status = Command::new("efibootmgr")
+        .args(["--bootnext", &boot_num])
+        .status()
+        .wrap_err("Failed to run efibootmgr")?;
+
+    if !status.success() {
+        return Err(eyre!(
+            "efibootmgr --bootnext failed (exit {})",
+            status.code().unwrap_or(-1)
+        ));
+    }
+
+    // Reboot via logind D-Bus
+    let _ = Command::new("dbus-send")
+        .args([
+            "--system",
+            "--print-reply",
+            "--dest=org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager.Reboot",
+            "boolean:true",
+        ])
+        .status();
+
+    Ok(())
+}
+
 /// Check if we are running as root.
 pub fn is_root() -> bool {
     // Read effective UID without depending on libc crate

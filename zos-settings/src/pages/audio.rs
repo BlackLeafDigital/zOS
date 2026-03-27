@@ -116,10 +116,12 @@ fn build_output_section() -> adw::PreferencesGroup {
         .unwrap_or("audio-speakers-symbolic");
     let combo = adw::ComboRow::builder()
         .title("Device")
-        .icon_name(device_icon)
         .model(&model)
         .selected(default_idx)
         .build();
+    let combo_icon = gtk::Image::from_icon_name(device_icon);
+    combo_icon.set_valign(gtk::Align::Center);
+    combo.add_prefix(&combo_icon);
 
     let sinks_for_combo = sinks.clone();
     combo.connect_selected_notify(move |row| {
@@ -237,10 +239,12 @@ fn build_input_section() -> adw::PreferencesGroup {
         .unwrap_or("audio-input-microphone-symbolic");
     let combo = adw::ComboRow::builder()
         .title("Device")
-        .icon_name(device_icon)
         .model(&model)
         .selected(default_idx)
         .build();
+    let combo_icon = gtk::Image::from_icon_name(device_icon);
+    combo_icon.set_valign(gtk::Align::Center);
+    combo.add_prefix(&combo_icon);
 
     let sources_for_combo = sources.clone();
     combo.connect_selected_notify(move |row| {
@@ -537,10 +541,10 @@ fn build_advanced_section() -> gtk::Box {
     let sources = pipewire::list_sources();
 
     for source in &sources {
-        let row = adw::ActionRow::builder()
-            .title(&source.name)
-            .icon_name("audio-input-microphone-symbolic")
-            .build();
+        let row = adw::ActionRow::builder().title(&source.name).build();
+        let row_icon = gtk::Image::from_icon_name("audio-input-microphone-symbolic");
+        row_icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&row_icon);
 
         let switch = gtk::Switch::builder()
             .valign(gtk::Align::Center)
@@ -556,7 +560,11 @@ fn build_advanced_section() -> gtk::Box {
             // We always toggle — the switch state tracks enabled vs. muted.
             // Since GTK calls this when the state changes, just toggle.
             let _ = std::process::Command::new("wpctl")
-                .args(["set-mute", &source_id.to_string(), if currently_muted { "1" } else { "0" }])
+                .args([
+                    "set-mute",
+                    &source_id.to_string(),
+                    if currently_muted { "1" } else { "0" },
+                ])
                 .status();
             gtk::glib::Propagation::Proceed
         });
@@ -577,10 +585,12 @@ fn build_advanced_section() -> gtk::Box {
 
     let input_combo = adw::ComboRow::builder()
         .title("Default Input")
-        .icon_name("audio-input-microphone-symbolic")
         .model(&input_model)
         .selected(input_default_idx)
         .build();
+    let input_combo_icon = gtk::Image::from_icon_name("audio-input-microphone-symbolic");
+    input_combo_icon.set_valign(gtk::Align::Center);
+    input_combo.add_prefix(&input_combo_icon);
 
     let sources_for_combo = sources.clone();
     input_combo.connect_selected_notify(move |row| {
@@ -606,10 +616,10 @@ fn build_advanced_section() -> gtk::Box {
         .collect();
 
     for sink in &physical_sinks {
-        let row = adw::ActionRow::builder()
-            .title(&sink.name)
-            .icon_name("audio-speakers-symbolic")
-            .build();
+        let row = adw::ActionRow::builder().title(&sink.name).build();
+        let sink_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+        sink_icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&sink_icon);
         outputs_group.add(&row);
     }
 
@@ -625,10 +635,12 @@ fn build_advanced_section() -> gtk::Box {
 
     let output_combo = adw::ComboRow::builder()
         .title("Default Output")
-        .icon_name("audio-speakers-symbolic")
         .model(&output_model)
         .selected(output_default_idx)
         .build();
+    let output_combo_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+    output_combo_icon.set_valign(gtk::Align::Center);
+    output_combo.add_prefix(&output_combo_icon);
 
     let physical_sinks_for_combo = physical_sinks.clone();
     output_combo.connect_selected_notify(move |row| {
@@ -674,8 +686,10 @@ fn build_advanced_section() -> gtk::Box {
             let expander = adw::ExpanderRow::builder()
                 .title(display_name)
                 .subtitle(&bus.name)
-                .icon_name("audio-speakers-symbolic")
                 .build();
+            let expander_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+            expander_icon.set_valign(gtk::Align::Center);
+            expander.add_prefix(&expander_icon);
 
             // Output Device combo — lists physical sinks
             let route_model = gtk::StringList::new(&[]);
@@ -717,7 +731,9 @@ fn build_advanced_section() -> gtk::Box {
                                 }
                                 if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
                                     if let Some(ref out) = current_output {
-                                        if out.starts_with(&bus_name_for_route) && out.contains(":monitor_") {
+                                        if out.starts_with(&bus_name_for_route)
+                                            && out.contains(":monitor_")
+                                        {
                                             let input = trimmed
                                                 .trim_start_matches("|->")
                                                 .trim_start_matches("\\->")

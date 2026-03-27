@@ -111,7 +111,7 @@ CONFIG_AREAS: dict[str, dict] = {
 }
 
 EXPECTED_PACKAGES = [
-    "waybar", "clipse", "wl-clip-persist", "hypridle", "hyprlock",
+    "waybar", "cursor-clip", "wl-clip-persist", "hypridle", "hyprlock",
     "hyprpicker", "wlogout", "wezterm", "btop", "eza", "bat", "ripgrep",
     "fd-find", "zoxide", "starship", "delta",
 ]

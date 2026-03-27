@@ -32,6 +32,15 @@ fn main() {
     reboot_item.connect_activate(|_| logind_action("Reboot"));
     menu.append(&reboot_item);
 
+    let windows_item = gtk::MenuItem::with_label("Reboot to Windows");
+    windows_item.connect_activate(|_| {
+        let _ = Command::new("pkexec")
+            .args(["efibootmgr", "--bootnext", "0000"])
+            .status();
+        logind_action("Reboot");
+    });
+    menu.append(&windows_item);
+
     let shutdown_item = gtk::MenuItem::with_label("Shut Down");
     shutdown_item.connect_activate(|_| logind_action("PowerOff"));
     menu.append(&shutdown_item);

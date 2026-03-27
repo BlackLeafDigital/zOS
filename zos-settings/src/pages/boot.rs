@@ -140,6 +140,43 @@ pub fn build() -> gtk::Box {
         windows_group.add(&create_row);
     }
 
+    if status.windows_detected {
+        let reboot_row = adw::ActionRow::builder()
+            .title("Reboot to Windows")
+            .subtitle("Set Windows as next boot target and restart")
+            .build();
+        let reboot_btn = gtk::Button::builder()
+            .label("Reboot to Windows")
+            .valign(gtk::Align::Center)
+            .css_classes(["destructive-action"])
+            .build();
+        reboot_btn.connect_clicked(|btn| {
+            // Use the confirm_power_action pattern
+            let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let dialog = adw::AlertDialog::builder()
+                .heading("Reboot to Windows?")
+                .body("The system will restart into Windows. All unsaved work will be lost.")
+                .build();
+            dialog.add_responses(&[("cancel", "Cancel"), ("confirm", "Reboot to Windows")]);
+            dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_close_response("cancel");
+            dialog.connect_response(None, move |_, response| {
+                if response == "confirm" {
+                    crate::services::power::reboot_to_windows();
+                }
+            });
+            if let Some(ref w) = window {
+                dialog.present(Some(w));
+            } else {
+                dialog.present(None::<&gtk::Window>);
+            }
+        });
+        reboot_row.add_suffix(&reboot_btn);
+        reboot_row.set_activatable_widget(Some(&reboot_btn));
+        windows_group.add(&reboot_row);
+    }
+
     page.append(&windows_group);
 
     let scrolled = gtk::ScrolledWindow::builder()

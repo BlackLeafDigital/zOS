@@ -77,6 +77,7 @@ pub fn get_windows() -> Vec<HyprWindow> {
                 focus_history_id,
             })
         })
+        .filter(|w| !w.workspace_name.starts_with("special:minimize"))
         .collect()
 }
 
@@ -108,6 +109,73 @@ pub fn close_window(address: &str) {
     let _ = Command::new("hyprctl")
         .args(["dispatch", "closewindow", &format!("address:{}", address)])
         .status();
+}
+
+/// Query Hyprland for minimized windows (on the special:minimize workspace).
+pub fn get_minimized_windows() -> Vec<HyprWindow> {
+    let output = match Command::new("hyprctl").args(["clients", "-j"]).output() {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let json_str = match std::str::from_utf8(&output.stdout) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let clients: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    clients
+        .into_iter()
+        .filter_map(|c| {
+            let address = c.get("address")?.as_str()?.to_string();
+            let class = c
+                .get("class")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let title = c
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let workspace_name = c
+                .get("workspace")
+                .and_then(|w| w.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let focus_history_id = c
+                .get("focusHistoryID")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1) as i32;
+            if class.is_empty() || !workspace_name.starts_with("special:minimize") {
+                return None;
+            }
+            Some(HyprWindow {
+                address,
+                class,
+                title,
+                workspace_name,
+                focus_history_id,
+            })
+        })
+        .collect()
+}
+
+/// Unminimize a window by moving it to the current workspace and focusing it.
+pub fn unminimize_window(address: &str) {
+    let _ = Command::new("hyprctl")
+        .args([
+            "dispatch",
+            "movetoworkspacesilent",
+            &format!("e+0,address:{}", address),
+        ])
+        .status();
+    focus_window(address);
 }
 
 /// Launch an application by its desktop file app ID (e.g. "org.wezfurlong.wezterm").

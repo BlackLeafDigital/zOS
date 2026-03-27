@@ -617,7 +617,14 @@ fn build_monitors_section(
             for cfg in cfgs.iter() {
                 content.push_str(&format!(
                     "monitor={},{}x{}@{:.2},{}x{},{:.2},transform,{}\n",
-                    cfg.name, cfg.width, cfg.height, cfg.refresh_rate, cfg.x, cfg.y, cfg.scale, cfg.transform
+                    cfg.name,
+                    cfg.width,
+                    cfg.height,
+                    cfg.refresh_rate,
+                    cfg.x,
+                    cfg.y,
+                    cfg.scale,
+                    cfg.transform
                 ));
             }
 

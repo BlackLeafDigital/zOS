@@ -19,7 +19,7 @@ FROM ${BASE_IMAGE}
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel git && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
     cargo build --release -p zos -p zos-settings -p zos-tray -p zos-dock && \
@@ -28,11 +28,21 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
     cp /tmp/cargo-target/release/wl-clip-persist /usr/bin/wl-clip-persist && \
     cd /ctx && \
+    git clone --depth 1 https://github.com/Sirulex/cursor-clip.git /tmp/cursor-clip && \
+    cd /tmp/cursor-clip && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
+    cp /tmp/cargo-target/release/cursor-clip /usr/bin/cursor-clip && \
+    git clone --depth 1 https://github.com/sgtaziz/lian-li-linux.git /tmp/lian-li-linux && \
+    cd /tmp/lian-li-linux && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release -p lianli-daemon 2>/dev/null || true && \
+    cp /tmp/cargo-target/release/lianli-daemon /usr/bin/lianli-daemon 2>/dev/null || true && \
+    cd /ctx && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
     cp /tmp/cargo-target/release/zos-tray /usr/bin/zos-tray && \
     cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
-    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel git
+    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
+    dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)
 ARG GH_TOKEN

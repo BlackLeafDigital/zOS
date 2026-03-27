@@ -24,7 +24,8 @@ dnf5 install -y \
     tldr \
     git-delta \
     git-crypt \
-    liquidctl
+    liquidctl \
+    libayatana-appindicator-gtk3
 
 # --- eza (not in Fedora repos, install from GitHub release) ---
 curl -Lo /tmp/eza.tar.gz https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz
@@ -59,19 +60,69 @@ curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird.tar.gz "https://github.com/
 tar -xzf /tmp/netbird.tar.gz -C /usr/bin/ netbird
 chmod +x /usr/bin/netbird
 rm /tmp/netbird.tar.gz
-# Install official netbird systemd service (template unit from upstream repo, adapted for single instance)
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird-template.service \
-    "https://raw.githubusercontent.com/netbirdio/netbird/v${NETBIRD_VERSION}/release_files/systemd/netbird%40.service"
-sed 's/%i/default/g; s/Netbird Client (default)/Netbird Client/' /tmp/netbird-template.service \
-    > /usr/lib/systemd/system/netbird.service
-rm /tmp/netbird-template.service
-curl -fsSL --retry 3 --retry-delay 5 -o /etc/default/netbird \
-    "https://raw.githubusercontent.com/netbirdio/netbird/v${NETBIRD_VERSION}/release_files/systemd/env"
+
+# --- Netbird UI (system tray GUI) ---
+curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird-ui.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird-ui-linux_${NETBIRD_VERSION}_linux_amd64.tar.gz"
+tar -xzf /tmp/netbird-ui.tar.gz -C /tmp/
+cp /tmp/netbird-ui /usr/bin/netbird-ui
+chmod +x /usr/bin/netbird-ui
+rm /tmp/netbird-ui.tar.gz
+
+# Install netbird systemd service
+mkdir -p /etc/netbird
+cat > /usr/lib/systemd/system/netbird.service << 'NETBIRD_SVC'
+[Unit]
+Description=NetBird Daemon
+Documentation=https://netbird.io/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/netbird service run
+Restart=on-failure
+RestartSec=5
+CacheDirectory=netbird
+ConfigurationDirectory=netbird
+LogsDirectory=netbird
+RuntimeDirectory=netbird
+StateDirectory=netbird
+
+[Install]
+WantedBy=multi-user.target
+NETBIRD_SVC
+
+# --- CoolerControl (fan/pump/AIO control GUI) ---
+curl -fsSL --retry 3 --retry-delay 5 -o /usr/bin/coolercontrold \
+    "https://gitlab.com/coolercontrol/coolercontrol/-/releases/4.1.0/downloads/packages/coolercontrold_4.1.0"
+chmod +x /usr/bin/coolercontrold
+curl -fsSL --retry 3 --retry-delay 5 -o /usr/bin/coolercontrol \
+    "https://gitlab.com/coolercontrol/coolercontrol/-/releases/4.1.0/downloads/packages/coolercontrol_4.1.0"
+chmod +x /usr/bin/coolercontrol
+
+cat > /usr/lib/systemd/system/coolercontrold.service << 'COOLER_SVC'
+[Unit]
+Description=CoolerControl Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/coolercontrold
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+COOLER_SVC
+
+# --- Update liquidctl to latest git (NZXT Kraken 2023 Elite support) ---
+pip install --break-system-packages "git+https://github.com/liquidctl/liquidctl#egg=liquidctl" || true
 
 # --- Enable services ---
 systemctl enable podman.socket
 systemctl enable sshd
 systemctl enable netbird
+systemctl enable coolercontrold
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket
 
 # --- Fix GPG keys for BIB (bootc-image-builder) compatibility ---

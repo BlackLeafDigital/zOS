@@ -8,27 +8,27 @@ use relm4::gtk;
 fn confirm_power_action(btn: &gtk::Button, title: &str, body: &str, action: fn()) {
     let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
 
-    #[allow(deprecated)]
-    let dialog = gtk::MessageDialog::builder()
-        .message_type(gtk::MessageType::Warning)
-        .buttons(gtk::ButtonsType::OkCancel)
-        .text(title)
-        .secondary_text(body)
-        .modal(true)
+    let dialog = adw::AlertDialog::builder()
+        .heading(title)
+        .body(body)
         .build();
 
-    if let Some(ref w) = window {
-        dialog.set_transient_for(Some(w));
-    }
+    dialog.add_responses(&[("cancel", "Cancel"), ("confirm", "Confirm")]);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
 
-    dialog.connect_response(move |dialog, response| {
-        if response == gtk::ResponseType::Ok {
+    dialog.connect_response(None, move |_, response| {
+        if response == "confirm" {
             action();
         }
-        dialog.close();
     });
 
-    dialog.present();
+    if let Some(ref w) = window {
+        dialog.present(Some(w));
+    } else {
+        dialog.present(None::<&gtk::Window>);
+    }
 }
 
 /// Build the power management page widget.
