@@ -417,14 +417,37 @@ fn get_wifi_networks() -> Vec<(String, String, String, bool)> {
 
 /// Get IP details for the first active device.
 fn get_ip_details() -> (String, String, String) {
+    // Find the first non-loopback connected device
+    let device = Command::new("nmcli")
+        .args(["-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if !o.status.success() { return None; }
+            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+            stdout.lines()
+                .filter_map(|l| {
+                    let parts: Vec<&str> = l.split(':').collect();
+                    if parts.len() >= 3
+                        && parts[2].contains("connected")
+                        && parts[1] != "loopback"
+                        && parts[1] != "wifi-p2p"
+                    {
+                        Some(parts[0].to_string())
+                    } else {
+                        None
+                    }
+                })
+                .next()
+        })
+        .unwrap_or_default();
+
+    if device.is_empty() {
+        return ("N/A".into(), "N/A".into(), "N/A".into());
+    }
+
     let output = Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
-            "device",
-            "show",
-        ])
+        .args(["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", &device])
         .output();
 
     let mut ip = String::from("N/A");
@@ -438,9 +461,7 @@ fn get_ip_details() -> (String, String, String) {
                 if let Some(val) = line.strip_prefix("IP4.ADDRESS[1]:") {
                     ip = val.trim().to_string();
                 } else if let Some(val) = line.strip_prefix("IP4.GATEWAY:") {
-                    if gateway == "N/A" {
-                        gateway = val.trim().to_string();
-                    }
+                    gateway = val.trim().to_string();
                 } else if let Some(val) = line.strip_prefix("IP4.DNS[1]:") {
                     dns = val.trim().to_string();
                 }

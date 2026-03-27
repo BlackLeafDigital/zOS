@@ -6812,6 +6812,7 @@ dependencies = [
  "iced_layershell",
  "serde",
  "serde_json",
+ "tracing",
  "zos-core",
 ]
 

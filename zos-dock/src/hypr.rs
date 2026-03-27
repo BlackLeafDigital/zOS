@@ -80,6 +80,21 @@ pub fn get_windows() -> Vec<HyprWindow> {
         .collect()
 }
 
+/// Get the address of the currently focused window.
+pub fn get_active_window_address() -> Option<String> {
+    let output = std::process::Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    json.get("address")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Focus a window by its Hyprland address.
 pub fn focus_window(address: &str) {
     let _ = Command::new("hyprctl")

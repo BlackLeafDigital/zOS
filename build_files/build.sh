@@ -59,9 +59,11 @@ curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird.tar.gz "https://github.com/
 tar -xzf /tmp/netbird.tar.gz -C /usr/bin/ netbird
 chmod +x /usr/bin/netbird
 rm /tmp/netbird.tar.gz
+netbird service install
 
 # --- Enable services ---
 systemctl enable podman.socket
+systemctl enable sshd
 # docker.socket not available in Bazzite base — podman provides Docker-compatible socket
 
 # --- Fix GPG keys for BIB (bootc-image-builder) compatibility ---

@@ -535,6 +535,56 @@ fn build_monitors_section(
         }
         expander.add_row(&transform_combo);
 
+        // --- Position X ---
+        let pos_x_row = adw::ActionRow::builder().title("Position X").build();
+        let pos_x_spin = gtk::SpinButton::builder()
+            .adjustment(&gtk::Adjustment::new(
+                monitor.x as f64,
+                -10000.0,
+                10000.0,
+                10.0,
+                100.0,
+                0.0,
+            ))
+            .valign(gtk::Align::Center)
+            .build();
+        {
+            let configs = Arc::clone(shared_configs);
+            pos_x_spin.connect_value_changed(move |spin| {
+                let mut cfgs = configs.lock().unwrap();
+                if let Some(cfg) = cfgs.get_mut(idx) {
+                    cfg.x = spin.value() as i64;
+                }
+            });
+        }
+        pos_x_row.add_suffix(&pos_x_spin);
+        expander.add_row(&pos_x_row);
+
+        // --- Position Y ---
+        let pos_y_row = adw::ActionRow::builder().title("Position Y").build();
+        let pos_y_spin = gtk::SpinButton::builder()
+            .adjustment(&gtk::Adjustment::new(
+                monitor.y as f64,
+                -10000.0,
+                10000.0,
+                10.0,
+                100.0,
+                0.0,
+            ))
+            .valign(gtk::Align::Center)
+            .build();
+        {
+            let configs = Arc::clone(shared_configs);
+            pos_y_spin.connect_value_changed(move |spin| {
+                let mut cfgs = configs.lock().unwrap();
+                if let Some(cfg) = cfgs.get_mut(idx) {
+                    cfg.y = spin.value() as i64;
+                }
+            });
+        }
+        pos_y_row.add_suffix(&pos_y_spin);
+        expander.add_row(&pos_y_row);
+
         group.add(&expander);
     }
 
@@ -566,8 +616,8 @@ fn build_monitors_section(
                 String::from("# zOS Monitor Config \u{2014} managed by zos-settings\n");
             for cfg in cfgs.iter() {
                 content.push_str(&format!(
-                    "monitor={},{}x{}@{:.2},auto,{:.2},transform,{}\n",
-                    cfg.name, cfg.width, cfg.height, cfg.refresh_rate, cfg.scale, cfg.transform
+                    "monitor={},{}x{}@{:.2},{}x{},{:.2},transform,{}\n",
+                    cfg.name, cfg.width, cfg.height, cfg.refresh_rate, cfg.x, cfg.y, cfg.scale, cfg.transform
                 ));
             }
 

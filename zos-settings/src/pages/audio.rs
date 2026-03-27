@@ -373,19 +373,13 @@ fn build_virtual_buses_section() -> adw::PreferencesGroup {
                 }
                 tracing::info!("Wrote virtual devices config to {:?}", path);
 
+                // Restart PipeWire asynchronously to avoid blocking the UI
                 match std::process::Command::new("systemctl")
                     .args(["--user", "restart", "pipewire"])
-                    .status()
+                    .spawn()
                 {
-                    Ok(status) if status.success() => {
-                        tracing::info!("Restarted PipeWire");
-                    }
-                    Ok(status) => {
-                        tracing::error!("systemctl restart pipewire exited with {}", status);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to restart PipeWire: {}", e);
-                    }
+                    Ok(_) => tracing::info!("PipeWire restart initiated"),
+                    Err(e) => tracing::error!("Failed to restart PipeWire: {}", e),
                 }
 
                 btn.set_label("Done — reopen Audio page");
@@ -526,16 +520,273 @@ fn friendly_bus_name(name: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
-// Advanced section
+// Advanced section (Inputs, Outputs, Bus Routing, Advanced tools)
 // ---------------------------------------------------------------------------
 
-fn build_advanced_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Advanced").build();
+fn build_advanced_section() -> gtk::Box {
+    let container = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(24)
+        .build();
+
+    // -----------------------------------------------------------------------
+    // Section 1: Inputs
+    // -----------------------------------------------------------------------
+    let inputs_group = adw::PreferencesGroup::builder().title("Inputs").build();
+
+    let sources = pipewire::list_sources();
+
+    for source in &sources {
+        let row = adw::ActionRow::builder()
+            .title(&source.name)
+            .icon_name("audio-input-microphone-symbolic")
+            .build();
+
+        let switch = gtk::Switch::builder()
+            .valign(gtk::Align::Center)
+            .active(!source.muted)
+            .build();
+
+        let source_id = source.id;
+        switch.connect_state_set(move |_sw, active| {
+            // When the switch is toggled, mute/unmute the source.
+            // The switch is "active" when the source is enabled (not muted).
+            // We need to toggle mute if the current state doesn't match.
+            let currently_muted = !active;
+            // We always toggle — the switch state tracks enabled vs. muted.
+            // Since GTK calls this when the state changes, just toggle.
+            let _ = std::process::Command::new("wpctl")
+                .args(["set-mute", &source_id.to_string(), if currently_muted { "1" } else { "0" }])
+                .status();
+            gtk::glib::Propagation::Proceed
+        });
+
+        row.add_suffix(&switch);
+        inputs_group.add(&row);
+    }
+
+    // Default Input combo
+    let input_model = gtk::StringList::new(&[]);
+    let mut input_default_idx: u32 = 0;
+    for (i, source) in sources.iter().enumerate() {
+        input_model.append(&source.name);
+        if source.is_default {
+            input_default_idx = i as u32;
+        }
+    }
+
+    let input_combo = adw::ComboRow::builder()
+        .title("Default Input")
+        .icon_name("audio-input-microphone-symbolic")
+        .model(&input_model)
+        .selected(input_default_idx)
+        .build();
+
+    let sources_for_combo = sources.clone();
+    input_combo.connect_selected_notify(move |row| {
+        let idx = row.selected() as usize;
+        if let Some(source) = sources_for_combo.get(idx) {
+            pipewire::set_default(source.id);
+        }
+    });
+    inputs_group.add(&input_combo);
+
+    container.append(&inputs_group);
+
+    // -----------------------------------------------------------------------
+    // Section 2: Outputs (physical sinks only, exclude zos-* virtual buses)
+    // -----------------------------------------------------------------------
+    let outputs_group = adw::PreferencesGroup::builder().title("Outputs").build();
+
+    let all_sinks = pipewire::list_sinks();
+    let physical_sinks: Vec<_> = all_sinks
+        .iter()
+        .filter(|s| !s.name.contains("zos-"))
+        .cloned()
+        .collect();
+
+    for sink in &physical_sinks {
+        let row = adw::ActionRow::builder()
+            .title(&sink.name)
+            .icon_name("audio-speakers-symbolic")
+            .build();
+        outputs_group.add(&row);
+    }
+
+    // Default Output combo
+    let output_model = gtk::StringList::new(&[]);
+    let mut output_default_idx: u32 = 0;
+    for (i, sink) in physical_sinks.iter().enumerate() {
+        output_model.append(&sink.name);
+        if sink.is_default {
+            output_default_idx = i as u32;
+        }
+    }
+
+    let output_combo = adw::ComboRow::builder()
+        .title("Default Output")
+        .icon_name("audio-speakers-symbolic")
+        .model(&output_model)
+        .selected(output_default_idx)
+        .build();
+
+    let physical_sinks_for_combo = physical_sinks.clone();
+    output_combo.connect_selected_notify(move |row| {
+        let idx = row.selected() as usize;
+        if let Some(sink) = physical_sinks_for_combo.get(idx) {
+            pipewire::set_default(sink.id);
+        }
+    });
+    outputs_group.add(&output_combo);
+
+    container.append(&outputs_group);
+
+    // -----------------------------------------------------------------------
+    // Section 3: Bus Routing (virtual sinks with zos-* names)
+    // -----------------------------------------------------------------------
+    let bus_group = adw::PreferencesGroup::builder()
+        .title("Bus Routing")
+        .description("Route virtual buses to physical outputs")
+        .build();
+
+    let virtual_sinks: Vec<_> = all_sinks
+        .iter()
+        .filter(|s| s.name.contains("zos-"))
+        .cloned()
+        .collect();
+
+    if virtual_sinks.is_empty() {
+        let empty_row = adw::ActionRow::builder()
+            .title("No virtual buses configured")
+            .subtitle("Set up virtual audio buses in the Audio Buses section above")
+            .build();
+        bus_group.add(&empty_row);
+    } else {
+        // Build the list of physical sink names/ids for the output device combos
+        let phys_names: Vec<String> = physical_sinks.iter().map(|s| s.name.clone()).collect();
+        let phys_ids: Vec<u32> = physical_sinks.iter().map(|s| s.id).collect();
+
+        for bus in &virtual_sinks {
+            let display_name = friendly_bus_name(&bus.name);
+            let bus_id = bus.id;
+            let current_vol = bus.volume.unwrap_or(1.0);
+
+            let expander = adw::ExpanderRow::builder()
+                .title(display_name)
+                .subtitle(&bus.name)
+                .icon_name("audio-speakers-symbolic")
+                .build();
+
+            // Output Device combo — lists physical sinks
+            let route_model = gtk::StringList::new(&[]);
+            for name in &phys_names {
+                route_model.append(name);
+            }
+
+            let route_combo = adw::ComboRow::builder()
+                .title("Output Device")
+                .model(&route_model)
+                .selected(0)
+                .build();
+
+            let bus_name_for_route = bus.name.clone();
+            let phys_ids_clone = phys_ids.clone();
+            let phys_names_clone = phys_names.clone();
+            route_combo.connect_selected_notify(move |row| {
+                let idx = row.selected() as usize;
+                if let Some(_sink_id) = phys_ids_clone.get(idx) {
+                    // Route the virtual bus monitor output to the selected physical sink.
+                    // The monitor output of a null-audio-sink has ports like:
+                    //   <bus_name>:monitor_FL, <bus_name>:monitor_FR
+                    // The physical sink has input ports like:
+                    //   <sink_name>:playback_FL, <sink_name>:playback_FR
+                    if let Some(target_name) = phys_names_clone.get(idx) {
+                        // Disconnect existing monitor links from this bus
+                        if let Some(links_output) = std::process::Command::new("pw-link")
+                            .args(["--links"])
+                            .output()
+                            .ok()
+                            .filter(|o| o.status.success())
+                            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                        {
+                            let mut current_output: Option<String> = None;
+                            for line in links_output.lines() {
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() {
+                                    continue;
+                                }
+                                if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
+                                    if let Some(ref out) = current_output {
+                                        if out.starts_with(&bus_name_for_route) && out.contains(":monitor_") {
+                                            let input = trimmed
+                                                .trim_start_matches("|->")
+                                                .trim_start_matches("\\->")
+                                                .trim();
+                                            pipewire::remove_link(out, input);
+                                        }
+                                    }
+                                } else {
+                                    current_output = Some(trimmed.to_string());
+                                }
+                            }
+                        }
+
+                        // Create new links: monitor_FL -> playback_FL, monitor_FR -> playback_FR
+                        for channel in &["FL", "FR"] {
+                            let out_port = format!("{}:monitor_{}", bus_name_for_route, channel);
+                            let in_port = format!("{}:playback_{}", target_name, channel);
+                            pipewire::create_link(&out_port, &in_port);
+                        }
+                    }
+                }
+            });
+            expander.add_row(&route_combo);
+
+            // Volume slider (0-150%)
+            let vol_row = adw::ActionRow::builder().title("Volume").build();
+
+            let vol_label = gtk::Label::builder()
+                .label(&format!("{}%", (current_vol * 100.0).round() as i32))
+                .valign(gtk::Align::Center)
+                .width_chars(5)
+                .build();
+
+            let scale = gtk::Scale::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .hexpand(true)
+                .valign(gtk::Align::Center)
+                .width_request(200)
+                .build();
+            scale.set_range(0.0, 1.5);
+            scale.set_increments(0.01, 0.05);
+            scale.set_value(current_vol as f64);
+
+            let vol_label_clone = vol_label.clone();
+            scale.connect_value_changed(move |s| {
+                let val = s.value() as f32;
+                pipewire::set_volume(bus_id, val);
+                vol_label_clone.set_label(&format!("{}%", (val * 100.0).round() as i32));
+            });
+
+            vol_row.add_suffix(&scale);
+            vol_row.add_suffix(&vol_label);
+            expander.add_row(&vol_row);
+
+            bus_group.add(&expander);
+        }
+    }
+
+    container.append(&bus_group);
+
+    // -----------------------------------------------------------------------
+    // Section 4: Advanced tools
+    // -----------------------------------------------------------------------
+    let advanced_group = adw::PreferencesGroup::builder().title("Advanced").build();
 
     // --- qpwgraph ---
     let graph_row = adw::ActionRow::builder()
         .title("Open Audio Graph")
-        .subtitle("Visual PipeWire patchbay (qpwgraph)")
+        .subtitle("Advanced audio routing")
         .build();
     let graph_btn = gtk::Button::builder()
         .label("Open")
@@ -546,7 +797,7 @@ fn build_advanced_section() -> adw::PreferencesGroup {
     });
     graph_row.add_suffix(&graph_btn);
     graph_row.set_activatable_widget(Some(&graph_btn));
-    group.add(&graph_row);
+    advanced_group.add(&graph_row);
 
     // --- EasyEffects ---
     let effects_row = adw::ActionRow::builder()
@@ -562,9 +813,11 @@ fn build_advanced_section() -> adw::PreferencesGroup {
     });
     effects_row.add_suffix(&effects_btn);
     effects_row.set_activatable_widget(Some(&effects_btn));
-    group.add(&effects_row);
+    advanced_group.add(&effects_row);
 
-    group
+    container.append(&advanced_group);
+
+    container
 }
 
 /// Launch an application in the background.

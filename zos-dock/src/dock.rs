@@ -65,8 +65,11 @@ impl DockItem {
         !self.windows.is_empty()
     }
 
-    fn is_focused(&self) -> bool {
-        self.windows.iter().any(|w| w.focus_history_id == 0)
+    fn is_focused(&self, active_address: &Option<String>) -> bool {
+        match active_address {
+            Some(addr) => self.windows.iter().any(|w| w.address == *addr),
+            None => false,
+        }
     }
 }
 
@@ -79,6 +82,8 @@ pub struct Dock {
     pub cursor_x: Option<f32>,
     /// Positions of each item center (computed during view, used for magnification).
     pub item_positions: Vec<f32>,
+    /// Address of the currently focused window (from hyprctl activewindow -j).
+    pub active_address: Option<String>,
 }
 
 /// Messages handled by the dock.
@@ -93,6 +98,8 @@ pub enum Message {
     MouseLeft,
     /// User clicked a dock item.
     ItemClicked(usize),
+    /// User right-clicked a dock item.
+    ItemRightClicked(usize),
     /// Refresh the Hyprland window list.
     RefreshWindows,
     /// Toggle pin state for an app.
@@ -110,6 +117,7 @@ pub fn boot() -> Dock {
         icon_resolver,
         cursor_x: None,
         item_positions: Vec::new(),
+        active_address: hypr::get_active_window_address(),
     };
     dock.rebuild_items(&windows);
     dock
@@ -153,6 +161,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ItemClicked(index) => {
+            tracing::info!("Dock: ItemClicked index={}", index);
             if let Some(item) = dock.items.get(index) {
                 if item.is_running() {
                     // Cycle through windows: focus the most recently unfocused one,
@@ -172,8 +181,29 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ItemRightClicked(index) => {
+            if let Some(item) = dock.items.get(index) {
+                let app_id = item.app_id.clone();
+                if item.is_running() {
+                    // Close the first window.
+                    if let Some(window) = item.windows.first() {
+                        tracing::info!("Right-click: closing window '{}' of {}", window.title, app_id);
+                        hypr::close_window(&window.address);
+                    }
+                } else if item.pinned {
+                    // Unpin the item.
+                    tracing::info!("Right-click: unpinning {}", app_id);
+                    dock.config.toggle_pin(&app_id);
+                    dock.config.save();
+                    let windows = hypr::get_windows();
+                    dock.rebuild_items(&windows);
+                }
+            }
+            Task::none()
+        }
         Message::RefreshWindows => {
             let windows = hypr::get_windows();
+            dock.active_address = hypr::get_active_window_address();
             dock.rebuild_items(&windows);
             Task::none()
         }
@@ -251,7 +281,7 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
 
         // Active indicator dot below the icon.
         let dot: Element<'_, Message> = if item.is_running() {
-            let dot_color = if item.is_focused() {
+            let dot_color = if item.is_focused(&dock.active_address) {
                 ACCENT_BLUE
             } else {
                 SURFACE_COLOR
@@ -281,7 +311,8 @@ pub fn view(dock: &Dock) -> Element<'_, Message> {
                 ..Default::default()
             },
         ))
-        .on_press(Message::ItemClicked(i));
+        .on_press(Message::ItemClicked(i))
+        .on_right_press(Message::ItemRightClicked(i));
 
         items_row = items_row.push(item_widget);
     }
