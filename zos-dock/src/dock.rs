@@ -281,7 +281,9 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             // Auto-hide check
             if dock.config.auto_hide {
                 if let Some(timer_start) = dock.hide_timer {
-                    if timer_start.elapsed() >= Duration::from_millis(800) && dock.cursor_x.is_none() {
+                    if timer_start.elapsed() >= Duration::from_millis(800)
+                        && dock.cursor_x.is_none()
+                    {
                         dock.hidden = true;
                         dock.slide_offset.set_target(68.0);
                         dock.hide_timer = None;
@@ -332,7 +334,10 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         }
         Message::ContextMenuRestore(app_id) => {
             let minimized = hypr::get_minimized_windows();
-            if let Some(w) = minimized.iter().find(|w| w.class.to_lowercase() == app_id.to_lowercase()) {
+            if let Some(w) = minimized
+                .iter()
+                .find(|w| w.class.to_lowercase() == app_id.to_lowercase())
+            {
                 hypr::unminimize_window(&w.address);
             }
             if let Some(cm) = dock.context_menu.take() {
@@ -520,12 +525,8 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 ..Default::default()
             });
 
-        let item_with_tooltip = tooltip(
-            item_widget,
-            tooltip_content,
-            tooltip::Position::Top,
-        )
-        .gap(4);
+        let item_with_tooltip =
+            tooltip(item_widget, tooltip_content, tooltip::Position::Top).gap(4);
 
         items_row = items_row.push(item_with_tooltip);
     }
@@ -559,9 +560,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
 
     // If a context menu is open, clicking the dock dismisses it
     if dock.context_menu.is_some() {
-        mouse_area(dock_view)
-            .on_press(Message::DismissMenu)
-            .into()
+        mouse_area(dock_view).on_press(Message::DismissMenu).into()
     } else {
         dock_view
     }
@@ -585,9 +584,7 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     }
 
     // Poll for config file changes every second.
-    subs.push(
-        iced::time::every(Duration::from_secs(1)).map(|_| Message::CheckConfig),
-    );
+    subs.push(iced::time::every(Duration::from_secs(1)).map(|_| Message::CheckConfig));
 
     Subscription::batch(subs)
 }
