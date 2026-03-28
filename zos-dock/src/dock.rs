@@ -101,6 +101,8 @@ pub struct Dock {
     pub hidden: bool,
     /// When the cursor last left the dock (for auto-hide delay).
     pub hide_timer: Option<Instant>,
+    /// When the cursor entered the hidden dock trigger zone (for reveal delay).
+    pub show_timer: Option<Instant>,
     /// Animated slide offset for auto-hide (0.0 = visible, 68.0 = hidden).
     pub slide_offset: Spring<f32>,
     /// Last observed modification time of the config file.
@@ -155,6 +157,7 @@ pub fn boot() -> Dock {
         active_address: hypr::get_active_window_address(),
         hidden: false,
         hide_timer: None,
+        show_timer: None,
         slide_offset: Spring::new(0.0),
         config_mtime: DockConfig::config_mtime(),
         context_menu: None,
@@ -181,6 +184,15 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 dock.slide_offset.update(iced_anim::Event::Tick(now));
                 any_energy = true;
             }
+            // Check reveal timer — show dock after cursor lingers 300ms
+            if let Some(show_start) = dock.show_timer {
+                if show_start.elapsed() >= Duration::from_millis(300) {
+                    dock.hidden = false;
+                    dock.slide_offset.set_target(0.0);
+                    dock.hide_timer = None;
+                    dock.show_timer = None;
+                }
+            }
             // If nothing is animating and nothing needs refresh, we can be idle.
             let _ = any_energy;
             Task::none()
@@ -189,15 +201,18 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             match event {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     if dock.hidden && dock.config.auto_hide {
-                        dock.hidden = false;
-                        dock.slide_offset.set_target(0.0);
-                        dock.hide_timer = None;
+                        // Start the reveal timer if not already running
+                        if dock.show_timer.is_none() {
+                            dock.show_timer = Some(Instant::now());
+                        }
+                    } else {
+                        dock.cursor_x = Some(position.x);
+                        dock.update_magnification();
                     }
-                    dock.cursor_x = Some(position.x);
-                    dock.update_magnification();
                 }
                 Event::Mouse(iced::mouse::Event::CursorLeft) => {
                     dock.cursor_x = None;
+                    dock.show_timer = None; // Cancel reveal if cursor leaves
                     dock.reset_magnification();
                     if dock.config.auto_hide {
                         dock.hide_timer = Some(Instant::now());
@@ -209,6 +224,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         }
         Message::MouseLeft => {
             dock.cursor_x = None;
+            dock.show_timer = None;
             dock.reset_magnification();
             if dock.config.auto_hide {
                 dock.hide_timer = Some(Instant::now());
@@ -577,7 +593,7 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     ];
 
     // When animating, tick at ~60fps for smooth spring physics.
-    if any_animating || dock.cursor_x.is_some() || dock.slide_offset.has_energy() {
+    if any_animating || dock.cursor_x.is_some() || dock.slide_offset.has_energy() || dock.show_timer.is_some() {
         subs.push(
             iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
         );

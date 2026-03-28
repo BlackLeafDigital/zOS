@@ -58,14 +58,20 @@ config.keys = {
 	-- =======================================================================
 
 	-- Split panes
-	{ key = "d", mods = "CTRL|SHIFT", action = wezterm.action.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
-	{ key = "e", mods = "CTRL|SHIFT", action = wezterm.action.SplitVertical({ domain = "CurrentPaneDomain" }) },
+	{ key = "r", mods = "ALT", action = wezterm.action.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
+	{ key = "d", mods = "ALT", action = wezterm.action.SplitVertical({ domain = "CurrentPaneDomain" }) },
+
+	-- Navigate panes (arrow keys)
+	{ key = "LeftArrow", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Left") },
+	{ key = "DownArrow", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Down") },
+	{ key = "UpArrow", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Up") },
+	{ key = "RightArrow", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Right") },
 
 	-- Navigate panes (vim-style)
-	{ key = "h", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Left") },
-	{ key = "j", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Down") },
-	{ key = "k", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Up") },
-	{ key = "l", mods = "CTRL|SHIFT", action = wezterm.action.ActivatePaneDirection("Right") },
+	{ key = "h", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Left") },
+	{ key = "j", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Down") },
+	{ key = "k", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Up") },
+	{ key = "l", mods = "ALT", action = wezterm.action.ActivatePaneDirection("Right") },
 
 	-- Resize panes (vim-style + Alt)
 	{ key = "h", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize({ "Left", 5 }) },
