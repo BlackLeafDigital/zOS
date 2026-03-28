@@ -55,7 +55,9 @@ curl -fsSL --retry 3 --retry-delay 5 -o /etc/udev/rules.d/71-liquidctl.rules \
     https://raw.githubusercontent.com/liquidctl/liquidctl/main/extra/linux/71-liquidctl.rules
 
 # --- Netbird (mesh VPN) ---
-NETBIRD_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 https://api.github.com/repos/netbirdio/netbird/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+CURL_GH_OPTS=(--connect-timeout 10 --retry 3)
+if [ -n "${GITHUB_TOKEN:-}" ]; then CURL_GH_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
+NETBIRD_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/netbirdio/netbird/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
 curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird_${NETBIRD_VERSION}_linux_amd64.tar.gz"
 tar -xzf /tmp/netbird.tar.gz -C /usr/bin/ netbird
 chmod +x /usr/bin/netbird
@@ -101,10 +103,9 @@ curl -fsSL --retry 3 --retry-delay 5 -o /usr/bin/coolercontrol \
 chmod +x /usr/bin/coolercontrol
 
 # --- CoolerControl icon ---
+mkdir -p /usr/share/icons/hicolor/scalable/apps
 curl -fsSL --retry 3 --retry-delay 5 -o /usr/share/icons/hicolor/scalable/apps/coolercontrol.svg \
-    "https://gitlab.com/coolercontrol/coolercontrol/-/raw/main/coolercontrol-ui/src-tauri/icons/icon.svg" || \
-curl -fsSL --retry 3 --retry-delay 5 -o /usr/share/icons/hicolor/256x256/apps/coolercontrol.png \
-    "https://gitlab.com/coolercontrol/coolercontrol/-/raw/main/coolercontrol-ui/src-tauri/icons/128x128@2x.png" || true
+    "https://gitlab.com/coolercontrol/coolercontrol/-/raw/main/packaging/metadata/org.coolercontrol.CoolerControl.svg" || true
 
 cat > /usr/lib/systemd/system/coolercontrold.service << 'COOLER_SVC'
 [Unit]
