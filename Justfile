@@ -12,6 +12,7 @@ qemu_bios := if os() == "macos" { "-bios /opt/homebrew/share/qemu/edk2-x86_64-co
 # Build the AMD variant
 build:
     docker build \
+        --dns 1.1.1.1 --dns 8.8.8.8 \
         -f Containerfile \
         --build-arg BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable \
         -t zos:{{default_tag}} \
@@ -20,6 +21,7 @@ build:
 # Build the NVIDIA variant
 build-nvidia:
     docker build \
+        --dns 1.1.1.1 --dns 8.8.8.8 \
         -f Containerfile \
         --build-arg BASE_IMAGE=ghcr.io/ublue-os/bazzite-nvidia:stable \
         -t zos-nvidia:{{default_tag}} \
