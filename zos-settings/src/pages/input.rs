@@ -81,32 +81,13 @@ fn persist_state(state: &Arc<Mutex<InputState>>) {
 pub fn build() -> gtk::Box {
     let state = Arc::new(Mutex::new(InputState::default()));
 
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     page.append(&build_keyboard_section(Arc::clone(&state)));
     page.append(&build_mouse_section(Arc::clone(&state)));
     page.append(&build_touchpad_section(Arc::clone(&state)));
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +105,10 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
         .model(&layout_model)
         .selected(0) // default: us
         .build();
+
+    let layout_icon = gtk::Image::from_icon_name("input-keyboard-symbolic");
+    layout_icon.set_valign(gtk::Align::Center);
+    layout_combo.add_prefix(&layout_icon);
 
     {
         let state = Arc::clone(&state);
@@ -143,6 +128,10 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
         .title("Repeat Rate")
         .subtitle("Characters per second")
         .build();
+
+    let rate_icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    rate_icon.set_valign(gtk::Align::Center);
+    rate_row.add_prefix(&rate_icon);
 
     let rate_adj = gtk::Adjustment::new(25.0, 10.0, 50.0, 1.0, 5.0, 0.0);
     let rate_spin = gtk::SpinButton::builder()
@@ -168,6 +157,10 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
         .title("Repeat Delay")
         .subtitle("Milliseconds before repeat starts")
         .build();
+
+    let delay_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    delay_icon.set_valign(gtk::Align::Center);
+    delay_row.add_prefix(&delay_icon);
 
     let delay_adj = gtk::Adjustment::new(600.0, 100.0, 1000.0, 50.0, 100.0, 0.0);
     let delay_spin = gtk::SpinButton::builder()
@@ -201,6 +194,10 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
     // --- Sensitivity slider ---
     let sensitivity_row = adw::ActionRow::builder().title("Sensitivity").build();
 
+    let sens_icon = gtk::Image::from_icon_name("input-mouse-symbolic");
+    sens_icon.set_valign(gtk::Align::Center);
+    sensitivity_row.add_prefix(&sens_icon);
+
     let sens_adj = gtk::Adjustment::new(0.0, -1.0, 1.0, 0.1, 0.5, 0.0);
     let sens_scale = gtk::Scale::builder()
         .adjustment(&sens_adj)
@@ -233,6 +230,10 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
         .title("Flat Acceleration")
         .subtitle("Off = adaptive (accelerated), On = flat (raw)")
         .build();
+
+    let accel_icon = gtk::Image::from_icon_name("media-seek-forward-symbolic");
+    accel_icon.set_valign(gtk::Align::Center);
+    accel_row.add_prefix(&accel_icon);
 
     let accel_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
@@ -270,6 +271,10 @@ fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
         .subtitle("Scroll direction follows content")
         .build();
 
+    let natural_icon = gtk::Image::from_icon_name("object-flip-vertical-symbolic");
+    natural_icon.set_valign(gtk::Align::Center);
+    natural_row.add_prefix(&natural_icon);
+
     let natural_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
         .active(true) // default from defaults.conf
@@ -295,6 +300,10 @@ fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
         .title("Tap to Click")
         .subtitle("Tap on the touchpad to click")
         .build();
+
+    let tap_icon = gtk::Image::from_icon_name("input-touchpad-symbolic");
+    tap_icon.set_valign(gtk::Align::Center);
+    tap_row.add_prefix(&tap_icon);
 
     let tap_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)

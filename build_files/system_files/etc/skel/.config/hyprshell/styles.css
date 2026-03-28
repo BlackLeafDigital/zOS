@@ -14,3 +14,9 @@
     --border-style: solid;
     --popover-bg-color: rgba(30, 30, 46, 0.95);   /* base */
 }
+
+/* Ensure window switcher icons render at a visible size */
+.client-image {
+    min-width: 48px;
+    min-height: 48px;
+}

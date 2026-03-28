@@ -2,12 +2,15 @@
 
 use crate::config::DockConfig;
 use crate::hypr::{self, HyprWindow};
+use crate::hypr_events::{self, HyprEvent};
 use crate::icons::IconResolver;
 use iced::widget::{center, column, container, mouse_area, row, svg, text, tooltip, Space};
 use iced::{event, Background, Border, Color, Element, Event, Length, Subscription, Task, Theme};
 use iced_anim::Spring;
+use iced_layershell::actions::ActionCallback;
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
 use iced_layershell::to_layer_message;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -109,6 +112,14 @@ pub struct Dock {
     pub config_mtime: Option<std::time::SystemTime>,
     /// Currently open context menu, if any.
     pub context_menu: Option<ContextMenuState>,
+    /// Surface width (monitor pixel width) for coordinate calculations.
+    pub surface_width: u32,
+    /// Main window IDs (one per monitor), captured from view() for input region updates.
+    pub known_window_ids: RefCell<Vec<iced::window::Id>>,
+    /// Previous item count, used to detect when input region needs updating.
+    pub prev_item_count: usize,
+    /// Timer for auto-re-hiding after a minimize-triggered reveal.
+    pub minimize_reveal_timer: Option<Instant>,
 }
 
 /// Messages handled by the dock.
@@ -141,12 +152,15 @@ pub enum Message {
     ContextMenuLaunch(String),
     /// Dismiss the context menu.
     DismissMenu,
+    /// Real-time event from Hyprland event socket.
+    HyprEvent(HyprEvent),
 }
 
 pub fn boot() -> Dock {
     let config = DockConfig::load();
     let icon_resolver = IconResolver::new();
     let windows = hypr::get_windows();
+    let surface_width = hypr::get_monitor_widths().into_iter().max().unwrap_or(1920);
 
     let mut dock = Dock {
         items: Vec::new(),
@@ -161,6 +175,10 @@ pub fn boot() -> Dock {
         slide_offset: Spring::new(0.0),
         config_mtime: DockConfig::config_mtime(),
         context_menu: None,
+        surface_width,
+        known_window_ids: RefCell::new(Vec::new()),
+        prev_item_count: 0,
+        minimize_reveal_timer: None,
     };
     dock.rebuild_items(&windows);
     dock
@@ -185,17 +203,32 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 any_energy = true;
             }
             // Check reveal timer — show dock after cursor lingers 300ms
+            let mut hidden_changed = false;
             if let Some(show_start) = dock.show_timer {
                 if show_start.elapsed() >= Duration::from_millis(300) {
                     dock.hidden = false;
                     dock.slide_offset.set_target(0.0);
                     dock.hide_timer = None;
                     dock.show_timer = None;
+                    hidden_changed = true;
+                }
+            }
+            // Check minimize-reveal timer — re-hide after 2s if cursor isn't hovering
+            if let Some(timer) = dock.minimize_reveal_timer {
+                if timer.elapsed() >= Duration::from_secs(2) && dock.cursor_x.is_none() {
+                    dock.hidden = true;
+                    dock.slide_offset.set_target(68.0);
+                    dock.minimize_reveal_timer = None;
+                    hidden_changed = true;
                 }
             }
             // If nothing is animating and nothing needs refresh, we can be idle.
             let _ = any_energy;
-            Task::none()
+            if hidden_changed {
+                dock.input_region_tasks()
+            } else {
+                Task::none()
+            }
         }
         Message::IcedEvent(event) => {
             match event {
@@ -208,6 +241,8 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     } else {
                         dock.cursor_x = Some(position.x);
                         dock.update_magnification();
+                        // Cancel minimize-reveal auto-re-hide if user is interacting
+                        dock.minimize_reveal_timer = None;
                     }
                 }
                 Event::Mouse(iced::mouse::Event::CursorLeft) => {
@@ -291,6 +326,8 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             }
         }
         Message::RefreshWindows => {
+            let old_count = dock.prev_item_count;
+            let was_hidden = dock.hidden;
             let windows = hypr::get_windows();
             dock.active_address = hypr::get_active_window_address();
             dock.rebuild_items(&windows);
@@ -306,14 +343,19 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     }
                 }
             }
-            Task::none()
+            // Update input region if item count changed or hidden state changed
+            if dock.prev_item_count != old_count || dock.hidden != was_hidden {
+                dock.input_region_tasks()
+            } else {
+                Task::none()
+            }
         }
         Message::TogglePin(app_id) => {
             dock.config.toggle_pin(&app_id);
             dock.config.save();
             let windows = hypr::get_windows();
             dock.rebuild_items(&windows);
-            Task::none()
+            dock.input_region_tasks()
         }
         Message::CheckConfig => {
             let new_mtime = DockConfig::config_mtime();
@@ -322,6 +364,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 dock.config = DockConfig::load();
                 let windows = hypr::get_windows();
                 dock.rebuild_items(&windows);
+                return dock.input_region_tasks();
             }
             Task::none()
         }
@@ -342,10 +385,11 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             dock.config.save();
             let windows = hypr::get_windows();
             dock.rebuild_items(&windows);
+            let region_task = dock.input_region_tasks();
             if let Some(cm) = dock.context_menu.take() {
-                Task::done(Message::RemoveWindow(cm.id))
+                Task::batch([Task::done(Message::RemoveWindow(cm.id)), region_task])
             } else {
-                Task::none()
+                region_task
             }
         }
         Message::ContextMenuRestore(app_id) => {
@@ -377,6 +421,41 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 Task::none()
             }
         }
+        Message::HyprEvent(event) => {
+            match event {
+                HyprEvent::ActiveWindowChanged { address } => {
+                    dock.active_address = Some(address);
+                    Task::none()
+                }
+                HyprEvent::WindowOpened | HyprEvent::WindowClosed => {
+                    let windows = hypr::get_windows();
+                    dock.active_address = hypr::get_active_window_address();
+                    dock.rebuild_items(&windows);
+                    dock.input_region_tasks()
+                }
+                HyprEvent::WindowMoved { workspace } => {
+                    let windows = hypr::get_windows();
+                    dock.active_address = hypr::get_active_window_address();
+                    dock.rebuild_items(&windows);
+                    let mut tasks = vec![dock.input_region_tasks()];
+
+                    // If a window was just minimized and dock is auto-hidden, reveal it briefly
+                    if workspace.starts_with("special:minimize")
+                        && dock.config.auto_hide
+                        && dock.hidden
+                    {
+                        dock.hidden = false;
+                        dock.slide_offset.set_target(0.0);
+                        dock.minimize_reveal_timer = Some(Instant::now());
+                        dock.hide_timer = None;
+                        dock.show_timer = None;
+                        tasks.push(dock.input_region_tasks());
+                    }
+
+                    Task::batch(tasks)
+                }
+            }
+        }
         // Layer shell action messages are handled by the framework.
         _ => Task::none(),
     }
@@ -389,6 +468,14 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
     if let Some(ref cm) = dock.context_menu {
         if cm.id == window_id {
             return render_context_menu(cm);
+        }
+    }
+
+    // Capture main window IDs (any window that isn't a context menu) for input region updates.
+    {
+        let mut ids = dock.known_window_ids.borrow_mut();
+        if !ids.contains(&window_id) {
+            ids.push(window_id);
         }
     }
 
@@ -586,14 +673,20 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     let any_animating = dock.items.iter().any(|item| item.scale.has_energy());
 
     let mut subs = vec![
-        // Poll Hyprland for window changes every 500ms.
-        iced::time::every(Duration::from_millis(500)).map(|_| Message::RefreshWindows),
+        // Real-time Hyprland events via socket.
+        hypr_events::hypr_events_subscription().map(Message::HyprEvent),
+        // Fallback poll every 5s in case socket misses events.
+        iced::time::every(Duration::from_secs(5)).map(|_| Message::RefreshWindows),
         // Forward iced events for mouse tracking.
         event::listen().map(Message::IcedEvent),
     ];
 
     // When animating, tick at ~60fps for smooth spring physics.
-    if any_animating || dock.cursor_x.is_some() || dock.slide_offset.has_energy() || dock.show_timer.is_some() {
+    if any_animating
+        || dock.slide_offset.has_energy()
+        || dock.show_timer.is_some()
+        || dock.minimize_reveal_timer.is_some()
+    {
         subs.push(
             iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
         );
@@ -813,6 +906,7 @@ impl Dock {
 
         // Recompute approximate item positions.
         self.recompute_positions();
+        self.prev_item_count = self.items.len();
     }
 
     /// Recompute the center X positions of each item (for magnification calculations).
@@ -849,6 +943,39 @@ impl Dock {
         }
     }
 
+    /// Compute the total rendered width of the dock content (for centering/input region calculations).
+    fn compute_dock_content_width(&self) -> f32 {
+        let icon_size = self.config.icon_size as f32;
+        let spacing = 4.0;
+        let padding = 12.0;
+        let item_width = icon_size + spacing + 4.0; // icon + spacing + container padding (2px each side)
+        let separator_gap = 2.0 + spacing; // separator width + spacing
+
+        let mut width = padding * 2.0;
+        let mut has_pinned = false;
+        let mut started_running = false;
+        let mut started_minimized = false;
+
+        for item in &self.items {
+            if !item.pinned && !item.minimized && !started_running && has_pinned {
+                started_running = true;
+                width += separator_gap;
+            }
+            if item.minimized && !started_minimized {
+                started_minimized = true;
+                if has_pinned || started_running {
+                    width += separator_gap;
+                }
+            }
+            if item.pinned {
+                has_pinned = true;
+            }
+            width += item_width;
+        }
+
+        width
+    }
+
     /// Update magnification targets based on cursor position.
     fn update_magnification(&mut self) {
         let cursor_x = match self.cursor_x {
@@ -856,13 +983,19 @@ impl Dock {
             None => return,
         };
 
+        // Convert surface-relative cursor_x to dock-content-relative coordinates.
+        // The dock content is centered within the full-width surface.
+        let dock_width = self.compute_dock_content_width();
+        let centering_offset = (self.surface_width as f32 - dock_width) / 2.0;
+        let dock_relative_x = cursor_x - centering_offset;
+
         let magnification = self.config.magnification;
         let icon_size = self.config.icon_size as f32;
         let spread = icon_size * 2.5;
 
         for (i, item) in self.items.iter_mut().enumerate() {
             let item_x = self.item_positions.get(i).copied().unwrap_or(0.0);
-            let distance = (cursor_x - item_x).abs();
+            let distance = (dock_relative_x - item_x).abs();
             let gaussian = (-(distance * distance) / (2.0 * spread * spread)).exp();
             let target_scale = 1.0 + (magnification - 1.0) * gaussian;
             item.scale.set_target(target_scale);
@@ -874,6 +1007,43 @@ impl Dock {
         for item in &mut self.items {
             item.scale.set_target(1.0);
         }
+    }
+
+    /// Build tasks to update the input region for all known main windows.
+    /// When visible: input region covers only the centered dock content.
+    /// When hidden (auto-hide): input region is a thin 4px strip at the bottom for reveal trigger.
+    fn input_region_tasks(&self) -> Task<Message> {
+        let ids = self.known_window_ids.borrow().clone();
+        if ids.is_empty() {
+            return Task::none();
+        }
+
+        let dock_width = self.compute_dock_content_width();
+        let surface_width = self.surface_width;
+        let hidden = self.hidden;
+        let auto_hide = self.config.auto_hide;
+
+        let tasks: Vec<Task<Message>> = ids
+            .into_iter()
+            .map(|id| {
+                let (region_x, region_y, region_w, region_h) = if hidden && auto_hide {
+                    // Thin strip at the very bottom edge for reveal trigger
+                    (0i32, 64i32, surface_width as i32, 4i32)
+                } else {
+                    // Only the visible centered dock area
+                    let x = ((surface_width as f32 - dock_width) / 2.0).max(0.0) as i32;
+                    (x, 0i32, dock_width.ceil() as i32, 68i32)
+                };
+                Task::done(Message::SetInputRegion {
+                    id,
+                    callback: ActionCallback::new(move |region| {
+                        region.add(region_x, region_y, region_w, region_h);
+                    }),
+                })
+            })
+            .collect();
+
+        Task::batch(tasks)
     }
 }
 

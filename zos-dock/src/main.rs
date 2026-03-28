@@ -3,6 +3,7 @@
 mod config;
 mod dock;
 mod hypr;
+mod hypr_events;
 mod icons;
 
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
@@ -22,7 +23,6 @@ fn main() -> iced_layershell::Result {
                 keyboard_interactivity: KeyboardInteractivity::None,
                 events_transparent: false,
                 start_mode: StartMode::AllScreens,
-                ..Default::default()
             },
             antialiasing: true,
             ..Default::default()

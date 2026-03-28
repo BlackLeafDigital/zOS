@@ -8,6 +8,7 @@ Built on [Bazzite](https://bazzite.gg/) (Fedora Atomic), delivered as a bootable
 
 ### Desktop
 - **Hyprland** — tiling window manager with Windows/macOS-friendly keybinds
+- **zos-dock** — macOS-style dock with magnification, auto-hide, and minimize tracking
 - **greetd + ReGreet** — GTK4 login screen with per-monitor wallpaper
 - **Catppuccin Mocha** — consistent dark theme across everything
 - **System dark mode** — GTK, Qt, and Flatpak apps all respect dark preference
@@ -189,6 +190,9 @@ zOS/
 ├── zos-cli/                             # Rust CLI tool (zos command)
 │   ├── Cargo.toml
 │   └── src/
+├── zos-dock/                            # macOS-style dock (iced + Wayland layer shell)
+│   ├── Cargo.toml
+│   └── src/
 ├── .forgejo/workflows/
 │   ├── build.yml                        # CI: builds zos + zos-nvidia, pushes to GHCR
 │   └── build-disk.yml                   # Manual: builds ISO/QCOW2 disk images
@@ -221,7 +225,7 @@ zOS/
 1. `Containerfile` extends a Bazzite base image using a multi-stage build
 2. Build scripts are **mounted** (not copied) via a `scratch` stage — they don't bloat the final image
 3. `build.sh` and `scripts/*.sh` install packages and copy configs into the image
-4. `zos-cli` is compiled from Rust source during the build
+4. `zos-cli` and `zos-dock` are compiled from Rust source during the build
 5. ReGreet (login greeter) is compiled from source during the build
 6. `/etc/skel/` files become defaults for new users
 7. Forgejo Actions builds both variants daily and publishes images to GHCR

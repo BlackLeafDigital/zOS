@@ -39,14 +39,7 @@ fn save_dock_config(config: &serde_json::Value) {
 }
 
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     let config = read_dock_config();
 
@@ -62,6 +55,9 @@ pub fn build() -> gtk::Box {
         .subtitle("Hide the dock when not in use")
         .active(auto_hide)
         .build();
+    let auto_hide_icon = gtk::Image::from_icon_name("view-restore-symbolic");
+    auto_hide_icon.set_valign(gtk::Align::Center);
+    auto_hide_row.add_prefix(&auto_hide_icon);
     behavior_group.add(&auto_hide_row);
     page.append(&behavior_group);
 
@@ -76,6 +72,9 @@ pub fn build() -> gtk::Box {
         .title("Icon Size")
         .subtitle("Base icon size in pixels")
         .build();
+    let icon_size_icon = gtk::Image::from_icon_name("zoom-in-symbolic");
+    icon_size_icon.set_valign(gtk::Align::Center);
+    icon_size_row.add_prefix(&icon_size_icon);
     let icon_size_spin = gtk::SpinButton::with_range(32.0, 64.0, 4.0);
     icon_size_spin.set_value(icon_size);
     icon_size_spin.set_valign(gtk::Align::Center);
@@ -90,6 +89,9 @@ pub fn build() -> gtk::Box {
         .title("Magnification")
         .subtitle("Hover magnification factor (1.0 = none)")
         .build();
+    let mag_icon = gtk::Image::from_icon_name("zoom-fit-best-symbolic");
+    mag_icon.set_valign(gtk::Align::Center);
+    mag_row.add_prefix(&mag_icon);
     let mag_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 2.0, 0.1);
     mag_scale.set_value(magnification);
     mag_scale.set_width_request(200);
@@ -116,6 +118,9 @@ pub fn build() -> gtk::Box {
                     None => id.to_string(),
                 };
                 let row = adw::ActionRow::builder().title(&name).subtitle(id).build();
+                let app_icon = gtk::Image::from_icon_name("application-x-executable-symbolic");
+                app_icon.set_valign(gtk::Align::Center);
+                row.add_prefix(&app_icon);
                 pinned_group.add(&row);
             }
         }
@@ -149,17 +154,5 @@ pub fn build() -> gtk::Box {
 
     page.append(&apply_btn);
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }

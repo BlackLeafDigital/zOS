@@ -41,7 +41,7 @@ impl Page {
 
     fn icon(self) -> &'static str {
         match self {
-            Page::Overview => "dialog-information-symbolic",
+            Page::Overview => "user-home-symbolic",
             Page::Display => "video-display-symbolic",
             Page::Audio => "audio-volume-high-symbolic",
             Page::Appearance => "applications-graphics-symbolic",

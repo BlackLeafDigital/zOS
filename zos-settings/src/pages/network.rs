@@ -8,16 +8,11 @@ use std::cell::RefCell;
 use std::process::Command;
 use std::rc::Rc;
 
+use crate::services::network;
+
 /// Build the network configuration page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     page.append(&build_devices_section());
     page.append(&build_connection_section());
@@ -25,19 +20,20 @@ pub fn build() -> gtk::Box {
     page.append(&build_details_section());
     page.append(&build_actions_section());
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
+    super::page_wrapper(&page)
+}
 
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+/// Return the appropriate WiFi signal icon name and CSS class for a given signal strength.
+fn wifi_signal_icon_and_class(signal: Option<u32>) -> (&'static str, &'static str) {
+    match signal {
+        Some(s) if s >= 75 => (
+            "network-wireless-signal-excellent-symbolic",
+            "signal-excellent",
+        ),
+        Some(s) if s >= 50 => ("network-wireless-signal-good-symbolic", "signal-good"),
+        Some(s) if s >= 25 => ("network-wireless-signal-ok-symbolic", "signal-fair"),
+        _ => ("network-wireless-signal-weak-symbolic", "signal-weak"),
+    }
 }
 
 // --- Devices Section ---
@@ -45,8 +41,8 @@ pub fn build() -> gtk::Box {
 fn build_devices_section() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("Devices").build();
 
-    let mut devices = get_devices();
-    let favorites = Rc::new(RefCell::new(load_favorites()));
+    let mut devices = network::get_devices();
+    let favorites = Rc::new(RefCell::new(network::load_favorites()));
 
     // Sort: favorites first, then alphabetical by device name
     {
@@ -66,20 +62,27 @@ fn build_devices_section() -> adw::PreferencesGroup {
         let row = adw::ActionRow::builder().title("No devices found").build();
         group.add(&row);
     } else {
-        for (dev_name, dev_type, state, connection) in &devices {
+        for (dev_name, dev_type, state, connection, signal) in &devices {
             let row = adw::ActionRow::builder()
                 .title(dev_name.as_str())
                 .subtitle(&format!("{} \u{2014} {}", dev_type, state))
                 .build();
 
-            // Prefix icon based on device type
-            let icon_name = if dev_type == "wifi" {
-                "network-wireless-symbolic"
+            // Prefix icon based on device type and signal strength
+            let (icon_name, icon_class) = if dev_type == "wifi" {
+                if state == "disconnected" {
+                    ("network-wireless-offline-symbolic", "signal-weak")
+                } else {
+                    wifi_signal_icon_and_class(*signal)
+                }
             } else {
-                "network-wired-symbolic"
+                ("network-wired-symbolic", "")
             };
             let icon = gtk::Image::from_icon_name(icon_name);
             icon.set_valign(gtk::Align::Center);
+            if !icon_class.is_empty() {
+                icon.add_css_class(icon_class);
+            }
             row.add_prefix(&icon);
 
             // Show connection name if connected
@@ -91,6 +94,21 @@ fn build_devices_section() -> adw::PreferencesGroup {
                     .build();
                 row.add_suffix(&conn_label);
             }
+
+            // Status dot
+            let status_class = if state == "connected" {
+                "status-badge-green"
+            } else if state.contains("connecting") {
+                "status-badge-yellow"
+            } else {
+                "status-badge-red"
+            };
+            let status_dot = gtk::Label::builder()
+                .label("\u{25CF}")
+                .valign(gtk::Align::Center)
+                .css_classes([status_class])
+                .build();
+            row.add_suffix(&status_dot);
 
             // Star toggle button for favorites
             let is_fav = favorites.borrow().contains(dev_name);
@@ -125,7 +143,7 @@ fn build_devices_section() -> adw::PreferencesGroup {
                 } else {
                     favs.retain(|f| f != &dev_name_clone);
                 }
-                save_favorites(&favs);
+                network::save_favorites(&favs);
             });
             row.add_suffix(&star_btn);
 
@@ -141,7 +159,7 @@ fn build_devices_section() -> adw::PreferencesGroup {
 fn build_connection_section() -> adw::PreferencesGroup {
     let conn_group = adw::PreferencesGroup::builder().title("Connection").build();
 
-    let active_connections = get_active_connections();
+    let active_connections = network::get_active_connections();
     if active_connections.is_empty() {
         let row = adw::ActionRow::builder()
             .title("No active connections")
@@ -153,9 +171,33 @@ fn build_connection_section() -> adw::PreferencesGroup {
                 .title(name.as_str())
                 .subtitle(&format!("{} \u{2014} {}", conn_type, device))
                 .build();
-            let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+
+            let conn_type_lower = conn_type.to_lowercase();
+            let icon_name =
+                if conn_type_lower.contains("wireless") || conn_type_lower.contains("wifi") {
+                    "network-wireless-symbolic"
+                } else if conn_type_lower.contains("vpn") {
+                    "network-vpn-symbolic"
+                } else {
+                    "network-wired-symbolic"
+                };
+            let icon = gtk::Image::from_icon_name(icon_name);
             icon.set_valign(gtk::Align::Center);
             row.add_prefix(&icon);
+
+            let conn_name_clone = name.clone();
+            let disconnect_btn = gtk::Button::builder()
+                .label("Disconnect")
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .build();
+            disconnect_btn.connect_clicked(move |_| {
+                let _ = Command::new("nmcli")
+                    .args(["connection", "down", &conn_name_clone])
+                    .status();
+            });
+            row.add_suffix(&disconnect_btn);
+
             conn_group.add(&row);
         }
     }
@@ -168,7 +210,36 @@ fn build_connection_section() -> adw::PreferencesGroup {
 fn build_wifi_section() -> adw::PreferencesGroup {
     let wifi_group = adw::PreferencesGroup::builder().title("WiFi").build();
 
-    let networks = get_wifi_networks();
+    // Refresh button at top of group
+    let scan_btn = gtk::Button::builder()
+        .icon_name("view-refresh-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Rescan WiFi networks")
+        .css_classes(["flat"])
+        .build();
+    scan_btn.connect_clicked(|_| {
+        let _ = Command::new("nmcli")
+            .args(["device", "wifi", "rescan"])
+            .spawn();
+    });
+    wifi_group.set_header_suffix(Some(&scan_btn));
+
+    let mut networks = network::get_wifi_networks();
+
+    // Sort: connected first, then by signal strength descending
+    networks.sort_by(|a, b| {
+        // in_use first
+        match (b.3, a.3) {
+            (true, false) => return std::cmp::Ordering::Greater,
+            (false, true) => return std::cmp::Ordering::Less,
+            _ => {}
+        }
+        // Then by signal descending
+        let a_signal = a.1.parse::<u32>().unwrap_or(0);
+        let b_signal = b.1.parse::<u32>().unwrap_or(0);
+        b_signal.cmp(&a_signal)
+    });
+
     if networks.is_empty() {
         let row = adw::ActionRow::builder()
             .title("No WiFi networks found")
@@ -180,15 +251,33 @@ fn build_wifi_section() -> adw::PreferencesGroup {
             if ssid.is_empty() {
                 continue;
             }
+
+            let signal_val = signal.parse::<u32>().ok();
+            let (signal_icon_name, signal_class) = wifi_signal_icon_and_class(signal_val);
+
             let row = adw::ActionRow::builder()
                 .title(ssid.as_str())
-                .subtitle(&format!("Signal: {}%  Security: {}", signal, security))
+                .subtitle(&format!("Security: {}", security))
                 .build();
 
+            // Signal strength icon as prefix
+            let signal_icon = gtk::Image::from_icon_name(signal_icon_name);
+            signal_icon.set_valign(gtk::Align::Center);
+            signal_icon.add_css_class(signal_class);
+            row.add_prefix(&signal_icon);
+
             if *in_use {
-                let check = gtk::Image::from_icon_name("emblem-ok-symbolic");
+                let check = gtk::Image::from_icon_name("emblem-default-symbolic");
                 check.set_valign(gtk::Align::Center);
+                check.add_css_class("signal-excellent");
                 row.add_suffix(&check);
+
+                let connected_label = gtk::Label::builder()
+                    .label("Connected")
+                    .valign(gtk::Align::Center)
+                    .css_classes(["dim-label"])
+                    .build();
+                row.add_suffix(&connected_label);
             } else {
                 let ssid_clone = ssid.clone();
                 let secured = !security.is_empty() && security != "--";
@@ -200,7 +289,7 @@ fn build_wifi_section() -> adw::PreferencesGroup {
                     if secured {
                         show_password_dialog(btn, &ssid_clone);
                     } else {
-                        connect_wifi(&ssid_clone, None);
+                        network::connect_wifi(&ssid_clone, None);
                     }
                 });
                 row.add_suffix(&connect_btn);
@@ -218,24 +307,33 @@ fn build_wifi_section() -> adw::PreferencesGroup {
 fn build_details_section() -> adw::PreferencesGroup {
     let details_group = adw::PreferencesGroup::builder().title("Details").build();
 
-    let (ip, gateway, dns) = get_ip_details();
+    let (ip, gateway, dns) = network::get_ip_details();
 
     let ip_row = adw::ActionRow::builder()
         .title("IP Address")
         .subtitle(&ip)
         .build();
+    let ip_icon = gtk::Image::from_icon_name("network-workgroup-symbolic");
+    ip_icon.set_valign(gtk::Align::Center);
+    ip_row.add_prefix(&ip_icon);
     details_group.add(&ip_row);
 
     let gw_row = adw::ActionRow::builder()
         .title("Gateway")
         .subtitle(&gateway)
         .build();
+    let gw_icon = gtk::Image::from_icon_name("network-server-symbolic");
+    gw_icon.set_valign(gtk::Align::Center);
+    gw_row.add_prefix(&gw_icon);
     details_group.add(&gw_row);
 
     let dns_row = adw::ActionRow::builder()
         .title("DNS")
         .subtitle(&dns)
         .build();
+    let dns_icon = gtk::Image::from_icon_name("preferences-system-network-symbolic");
+    dns_icon.set_valign(gtk::Align::Center);
+    dns_row.add_prefix(&dns_icon);
     details_group.add(&dns_row);
 
     details_group
@@ -246,10 +344,45 @@ fn build_details_section() -> adw::PreferencesGroup {
 fn build_actions_section() -> adw::PreferencesGroup {
     let actions_group = adw::PreferencesGroup::builder().build();
 
+    // WiFi enable/disable toggle
+    let wifi_row = adw::ActionRow::builder()
+        .title("WiFi")
+        .subtitle("Enable or disable WiFi radio")
+        .build();
+    let wifi_icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    wifi_icon.set_valign(gtk::Align::Center);
+    wifi_row.add_prefix(&wifi_icon);
+
+    // Check current wifi status
+    let wifi_enabled = Command::new("nmcli")
+        .args(["radio", "wifi"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string() == "enabled")
+        .unwrap_or(true);
+
+    let wifi_switch = gtk::Switch::builder()
+        .valign(gtk::Align::Center)
+        .active(wifi_enabled)
+        .build();
+    wifi_switch.connect_state_set(move |_sw, active| {
+        let state = if active { "on" } else { "off" };
+        let _ = Command::new("nmcli")
+            .args(["radio", "wifi", state])
+            .status();
+        gtk::glib::Propagation::Proceed
+    });
+    wifi_row.add_suffix(&wifi_switch);
+    actions_group.add(&wifi_row);
+
+    // Advanced network configuration (nmtui)
     let nm_row = adw::ActionRow::builder()
         .title("Network Connections")
         .subtitle("Advanced network configuration")
         .build();
+    let nm_icon = gtk::Image::from_icon_name("utilities-terminal-symbolic");
+    nm_icon.set_valign(gtk::Align::Center);
+    nm_row.add_prefix(&nm_icon);
     let nm_btn = gtk::Button::builder()
         .label("Open")
         .valign(gtk::Align::Center)
@@ -262,245 +395,6 @@ fn build_actions_section() -> adw::PreferencesGroup {
     actions_group.add(&nm_row);
 
     actions_group
-}
-
-/// Parse network devices from nmcli.
-/// Returns Vec<(device_name, type, state, connection_name)>.
-/// Filters out loopback ("lo") and "wifi-p2p" type devices.
-fn get_devices() -> Vec<(String, String, String, String)> {
-    let output = Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "DEVICE,TYPE,STATE,CONNECTION",
-            "device",
-            "status",
-        ])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout
-                .lines()
-                .filter_map(|line| {
-                    let parts: Vec<&str> = line.splitn(4, ':').collect();
-                    if parts.len() == 4 {
-                        let device = parts[0].to_string();
-                        let dev_type = parts[1].to_string();
-                        if device == "lo" || dev_type == "wifi-p2p" {
-                            return None;
-                        }
-                        Some((device, dev_type, parts[2].to_string(), parts[3].to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Path to the network favorites JSON file.
-fn favorites_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    std::path::Path::new(&home).join(".config/zos/network-favorites.json")
-}
-
-/// Load favorite device names from disk.
-fn load_favorites() -> Vec<String> {
-    let path = favorites_path();
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    let parsed: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(_) => return Vec::new(),
-    };
-    parsed
-        .get("favorites")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Save favorite device names to disk.
-fn save_favorites(favorites: &[String]) {
-    let path = favorites_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let json = serde_json::json!({ "favorites": favorites });
-    if let Ok(contents) = serde_json::to_string_pretty(&json) {
-        let _ = std::fs::write(&path, contents);
-    }
-}
-
-/// Parse active connections from nmcli.
-fn get_active_connections() -> Vec<(String, String, String)> {
-    let output = Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "NAME,TYPE,DEVICE",
-            "connection",
-            "show",
-            "--active",
-        ])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout
-                .lines()
-                .filter_map(|line| {
-                    let parts: Vec<&str> = line.splitn(3, ':').collect();
-                    if parts.len() == 3 {
-                        Some((
-                            parts[0].to_string(),
-                            parts[1].to_string(),
-                            parts[2].to_string(),
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Parse available WiFi networks from nmcli.
-fn get_wifi_networks() -> Vec<(String, String, String, bool)> {
-    let output = Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "SSID,SIGNAL,SECURITY,IN-USE",
-            "device",
-            "wifi",
-            "list",
-        ])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout
-                .lines()
-                .filter_map(|line| {
-                    let parts: Vec<&str> = line.splitn(4, ':').collect();
-                    if parts.len() == 4 {
-                        Some((
-                            parts[0].to_string(),
-                            parts[1].to_string(),
-                            parts[2].to_string(),
-                            parts[3].trim() == "*",
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Get IP details for the first active device.
-fn get_ip_details() -> (String, String, String) {
-    // Find the first non-loopback connected device
-    let device = Command::new("nmcli")
-        .args(["-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if !o.status.success() {
-                return None;
-            }
-            let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            stdout
-                .lines()
-                .filter_map(|l| {
-                    let parts: Vec<&str> = l.split(':').collect();
-                    if parts.len() >= 3
-                        && parts[2].contains("connected")
-                        && parts[1] != "loopback"
-                        && parts[1] != "wifi-p2p"
-                    {
-                        Some(parts[0].to_string())
-                    } else {
-                        None
-                    }
-                })
-                .next()
-        })
-        .unwrap_or_default();
-
-    if device.is_empty() {
-        return ("N/A".into(), "N/A".into(), "N/A".into());
-    }
-
-    let output = Command::new("nmcli")
-        .args([
-            "-t",
-            "-f",
-            "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
-            "device",
-            "show",
-            &device,
-        ])
-        .output();
-
-    let mut ip = String::from("N/A");
-    let mut gateway = String::from("N/A");
-    let mut dns = String::from("N/A");
-
-    if let Ok(o) = output {
-        if o.status.success() {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            for line in stdout.lines() {
-                if let Some(val) = line.strip_prefix("IP4.ADDRESS[1]:") {
-                    ip = val.trim().to_string();
-                } else if let Some(val) = line.strip_prefix("IP4.GATEWAY:") {
-                    gateway = val.trim().to_string();
-                } else if let Some(val) = line.strip_prefix("IP4.DNS[1]:") {
-                    dns = val.trim().to_string();
-                }
-            }
-        }
-    }
-
-    (ip, gateway, dns)
-}
-
-/// Connect to an open or secured WiFi network.
-fn connect_wifi(ssid: &str, password: Option<&str>) {
-    let mut cmd = Command::new("nmcli");
-    cmd.args(["device", "wifi", "connect", ssid]);
-    if let Some(pass) = password {
-        cmd.args(["password", pass]);
-    }
-
-    match cmd.status() {
-        Ok(status) if status.success() => {
-            tracing::info!("Connected to WiFi: {}", ssid);
-        }
-        Ok(status) => {
-            tracing::error!("Failed to connect to {}: exit {}", ssid, status);
-        }
-        Err(e) => {
-            tracing::error!("Failed to run nmcli: {}", e);
-        }
-    }
 }
 
 /// Show a password dialog for secured WiFi networks.
@@ -564,7 +458,7 @@ fn show_password_dialog(btn: &gtk::Button, ssid: &str) {
         let password = entry_clone.text();
         let password_str = password.as_str();
         if !password_str.is_empty() {
-            connect_wifi(&ssid_owned, Some(password_str));
+            network::connect_wifi(&ssid_owned, Some(password_str));
         }
         dialog_clone.close();
     });

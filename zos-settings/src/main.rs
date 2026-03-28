@@ -3,6 +3,7 @@
 mod app;
 mod pages;
 mod services;
+mod widgets;
 
 fn main() {
     tracing_subscriber::fmt::init();

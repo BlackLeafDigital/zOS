@@ -178,6 +178,30 @@ pub fn unminimize_window(address: &str) {
     focus_window(address);
 }
 
+/// Query Hyprland for connected monitor widths via `hyprctl monitors -j`.
+/// Returns a list of pixel widths (one per monitor).
+pub fn get_monitor_widths() -> Vec<u32> {
+    let output = match Command::new("hyprctl").args(["monitors", "-j"]).output() {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let json_str = match std::str::from_utf8(&output.stdout) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let monitors: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    monitors
+        .iter()
+        .filter_map(|m| m.get("width").and_then(|v| v.as_u64()).map(|w| w as u32))
+        .collect()
+}
+
 /// Launch an application by its desktop file app ID (e.g. "org.wezfurlong.wezterm").
 /// Attempts to find and exec the desktop file via `gtk-launch`, falling back to
 /// looking up the `Exec` line manually.

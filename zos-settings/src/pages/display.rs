@@ -125,14 +125,7 @@ fn png_to_surface(png_bytes: &[u8]) -> Option<gtk::cairo::ImageSurface> {
 
 /// Build the display settings page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     let monitors = query_monitors();
     let shared_configs: Arc<Mutex<Vec<MonitorConfig>>> = Arc::new(Mutex::new(Vec::new()));
@@ -158,19 +151,7 @@ pub fn build() -> gtk::Box {
     page.append(&build_monitors_section(&shared_configs, &monitors));
     page.append(&build_tools_section());
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }
 
 // ---------------------------------------------------------------------------

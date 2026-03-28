@@ -109,32 +109,13 @@ fn hyprpanel_run(args: &[&str]) {
 
 /// Build the panel settings page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     page.append(&build_theme_section());
     page.append(&build_bar_layout_section());
     page.append(&build_quick_actions_section());
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }
 
 // ---------------------------------------------------------------------------
@@ -196,18 +177,27 @@ fn build_bar_layout_section() -> adw::PreferencesGroup {
         .title("Left")
         .subtitle(&left)
         .build();
+    let left_icon = gtk::Image::from_icon_name("view-columns-symbolic");
+    left_icon.set_valign(gtk::Align::Center);
+    left_row.add_prefix(&left_icon);
     group.add(&left_row);
 
     let center_row = adw::ActionRow::builder()
         .title("Center")
         .subtitle(&center)
         .build();
+    let center_icon = gtk::Image::from_icon_name("view-columns-symbolic");
+    center_icon.set_valign(gtk::Align::Center);
+    center_row.add_prefix(&center_icon);
     group.add(&center_row);
 
     let right_row = adw::ActionRow::builder()
         .title("Right")
         .subtitle(&right)
         .build();
+    let right_icon = gtk::Image::from_icon_name("view-columns-symbolic");
+    right_icon.set_valign(gtk::Align::Center);
+    right_row.add_prefix(&right_icon);
     group.add(&right_row);
 
     let edit_row = adw::ActionRow::builder()
@@ -246,6 +236,10 @@ fn build_quick_actions_section() -> adw::PreferencesGroup {
         .subtitle("Open the full HyprPanel settings dialog")
         .build();
 
+    let settings_icon = gtk::Image::from_icon_name("preferences-system-symbolic");
+    settings_icon.set_valign(gtk::Align::Center);
+    settings_row.add_prefix(&settings_icon);
+
     let settings_btn = gtk::Button::builder()
         .label("Open")
         .valign(gtk::Align::Center)
@@ -265,6 +259,10 @@ fn build_quick_actions_section() -> adw::PreferencesGroup {
         .subtitle("Restart HyprPanel to apply changes")
         .build();
 
+    let restart_icon = gtk::Image::from_icon_name("view-refresh-symbolic");
+    restart_icon.set_valign(gtk::Align::Center);
+    restart_row.add_prefix(&restart_icon);
+
     let restart_btn = gtk::Button::builder()
         .label("Restart")
         .valign(gtk::Align::Center)
@@ -283,6 +281,10 @@ fn build_quick_actions_section() -> adw::PreferencesGroup {
         .title("Set Wallpaper")
         .subtitle("Choose an image to set as the panel wallpaper")
         .build();
+
+    let wallpaper_icon = gtk::Image::from_icon_name("preferences-desktop-wallpaper-symbolic");
+    wallpaper_icon.set_valign(gtk::Align::Center);
+    wallpaper_row.add_prefix(&wallpaper_icon);
 
     let wallpaper_btn = gtk::Button::builder()
         .label("Browse")

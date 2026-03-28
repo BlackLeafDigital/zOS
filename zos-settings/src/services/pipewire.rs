@@ -519,6 +519,250 @@ pub fn remove_link(output_port: &str, input_port: &str) -> bool {
         .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------------
+// Dynamic audio bus management
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Configuration for a virtual audio bus.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BusConfig {
+    pub name: String,
+    pub description: String,
+    pub target: BusTarget,
+}
+
+/// Where a bus routes its audio.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum BusTarget {
+    PhysicalSink(String),
+    Bus(String),
+}
+
+/// Path to the zOS audio bus configuration file.
+pub fn bus_configs_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
+    PathBuf::from(home).join(".config/zos/audio-buses.json")
+}
+
+/// Load bus configurations from disk, returning sensible defaults if the file
+/// doesn't exist or can't be parsed.
+pub fn load_bus_configs() -> Vec<BusConfig> {
+    let path = bus_configs_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(configs) = serde_json::from_str::<Vec<BusConfig>>(&data) {
+            return configs;
+        }
+    }
+    vec![
+        BusConfig {
+            name: "zos-main".into(),
+            description: "Main Output".into(),
+            target: BusTarget::PhysicalSink(String::new()),
+        },
+        BusConfig {
+            name: "zos-music".into(),
+            description: "Music".into(),
+            target: BusTarget::PhysicalSink(String::new()),
+        },
+        BusConfig {
+            name: "zos-chat".into(),
+            description: "Chat / Voice".into(),
+            target: BusTarget::PhysicalSink(String::new()),
+        },
+    ]
+}
+
+/// Persist bus configurations to disk as JSON.
+pub fn save_bus_configs(buses: &[BusConfig]) {
+    let path = bus_configs_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(buses) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Path to the PipeWire config fragment for a virtual bus.
+pub fn pipewire_bus_config_path(bus_name: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
+    PathBuf::from(home).join(format!(
+        ".config/pipewire/pipewire.conf.d/10-zos-bus-{bus_name}.conf"
+    ))
+}
+
+/// Create a virtual null audio sink via a PipeWire config fragment and restart
+/// PipeWire so it picks up the change.
+pub fn create_virtual_sink(name: &str, description: &str) {
+    let path = pipewire_bus_config_path(name);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let config = format!(
+        r#"context.objects = [
+    {{ factory = adapter
+      args = {{
+          factory.name   = support.null-audio-sink
+          node.name       = "{name}"
+          node.description = "{description}"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }}
+    }}
+]
+"#
+    );
+
+    let _ = std::fs::write(&path, config);
+    let _ = Command::new("systemctl")
+        .args(["--user", "restart", "pipewire"])
+        .status();
+}
+
+/// Remove a virtual sink's config fragment and restart PipeWire.
+pub fn remove_virtual_sink(name: &str) {
+    let path = pipewire_bus_config_path(name);
+    let _ = std::fs::remove_file(&path);
+    let _ = Command::new("systemctl")
+        .args(["--user", "restart", "pipewire"])
+        .status();
+}
+
+/// Query `pw-link --links` to find what a bus's monitor ports are connected to.
+///
+/// Returns the target node name (the part before `:playback_` or `:input_`).
+pub fn get_bus_routing(bus_name: &str) -> Option<String> {
+    let output = run_cmd("pw-link", &["--links"])?;
+    let monitor_prefix = format!("{bus_name}:monitor_FL");
+
+    let mut found_our_port = false;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
+            if found_our_port {
+                let target = trimmed
+                    .trim_start_matches("|->")
+                    .trim_start_matches("\\->")
+                    .trim();
+                // Extract node name before `:playback_` or `:input_`
+                if let Some(colon) = target.find(":playback_").or_else(|| target.find(":input_")) {
+                    return Some(target[..colon].to_string());
+                }
+                return Some(target.to_string());
+            }
+        } else {
+            found_our_port = trimmed == monitor_prefix;
+        }
+    }
+
+    None
+}
+
+/// Disconnect any existing monitor links from a bus and connect it to the
+/// given target (physical sink or another bus).
+pub fn route_bus_to_target(bus_name: &str, target: &BusTarget) {
+    // Disconnect existing monitor links from this bus
+    if let Some(links_output) = run_cmd("pw-link", &["--links"]) {
+        let monitor_fl = format!("{bus_name}:monitor_FL");
+        let monitor_fr = format!("{bus_name}:monitor_FR");
+
+        let mut current_output: Option<String> = None;
+        for line in links_output.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
+                if let Some(ref out) = current_output {
+                    if *out == monitor_fl || *out == monitor_fr {
+                        let input = trimmed
+                            .trim_start_matches("|->")
+                            .trim_start_matches("\\->")
+                            .trim();
+                        remove_link(out, input);
+                    }
+                }
+            } else {
+                current_output = Some(trimmed.to_string());
+            }
+        }
+    }
+
+    // Create new links based on target type
+    match target {
+        BusTarget::PhysicalSink(sink_name) => {
+            if !sink_name.is_empty() {
+                create_link(
+                    &format!("{bus_name}:monitor_FL"),
+                    &format!("{sink_name}:playback_FL"),
+                );
+                create_link(
+                    &format!("{bus_name}:monitor_FR"),
+                    &format!("{sink_name}:playback_FR"),
+                );
+            }
+        }
+        BusTarget::Bus(other_bus) => {
+            if !other_bus.is_empty() {
+                create_link(
+                    &format!("{bus_name}:monitor_FL"),
+                    &format!("{other_bus}:input_FL"),
+                );
+                create_link(
+                    &format!("{bus_name}:monitor_FR"),
+                    &format!("{other_bus}:input_FR"),
+                );
+            }
+        }
+    }
+}
+
+/// Path to the per-app routing defaults file.
+pub fn app_routing_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
+    PathBuf::from(home).join(".config/zos/app-routing.json")
+}
+
+/// Load the mapping of application names to their default bus.
+pub fn load_app_routing_defaults() -> HashMap<String, String> {
+    let path = app_routing_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&data) {
+            return map;
+        }
+    }
+    HashMap::new()
+}
+
+/// Insert or update a per-app routing default.  If `bus_name` is empty, the
+/// entry is removed instead.
+pub fn save_app_routing_default(app_name: &str, bus_name: &str) {
+    let mut map = load_app_routing_defaults();
+
+    if bus_name.is_empty() {
+        map.remove(app_name);
+    } else {
+        map.insert(app_name.to_string(), bus_name.to_string());
+    }
+
+    let path = app_routing_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&map) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

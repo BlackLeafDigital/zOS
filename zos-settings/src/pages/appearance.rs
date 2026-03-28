@@ -97,33 +97,14 @@ fn write_wallpaper_config(path: &str) {
 
 /// Build the appearance settings page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     page.append(&build_theme_section());
     page.append(&build_cursor_section());
     page.append(&build_font_section());
     page.append(&build_wallpaper_section());
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +122,10 @@ fn build_theme_section() -> adw::PreferencesGroup {
         .title("Dark Mode")
         .subtitle("Use dark color scheme for applications")
         .build();
+
+    let dark_icon = gtk::Image::from_icon_name("weather-clear-night-symbolic");
+    dark_icon.set_valign(gtk::Align::Center);
+    dark_row.add_prefix(&dark_icon);
 
     let dark_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
@@ -166,6 +151,11 @@ fn build_theme_section() -> adw::PreferencesGroup {
         .title("GTK Theme")
         .subtitle(&gtk_theme)
         .build();
+
+    let theme_icon = gtk::Image::from_icon_name("applications-graphics-symbolic");
+    theme_icon.set_valign(gtk::Align::Center);
+    theme_row.add_prefix(&theme_icon);
+
     group.add(&theme_row);
 
     group
@@ -187,6 +177,10 @@ fn build_cursor_section() -> adw::PreferencesGroup {
         .model(&size_model)
         .selected(1) // 24
         .build();
+
+    let cursor_icon = gtk::Image::from_icon_name("input-mouse-symbolic");
+    cursor_icon.set_valign(gtk::Align::Center);
+    size_combo.add_prefix(&cursor_icon);
 
     size_combo.connect_selected_notify(move |row| {
         let idx = row.selected() as usize;
@@ -213,6 +207,11 @@ fn build_font_section() -> adw::PreferencesGroup {
         .title("Interface Font")
         .subtitle(&current_font)
         .build();
+
+    let font_icon = gtk::Image::from_icon_name("font-x-generic-symbolic");
+    font_icon.set_valign(gtk::Align::Center);
+    font_row.add_prefix(&font_icon);
+
     group.add(&font_row);
 
     group
@@ -231,6 +230,11 @@ fn build_wallpaper_section() -> adw::PreferencesGroup {
         .title("Current Wallpaper")
         .subtitle(&current_wp)
         .build();
+
+    let wp_icon = gtk::Image::from_icon_name("preferences-desktop-wallpaper-symbolic");
+    wp_icon.set_valign(gtk::Align::Center);
+    wp_row.add_prefix(&wp_icon);
+
     group.add(&wp_row);
 
     // --- Change wallpaper button ---
@@ -238,6 +242,10 @@ fn build_wallpaper_section() -> adw::PreferencesGroup {
         .title("Change Wallpaper")
         .subtitle("Select a new wallpaper image")
         .build();
+
+    let change_icon = gtk::Image::from_icon_name("folder-pictures-symbolic");
+    change_icon.set_valign(gtk::Align::Center);
+    change_row.add_prefix(&change_icon);
 
     let change_btn = gtk::Button::builder()
         .label("Browse")

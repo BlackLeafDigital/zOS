@@ -33,14 +33,7 @@ fn confirm_power_action(btn: &gtk::Button, title: &str, body: &str, action: fn()
 
 /// Build the power management page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     let power_group = adw::PreferencesGroup::builder()
         .title("Power")
@@ -52,6 +45,9 @@ pub fn build() -> gtk::Box {
         .title("Suspend")
         .subtitle("Put the system to sleep")
         .build();
+    let suspend_icon = gtk::Image::from_icon_name("media-playback-pause-symbolic");
+    suspend_icon.set_valign(gtk::Align::Center);
+    suspend_row.add_prefix(&suspend_icon);
     let suspend_btn = gtk::Button::builder()
         .label("Suspend")
         .valign(gtk::Align::Center)
@@ -73,6 +69,9 @@ pub fn build() -> gtk::Box {
         .title("Reboot")
         .subtitle("Restart the system")
         .build();
+    let reboot_icon = gtk::Image::from_icon_name("view-refresh-symbolic");
+    reboot_icon.set_valign(gtk::Align::Center);
+    reboot_row.add_prefix(&reboot_icon);
     let reboot_btn = gtk::Button::builder()
         .label("Reboot")
         .valign(gtk::Align::Center)
@@ -94,6 +93,9 @@ pub fn build() -> gtk::Box {
         .title("Shut Down")
         .subtitle("Power off the system")
         .build();
+    let shutdown_icon = gtk::Image::from_icon_name("system-shutdown-symbolic");
+    shutdown_icon.set_valign(gtk::Align::Center);
+    shutdown_row.add_prefix(&shutdown_icon);
     let shutdown_btn = gtk::Button::builder()
         .label("Shut Down")
         .valign(gtk::Align::Center)
@@ -112,5 +114,5 @@ pub fn build() -> gtk::Box {
     power_group.add(&shutdown_row);
 
     page.append(&power_group);
-    page
+    super::page_wrapper(&page)
 }

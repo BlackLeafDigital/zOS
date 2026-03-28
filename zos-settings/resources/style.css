@@ -59,3 +59,94 @@
 .health-pass { color: #a6e3a1; }
 .health-warn { color: #f9e2af; }
 .health-fail { color: #f38ba8; }
+
+/* --- Status badges --- */
+.status-badge-green { color: #a6e3a1; }
+.status-badge-blue { color: #89b4fa; }
+.status-badge-purple { color: #cba6f7; }
+.status-badge-red { color: #f38ba8; }
+.status-badge-yellow { color: #f9e2af; }
+
+/* --- Dashboard --- */
+.dashboard-greeting {
+    font-size: 1.5em;
+    font-weight: 700;
+}
+
+.dashboard-subtitle {
+    color: #a6adc8;
+    font-size: 0.9em;
+}
+
+.dashboard-stat-value {
+    font-size: 1.8em;
+    font-weight: 800;
+    color: #89b4fa;
+}
+
+.dashboard-stat-value-green {
+    font-size: 1.8em;
+    font-weight: 800;
+    color: #a6e3a1;
+}
+
+.dashboard-stat-value-purple {
+    font-size: 1.8em;
+    font-weight: 800;
+    color: #cba6f7;
+}
+
+.dashboard-stat-value-yellow {
+    font-size: 1.8em;
+    font-weight: 800;
+    color: #f9e2af;
+}
+
+.dashboard-stat-label {
+    color: #a6adc8;
+    font-size: 0.8em;
+}
+
+.dashboard-stat-card {
+    background-color: #313244;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+/* --- Audio mixer --- */
+.mixer-bus-label {
+    font-weight: 600;
+    color: #cba6f7;
+}
+
+/* --- Network signal --- */
+.signal-excellent { color: #a6e3a1; }
+.signal-good { color: #89b4fa; }
+.signal-fair { color: #f9e2af; }
+.signal-weak { color: #f38ba8; }
+
+/* --- UI polish --- */
+button {
+    transition: background-color 150ms ease, color 150ms ease;
+}
+
+switch {
+    transition: background-color 150ms ease;
+}
+
+scale trough {
+    border-radius: 4px;
+}
+
+scale highlight {
+    background-color: #89b4fa;
+    border-radius: 4px;
+}
+
+separator {
+    background-color: alpha(#45475a, 0.5);
+}
+
+row.expander {
+    border-radius: 8px;
+}

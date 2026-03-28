@@ -8,14 +8,7 @@ use zos_core::commands::grub;
 
 /// Build the boot configuration page widget.
 pub fn build() -> gtk::Box {
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+    let page = super::page_content();
 
     let status = grub::get_grub_status();
     let is_root = grub::is_root();
@@ -41,6 +34,9 @@ pub fn build() -> gtk::Box {
         .title("GRUB Timeout (seconds)")
         .subtitle("Time to wait at boot menu before auto-selecting default")
         .build();
+    let timeout_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
+    timeout_icon.set_valign(gtk::Align::Center);
+    timeout_row.add_prefix(&timeout_icon);
     let timeout_spin = gtk::SpinButton::with_range(0.0, 30.0, 1.0);
     timeout_spin.set_value(timeout_val);
     timeout_spin.set_valign(gtk::Align::Center);
@@ -80,8 +76,11 @@ pub fn build() -> gtk::Box {
         .title("Running as root")
         .subtitle(if is_root { "Yes" } else { "No" })
         .build();
+    let root_prefix_icon = gtk::Image::from_icon_name("security-high-symbolic");
+    root_prefix_icon.set_valign(gtk::Align::Center);
+    root_row.add_prefix(&root_prefix_icon);
     let root_icon = gtk::Image::from_icon_name(if is_root {
-        "emblem-ok-symbolic"
+        "emblem-default-symbolic"
     } else {
         "dialog-warning-symbolic"
     });
@@ -102,6 +101,9 @@ pub fn build() -> gtk::Box {
             "No"
         })
         .build();
+    let detected_icon = gtk::Image::from_icon_name("computer-symbolic");
+    detected_icon.set_valign(gtk::Align::Center);
+    detected_row.add_prefix(&detected_icon);
     windows_group.add(&detected_row);
 
     let bls_row = adw::ActionRow::builder()
@@ -112,6 +114,9 @@ pub fn build() -> gtk::Box {
             "Not configured"
         })
         .build();
+    let bls_icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
+    bls_icon.set_valign(gtk::Align::Center);
+    bls_row.add_prefix(&bls_icon);
     windows_group.add(&bls_row);
 
     if status.windows_detected && !status.bls_entry_exists {
@@ -145,6 +150,9 @@ pub fn build() -> gtk::Box {
             .title("Reboot to Windows")
             .subtitle("Set Windows as next boot target and restart")
             .build();
+        let reboot_win_icon = gtk::Image::from_icon_name("computer-symbolic");
+        reboot_win_icon.set_valign(gtk::Align::Center);
+        reboot_row.add_prefix(&reboot_win_icon);
         let reboot_btn = gtk::Button::builder()
             .label("Reboot to Windows")
             .valign(gtk::Align::Center)
@@ -179,17 +187,5 @@ pub fn build() -> gtk::Box {
 
     page.append(&windows_group);
 
-    let scrolled = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .child(&page)
-        .build();
-
-    let wrapper = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    wrapper.append(&scrolled);
-    wrapper
+    super::page_wrapper(&page)
 }
