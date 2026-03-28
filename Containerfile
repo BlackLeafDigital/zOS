@@ -16,10 +16,13 @@ COPY zos-dock /zos-dock
 FROM ${BASE_IMAGE}
 
 ### BUILD Rust workspace (zos-cli + zos-settings + zos-tray + zos-dock)
+ARG GH_TOKEN
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
+    export HOME=/tmp && \
+    if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
     cargo build --release -p zos -p zos-settings -p zos-tray -p zos-dock && \

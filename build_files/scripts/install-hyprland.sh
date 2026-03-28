@@ -1,6 +1,19 @@
 #!/bin/bash
 set -ouex pipefail
 
+# --- Robust GitHub download helpers ---
+GH_CURL_OPTS=(--connect-timeout 30 --retry 5 --retry-delay 10 --retry-all-errors --max-time 300 -fsSL)
+if [ -n "${GITHUB_TOKEN:-}" ]; then GH_CURL_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
+
+gh_curl() { curl "${GH_CURL_OPTS[@]}" "$@"; }
+gh_clone() {
+    local url="$1"; shift
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        url="${url/https:\/\/github.com/https://${GITHUB_TOKEN}@github.com}"
+    fi
+    git clone --depth 1 "$url" "$@"
+}
+
 # =============================================================================
 # Hyprland Installation
 # Optional tiling WM session alongside KDE Plasma
@@ -55,26 +68,28 @@ dnf5 install -y waybar
 
 # --- Catppuccin Mocha cursors ---
 CURSOR_URL="https://github.com/catppuccin/cursors/releases/latest/download/catppuccin-mocha-dark-cursors.zip"
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/catppuccin-cursors.zip "$CURSOR_URL"
+gh_curl -o /tmp/catppuccin-cursors.zip "$CURSOR_URL"
 unzip -o /tmp/catppuccin-cursors.zip -d /usr/share/icons/
 rm /tmp/catppuccin-cursors.zip
 
 # --- hyprswitch/hyprshell (macOS/Windows-style Alt+Tab window switcher) ---
-HYPRSHELL_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 https://api.github.com/repos/h3rmt/hyprswitch/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/hyprshell.tar.zst "https://github.com/h3rmt/hyprswitch/releases/download/v${HYPRSHELL_VERSION}/hyprshell-${HYPRSHELL_VERSION}-x86_64.tar.zst"
+HYPRSHELL_VERSION=$(gh_curl https://api.github.com/repos/h3rmt/hyprswitch/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+gh_curl -o /tmp/hyprshell.tar.zst "https://github.com/h3rmt/hyprswitch/releases/download/v${HYPRSHELL_VERSION}/hyprshell-${HYPRSHELL_VERSION}-x86_64.tar.zst"
 tar --use-compress-program=unzstd -xf /tmp/hyprshell.tar.zst -C /usr/bin/
 chmod +x /usr/bin/hyprswitch 2>/dev/null || chmod +x /usr/bin/hyprshell 2>/dev/null
 rm /tmp/hyprshell.tar.zst
 
 # --- nwg-displays (Hyprland monitor config GUI, not in Fedora repos) ---
 dnf5 install -y gtk-layer-shell python3-gobject python3-i3ipc python3-build python3-installer python3-setuptools python3-wheel
-git clone --depth 1 https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
+gh_clone https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
 cd /tmp/nwg-displays && /ctx/scripts/nwg-install.sh
 cd / && rm -rf /tmp/nwg-displays
 
 # --- nwg-look (GTK settings editor for wlroots) ---
 NWG_LOOK_URL="https://github.com/nwg-piotr/nwg-look/releases/latest/download/nwg-look-v0.2.7-1.x86_64.rpm"
-dnf5 install -y "$NWG_LOOK_URL" || true
+gh_curl -o /tmp/nwg-look.rpm "$NWG_LOOK_URL"
+dnf5 install -y /tmp/nwg-look.rpm || true
+rm -f /tmp/nwg-look.rpm
 
 # --- greetd + ReGreet login ---
 dnf5 install -y greetd greetd-selinux

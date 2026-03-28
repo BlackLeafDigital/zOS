@@ -1,6 +1,19 @@
 #!/bin/bash
 set -ouex pipefail
 
+# --- Robust GitHub download helpers ---
+GH_CURL_OPTS=(--connect-timeout 30 --retry 5 --retry-delay 10 --retry-all-errors --max-time 300 -fsSL)
+if [ -n "${GITHUB_TOKEN:-}" ]; then GH_CURL_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
+
+gh_curl() { curl "${GH_CURL_OPTS[@]}" "$@"; }
+gh_clone() {
+    local url="$1"; shift
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        url="${url/https:\/\/github.com/https://${GITHUB_TOKEN}@github.com}"
+    fi
+    git clone --depth 1 "$url" "$@"
+}
+
 # =============================================================================
 # zOS Build Script
 # Core system packages and configuration
@@ -28,7 +41,7 @@ dnf5 install -y \
     libayatana-appindicator-gtk3
 
 # --- eza (not in Fedora repos, install from GitHub release) ---
-curl -Lo /tmp/eza.tar.gz https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz
+gh_curl -o /tmp/eza.tar.gz https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz
 tar -xzf /tmp/eza.tar.gz -C /usr/bin/
 chmod +x /usr/bin/eza
 rm /tmp/eza.tar.gz
@@ -51,20 +64,18 @@ mkdir -p /usr/share/zos
 magick -size 3840x2160 gradient:'#1e1e2e'-'#181825' /usr/share/zos/wallpaper.png
 
 # --- liquidctl udev rules (Fedora RPM doesn't ship them) ---
-curl -fsSL --retry 3 --retry-delay 5 -o /etc/udev/rules.d/71-liquidctl.rules \
+gh_curl -o /etc/udev/rules.d/71-liquidctl.rules \
     https://raw.githubusercontent.com/liquidctl/liquidctl/main/extra/linux/71-liquidctl.rules
 
 # --- Netbird (mesh VPN) ---
-CURL_GH_OPTS=(--connect-timeout 10 --retry 3)
-if [ -n "${GITHUB_TOKEN:-}" ]; then CURL_GH_OPTS+=(-H "Authorization: token ${GITHUB_TOKEN}"); fi
-NETBIRD_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 "${CURL_GH_OPTS[@]}" https://api.github.com/repos/netbirdio/netbird/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird_${NETBIRD_VERSION}_linux_amd64.tar.gz"
+NETBIRD_VERSION=$(gh_curl https://api.github.com/repos/netbirdio/netbird/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+gh_curl -o /tmp/netbird.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird_${NETBIRD_VERSION}_linux_amd64.tar.gz"
 tar -xzf /tmp/netbird.tar.gz -C /usr/bin/ netbird
 chmod +x /usr/bin/netbird
 rm /tmp/netbird.tar.gz
 
 # --- Netbird UI (system tray GUI) ---
-curl -fsSL --retry 3 --retry-delay 5 -o /tmp/netbird-ui.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird-ui-linux_${NETBIRD_VERSION}_linux_amd64.tar.gz"
+gh_curl -o /tmp/netbird-ui.tar.gz "https://github.com/netbirdio/netbird/releases/download/v${NETBIRD_VERSION}/netbird-ui-linux_${NETBIRD_VERSION}_linux_amd64.tar.gz"
 tar -xzf /tmp/netbird-ui.tar.gz -C /tmp/
 cp /tmp/netbird-ui /usr/bin/netbird-ui
 chmod +x /usr/bin/netbird-ui
@@ -123,7 +134,9 @@ WantedBy=multi-user.target
 COOLER_SVC
 
 # --- Update liquidctl to latest git (NZXT Kraken 2023 Elite support) ---
-pip install --break-system-packages "git+https://github.com/liquidctl/liquidctl#egg=liquidctl" || true
+LIQUIDCTL_URL="https://github.com/liquidctl/liquidctl"
+if [ -n "${GITHUB_TOKEN:-}" ]; then LIQUIDCTL_URL="https://${GITHUB_TOKEN}@github.com/liquidctl/liquidctl"; fi
+pip install --break-system-packages "git+${LIQUIDCTL_URL}#egg=liquidctl" || true
 
 # --- Enable services ---
 systemctl enable podman.socket
