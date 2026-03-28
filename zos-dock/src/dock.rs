@@ -3,7 +3,7 @@
 use crate::config::DockConfig;
 use crate::hypr::{self, HyprWindow};
 use crate::icons::IconResolver;
-use iced::widget::{center, column, container, mouse_area, row, svg, text, Space};
+use iced::widget::{center, column, container, mouse_area, row, svg, text, tooltip, Space};
 use iced::{event, Background, Border, Color, Element, Event, Length, Subscription, Task, Theme};
 use iced_anim::Spring;
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
@@ -101,6 +101,8 @@ pub struct Dock {
     pub hidden: bool,
     /// When the cursor last left the dock (for auto-hide delay).
     pub hide_timer: Option<Instant>,
+    /// Animated slide offset for auto-hide (0.0 = visible, 68.0 = hidden).
+    pub slide_offset: Spring<f32>,
     /// Last observed modification time of the config file.
     pub config_mtime: Option<std::time::SystemTime>,
     /// Currently open context menu, if any.
@@ -153,6 +155,7 @@ pub fn boot() -> Dock {
         active_address: hypr::get_active_window_address(),
         hidden: false,
         hide_timer: None,
+        slide_offset: Spring::new(0.0),
         config_mtime: DockConfig::config_mtime(),
         context_menu: None,
     };
@@ -174,6 +177,10 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     any_energy = true;
                 }
             }
+            if dock.slide_offset.has_energy() {
+                dock.slide_offset.update(iced_anim::Event::Tick(now));
+                any_energy = true;
+            }
             // If nothing is animating and nothing needs refresh, we can be idle.
             let _ = any_energy;
             Task::none()
@@ -183,6 +190,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     if dock.hidden && dock.config.auto_hide {
                         dock.hidden = false;
+                        dock.slide_offset.set_target(0.0);
                         dock.hide_timer = None;
                     }
                     dock.cursor_x = Some(position.x);
@@ -208,6 +216,11 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ItemClicked(index) => {
+            // Dismiss context menu if open
+            if dock.context_menu.is_some() {
+                let cm = dock.context_menu.take().unwrap();
+                return Task::done(Message::RemoveWindow(cm.id));
+            }
             tracing::info!("Dock: ItemClicked index={}", index);
             if let Some(item) = dock.items.get(index) {
                 if item.minimized {
@@ -270,6 +283,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 if let Some(timer_start) = dock.hide_timer {
                     if timer_start.elapsed() >= Duration::from_millis(800) && dock.cursor_x.is_none() {
                         dock.hidden = true;
+                        dock.slide_offset.set_target(68.0);
                         dock.hide_timer = None;
                     }
                 }
@@ -357,7 +371,9 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         }
     }
 
-    if dock.hidden {
+    let slide = *dock.slide_offset.value();
+    if slide > 66.0 {
+        // Fully hidden — render transparent
         return container(Space::new())
             .width(Length::Fill)
             .height(Length::Fill)
@@ -492,7 +508,26 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         .on_press(Message::ItemClicked(i))
         .on_right_press(Message::ItemRightClicked(i));
 
-        items_row = items_row.push(item_widget);
+        let tooltip_content = container(text(&item.name).size(12).color(TEXT_COLOR))
+            .padding([4, 8])
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(BG_COLOR)),
+                border: Border {
+                    color: SURFACE_COLOR,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            });
+
+        let item_with_tooltip = tooltip(
+            item_widget,
+            tooltip_content,
+            tooltip::Position::Top,
+        )
+        .gap(4);
+
+        items_row = items_row.push(item_with_tooltip);
     }
 
     // Wrap in the dock background container.
@@ -509,12 +544,27 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         .center_x(Length::Shrink);
 
     // Outer container to center the dock horizontally.
-    container(dock_bg)
+    let dock_view: Element<'_, Message> = container(dock_bg)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .align_y(iced::alignment::Vertical::Bottom)
-        .into()
+        .padding(iced::Padding {
+            top: slide,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .into();
+
+    // If a context menu is open, clicking the dock dismisses it
+    if dock.context_menu.is_some() {
+        mouse_area(dock_view)
+            .on_press(Message::DismissMenu)
+            .into()
+    } else {
+        dock_view
+    }
 }
 
 pub fn subscription(dock: &Dock) -> Subscription<Message> {
@@ -528,7 +578,7 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     ];
 
     // When animating, tick at ~60fps for smooth spring physics.
-    if any_animating {
+    if any_animating || dock.cursor_x.is_some() || dock.slide_offset.has_energy() {
         subs.push(
             iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
         );
