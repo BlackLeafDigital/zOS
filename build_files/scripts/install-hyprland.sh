@@ -85,11 +85,7 @@ gh_clone https://github.com/nwg-piotr/nwg-displays.git /tmp/nwg-displays
 cd /tmp/nwg-displays && /ctx/scripts/nwg-install.sh
 cd / && rm -rf /tmp/nwg-displays
 
-# --- nwg-look (GTK settings editor for wlroots) ---
-NWG_LOOK_URL="https://github.com/nwg-piotr/nwg-look/releases/latest/download/nwg-look-v0.2.7-1.x86_64.rpm"
-gh_curl -o /tmp/nwg-look.rpm "$NWG_LOOK_URL"
-dnf5 install -y /tmp/nwg-look.rpm || true
-rm -f /tmp/nwg-look.rpm
+# --- nwg-look removed: functionality replaced by zos-settings appearance page ---
 
 # --- greetd + ReGreet login ---
 dnf5 install -y greetd greetd-selinux
