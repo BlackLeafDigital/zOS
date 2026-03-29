@@ -1,4 +1,4 @@
-// === pages/audio/routing.rs — App routing section ===
+// === pages/audio/routing.rs — App streams section (left column) ===
 
 use relm4::adw;
 use relm4::adw::prelude::*;
@@ -8,11 +8,12 @@ use crate::services::pipewire;
 
 use super::friendly_bus_name;
 
-/// Build the app routing preferences group.
+/// Build the app streams preferences group for the left column.
+/// Shows active audio streams with bus routing dropdowns and "remember" toggles.
 pub fn build() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("App Routing")
-        .description("Route application audio to a virtual bus")
+        .title("App Streams")
+        .description("Route app audio to a virtual bus")
         .build();
 
     let streams = pipewire::list_streams();
@@ -22,16 +23,19 @@ pub fn build() -> adw::PreferencesGroup {
 
     if streams.is_empty() {
         let empty_row = adw::ActionRow::builder()
-            .title("No active audio streams")
-            .subtitle("Start playing audio in an app and it will appear here")
+            .title("No active streams")
+            .subtitle("Play audio in an app to see it here")
             .build();
+        let empty_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+        empty_icon.set_valign(gtk::Align::Center);
+        empty_row.add_prefix(&empty_icon);
         group.add(&empty_row);
         return group;
     }
 
     // Build dropdown options: "Default", then each zos-* sink
     let mut dropdown_labels: Vec<String> = vec!["Default".into()];
-    let mut dropdown_sink_names: Vec<String> = vec![String::new()]; // empty = Default
+    let mut dropdown_sink_names: Vec<String> = vec![String::new()];
 
     let zos_sinks: Vec<_> = all_sinks
         .iter()
@@ -49,8 +53,11 @@ pub fn build() -> adw::PreferencesGroup {
     for stream in &streams {
         let row = adw::ActionRow::builder()
             .title(&stream.name)
-            .subtitle(&format!("ID {}", stream.id))
             .build();
+
+        let stream_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+        stream_icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&stream_icon);
 
         let model = gtk::StringList::new(&label_strs);
         let dropdown = gtk::DropDown::builder()
@@ -64,7 +71,6 @@ pub fn build() -> adw::PreferencesGroup {
             for (i, sink_name) in dropdown_sink_names.iter().enumerate() {
                 if sink_name == saved_bus {
                     dropdown.set_selected(i as u32);
-                    // Also apply the saved routing immediately
                     if !saved_bus.is_empty() {
                         pipewire::route_stream_to_sink(stream.id, saved_bus);
                     }
@@ -86,7 +92,7 @@ pub fn build() -> adw::PreferencesGroup {
             }
         });
 
-        // "Remember" toggle button
+        // "Remember" toggle
         let stream_name = stream.name.clone();
         let is_saved = saved_defaults.contains_key(&stream.name);
         let remember_btn = gtk::ToggleButton::builder()
@@ -104,7 +110,6 @@ pub fn build() -> adw::PreferencesGroup {
         let sink_names_for_remember = dropdown_sink_names.clone();
         remember_btn.connect_toggled(move |btn| {
             if btn.is_active() {
-                // Save current selection
                 let sel = dropdown_ref.selected() as usize;
                 let bus = sink_names_for_remember
                     .get(sel)
@@ -113,7 +118,6 @@ pub fn build() -> adw::PreferencesGroup {
                 pipewire::save_app_routing_default(&stream_name, &bus);
                 btn.set_icon_name("starred-symbolic");
             } else {
-                // Remove saved default
                 pipewire::save_app_routing_default(&stream_name, "");
                 btn.set_icon_name("non-starred-symbolic");
             }

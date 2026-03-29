@@ -16,6 +16,7 @@ struct InputState {
     accel_flat: bool,
     natural_scroll: bool,
     tap_to_click: bool,
+    initializing: bool,
 }
 
 impl Default for InputState {
@@ -28,7 +29,53 @@ impl Default for InputState {
             accel_flat: false,
             natural_scroll: true,
             tap_to_click: true,
+            initializing: false,
         }
+    }
+}
+
+impl InputState {
+    /// Load input settings from ~/.config/hypr/user-settings.conf.
+    /// Falls back to defaults for any missing or unparseable fields.
+    fn load_from_config() -> Self {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let path = format!("{}/.config/hypr/user-settings.conf", home);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return Self::default(),
+        };
+
+        let mut state = Self::default();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((key, value)) = trimmed.split_once('=') {
+                let key = key.trim();
+                let value = value.trim();
+                match key {
+                    "kb_layout" => state.layout = value.to_string(),
+                    "repeat_rate" => {
+                        if let Ok(v) = value.parse() {
+                            state.repeat_rate = v;
+                        }
+                    }
+                    "repeat_delay" => {
+                        if let Ok(v) = value.parse() {
+                            state.repeat_delay = v;
+                        }
+                    }
+                    "sensitivity" => {
+                        if let Ok(v) = value.parse() {
+                            state.sensitivity = v;
+                        }
+                    }
+                    "accel_profile" => state.accel_flat = value == "flat",
+                    "natural_scroll" => state.natural_scroll = value == "true",
+                    "tap-to-click" => state.tap_to_click = value == "true",
+                    _ => {}
+                }
+            }
+        }
+        state
     }
 }
 
@@ -63,9 +110,12 @@ fn persist_input_settings(
     let _ = std::fs::write(&path, content);
 }
 
-/// Helper to persist the current shared state.
+/// Helper to persist the current shared state (skips if initializing).
 fn persist_state(state: &Arc<Mutex<InputState>>) {
     let s = state.lock().unwrap();
+    if s.initializing {
+        return;
+    }
     persist_input_settings(
         &s.layout,
         s.repeat_rate,
@@ -79,13 +129,18 @@ fn persist_state(state: &Arc<Mutex<InputState>>) {
 
 /// Build the input settings page widget.
 pub fn build() -> gtk::Box {
-    let state = Arc::new(Mutex::new(InputState::default()));
+    let mut initial = InputState::load_from_config();
+    initial.initializing = true;
+    let state = Arc::new(Mutex::new(initial));
 
     let page = super::page_content();
 
     page.append(&build_keyboard_section(Arc::clone(&state)));
     page.append(&build_mouse_section(Arc::clone(&state)));
     page.append(&build_touchpad_section(Arc::clone(&state)));
+
+    // Done initializing — future changes will persist
+    state.lock().unwrap().initializing = false;
 
     super::page_wrapper(&page)
 }
@@ -100,10 +155,17 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
     let layout_options = ["us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "kr"];
     let layout_model = gtk::StringList::new(&layout_options);
 
+    // Find index of saved layout
+    let saved_layout = state.lock().unwrap().layout.clone();
+    let layout_idx = layout_options
+        .iter()
+        .position(|&l| l == saved_layout)
+        .unwrap_or(0) as u32;
+
     let layout_combo = adw::ComboRow::builder()
         .title("Layout")
         .model(&layout_model)
-        .selected(0) // default: us
+        .selected(layout_idx)
         .build();
 
     let layout_icon = gtk::Image::from_icon_name("input-keyboard-symbolic");
@@ -133,7 +195,8 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
     rate_icon.set_valign(gtk::Align::Center);
     rate_row.add_prefix(&rate_icon);
 
-    let rate_adj = gtk::Adjustment::new(25.0, 10.0, 50.0, 1.0, 5.0, 0.0);
+    let saved_rate = state.lock().unwrap().repeat_rate;
+    let rate_adj = gtk::Adjustment::new(saved_rate as f64, 10.0, 50.0, 1.0, 5.0, 0.0);
     let rate_spin = gtk::SpinButton::builder()
         .adjustment(&rate_adj)
         .valign(gtk::Align::Center)
@@ -162,7 +225,8 @@ fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
     delay_icon.set_valign(gtk::Align::Center);
     delay_row.add_prefix(&delay_icon);
 
-    let delay_adj = gtk::Adjustment::new(600.0, 100.0, 1000.0, 50.0, 100.0, 0.0);
+    let saved_delay = state.lock().unwrap().repeat_delay;
+    let delay_adj = gtk::Adjustment::new(saved_delay as f64, 100.0, 1000.0, 50.0, 100.0, 0.0);
     let delay_spin = gtk::SpinButton::builder()
         .adjustment(&delay_adj)
         .valign(gtk::Align::Center)
@@ -198,7 +262,8 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
     sens_icon.set_valign(gtk::Align::Center);
     sensitivity_row.add_prefix(&sens_icon);
 
-    let sens_adj = gtk::Adjustment::new(0.0, -1.0, 1.0, 0.1, 0.5, 0.0);
+    let saved_sens = state.lock().unwrap().sensitivity;
+    let sens_adj = gtk::Adjustment::new(saved_sens, -1.0, 1.0, 0.1, 0.5, 0.0);
     let sens_scale = gtk::Scale::builder()
         .adjustment(&sens_adj)
         .orientation(gtk::Orientation::Horizontal)
@@ -235,9 +300,10 @@ fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
     accel_icon.set_valign(gtk::Align::Center);
     accel_row.add_prefix(&accel_icon);
 
+    let saved_accel = state.lock().unwrap().accel_flat;
     let accel_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
-        .active(false)
+        .active(saved_accel)
         .build();
 
     {
@@ -275,9 +341,10 @@ fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
     natural_icon.set_valign(gtk::Align::Center);
     natural_row.add_prefix(&natural_icon);
 
+    let saved_natural = state.lock().unwrap().natural_scroll;
     let natural_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
-        .active(true) // default from defaults.conf
+        .active(saved_natural)
         .build();
 
     {
@@ -305,9 +372,10 @@ fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGrou
     tap_icon.set_valign(gtk::Align::Center);
     tap_row.add_prefix(&tap_icon);
 
+    let saved_tap = state.lock().unwrap().tap_to_click;
     let tap_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
-        .active(true) // default from defaults.conf
+        .active(saved_tap)
         .build();
 
     {

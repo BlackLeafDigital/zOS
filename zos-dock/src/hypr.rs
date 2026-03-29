@@ -202,6 +202,33 @@ pub fn get_monitor_widths() -> Vec<u32> {
         .collect()
 }
 
+/// Check if the currently focused window is fullscreen.
+pub fn is_active_window_fullscreen() -> bool {
+    let output = match Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    json.get("fullscreen")
+        .and_then(|v| v.as_i64())
+        .map(|v| v != 0)
+        .unwrap_or(false)
+        || json
+            .get("fullscreenClient")
+            .and_then(|v| v.as_i64())
+            .map(|v| v != 0)
+            .unwrap_or(false)
+}
+
 /// Launch an application by its desktop file app ID (e.g. "org.wezfurlong.wezterm").
 /// Attempts to find and exec the desktop file via `gtk-launch`, falling back to
 /// looking up the `Exec` line manually.

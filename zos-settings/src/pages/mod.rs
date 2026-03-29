@@ -9,7 +9,6 @@ pub mod dock;
 pub mod input;
 pub mod network;
 pub mod overview;
-pub mod panel;
 pub mod power;
 
 /// Create a standard page content box with consistent spacing and margins.

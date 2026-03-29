@@ -1,4 +1,4 @@
-// === pages/audio/buses.rs — Virtual audio buses section ===
+// === pages/audio/buses.rs — Virtual audio buses (center column) ===
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,11 +9,12 @@ use relm4::gtk;
 
 use crate::services::pipewire::{self, BusConfig, BusTarget};
 
-/// Build the audio buses preferences group.
+/// Build the audio buses preferences group for the center column.
+/// Each bus shows: volume, route-to dropdown, connected sources, and remove button.
 pub fn build() -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("Audio Buses")
-        .description("Virtual audio buses for routing and mixing")
+        .title("Buses")
+        .description("Virtual audio routing buses")
         .build();
 
     let bus_configs = pipewire::load_bus_configs();
@@ -40,7 +41,10 @@ pub fn build() -> adw::PreferencesGroup {
             .title(&bus_description)
             .subtitle(&bus_name)
             .build();
-        expander.add_css_class("mixer-bus-label");
+
+        let bus_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+        bus_icon.set_valign(gtk::Align::Center);
+        expander.add_prefix(&bus_icon);
 
         // --- Volume row ---
         let vol_row = adw::ActionRow::builder().title("Volume").build();
@@ -55,7 +59,7 @@ pub fn build() -> adw::PreferencesGroup {
             .orientation(gtk::Orientation::Horizontal)
             .hexpand(true)
             .valign(gtk::Align::Center)
-            .width_request(200)
+            .width_request(150)
             .build();
         scale.set_range(0.0, 1.5);
         scale.set_increments(0.01, 0.05);
@@ -75,21 +79,17 @@ pub fn build() -> adw::PreferencesGroup {
         expander.add_row(&vol_row);
 
         // --- Route-to row ---
-        // Build the target list: (None), physical sinks, other buses
         let mut route_labels: Vec<String> = Vec::new();
         let mut route_targets: Vec<Option<BusTarget>> = Vec::new();
 
-        // (None) entry
         route_labels.push("(None)".into());
         route_targets.push(None);
 
-        // Physical sinks
         for phys in &physical_sinks {
             route_labels.push(phys.name.clone());
             route_targets.push(Some(BusTarget::PhysicalSink(phys.name.clone())));
         }
 
-        // Other zos-* buses (excluding self)
         for other_cfg in &bus_configs {
             if other_cfg.name == bus_name {
                 continue;
@@ -103,7 +103,6 @@ pub fn build() -> adw::PreferencesGroup {
             route_model.append(label);
         }
 
-        // Determine current routing to pre-select
         let current_routing = pipewire::get_bus_routing(&bus_name);
         let mut route_selected: u32 = 0;
         if let Some(ref target_name) = current_routing {
@@ -139,7 +138,6 @@ pub fn build() -> adw::PreferencesGroup {
                         pipewire::route_bus_to_target(&bus_name_for_route, target);
                     }
                     None => {
-                        // (None) — disconnect by routing to an empty physical sink
                         pipewire::route_bus_to_target(
                             &bus_name_for_route,
                             &BusTarget::PhysicalSink(String::new()),
@@ -154,7 +152,7 @@ pub fn build() -> adw::PreferencesGroup {
         let remove_row = adw::ActionRow::builder().title("Remove Bus").build();
 
         let remove_btn = gtk::Button::builder()
-            .label("Remove Bus")
+            .label("Remove")
             .valign(gtk::Align::Center)
             .css_classes(["destructive-action"])
             .build();
@@ -169,7 +167,7 @@ pub fn build() -> adw::PreferencesGroup {
             configs.retain(|c| c.name != bus_name_for_remove);
             pipewire::save_bus_configs(&configs);
 
-            btn.set_label("Removed - reopen page");
+            btn.set_label("Removed");
             btn.set_sensitive(false);
         });
 
@@ -181,6 +179,10 @@ pub fn build() -> adw::PreferencesGroup {
 
     // --- Add Bus button row ---
     let add_row = adw::ActionRow::builder().title("Create New Bus").build();
+
+    let add_icon = gtk::Image::from_icon_name("list-add-symbolic");
+    add_icon.set_valign(gtk::Align::Center);
+    add_row.add_prefix(&add_icon);
 
     let add_btn = gtk::Button::builder()
         .label("Add Bus")
@@ -295,7 +297,7 @@ fn show_add_bus_dialog(btn: &gtk::Button, existing_configs: &[BusConfig]) {
         pipewire::save_bus_configs(&configs);
 
         dialog_clone.close();
-        add_btn_ref.set_label("Created - reopen page");
+        add_btn_ref.set_label("Created");
         add_btn_ref.set_sensitive(false);
     });
 

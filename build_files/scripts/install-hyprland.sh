@@ -50,6 +50,13 @@ dnf5 install -y \
     qt6ct \
     papirus-icon-theme
 
+# --- Hyprland development headers (for hyprshell plugin compilation) ---
+# Cannot use dnf5 because mesa-libgbm-devel conflicts with Bazzite's Terra mesa.
+# hyprland-devel is headers-only — the mesa dep is only needed for building Hyprland itself.
+dnf5 download hyprland-devel --destdir /tmp/
+rpm -ivh --nodeps /tmp/hyprland-devel*.rpm
+rm -f /tmp/hyprland-devel*.rpm
+
 # --- HyprPanel (Ubuntu-style panel with quick settings, replaces waybar+swaync+blueman+nm-applet) ---
 # Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
 dnf5 install -y \
@@ -117,5 +124,8 @@ cp /ctx/system_files/usr/share/zos/version /usr/share/zos/version
 cp -r /ctx/system_files/etc/skel/.config/hypr /etc/skel/.config/
 cp -r /ctx/system_files/etc/skel/.config/waybar /etc/skel/.config/
 cp -r /ctx/system_files/etc/skel/.config/wlogout /etc/skel/.config/
+
+# --- Enable speech-dispatcher socket for Flatpak apps (Floorp/Firefox) ---
+systemctl --global enable speech-dispatcher.socket
 
 echo "Hyprland installation complete."

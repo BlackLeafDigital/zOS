@@ -15,7 +15,6 @@ pub enum Page {
     Display,
     Audio,
     Appearance,
-    Panel,
     Input,
     Network,
     Dock,
@@ -30,7 +29,6 @@ impl Page {
             Page::Display => "Display",
             Page::Audio => "Audio",
             Page::Appearance => "Appearance",
-            Page::Panel => "Panel",
             Page::Input => "Input",
             Page::Network => "Network",
             Page::Dock => "Dock",
@@ -42,13 +40,12 @@ impl Page {
     fn icon(self) -> &'static str {
         match self {
             Page::Overview => "user-home-symbolic",
-            Page::Display => "video-display-symbolic",
+            Page::Display => "preferences-desktop-display-symbolic",
             Page::Audio => "audio-volume-high-symbolic",
-            Page::Appearance => "applications-graphics-symbolic",
-            Page::Panel => "view-app-grid-symbolic",
-            Page::Input => "input-keyboard-symbolic",
+            Page::Appearance => "preferences-desktop-wallpaper-symbolic",
+            Page::Input => "preferences-desktop-keyboard-symbolic",
             Page::Network => "network-wireless-symbolic",
-            Page::Dock => "view-paged-symbolic",
+            Page::Dock => "go-down-symbolic",
             Page::Power => "system-shutdown-symbolic",
             Page::Boot => "drive-harddisk-symbolic",
         }
@@ -60,7 +57,6 @@ impl Page {
             Page::Display => "display",
             Page::Audio => "audio",
             Page::Appearance => "appearance",
-            Page::Panel => "panel",
             Page::Input => "input",
             Page::Network => "network",
             Page::Dock => "dock",
@@ -75,7 +71,6 @@ const ALL_PAGES: &[Page] = &[
     Page::Display,
     Page::Audio,
     Page::Appearance,
-    Page::Panel,
     Page::Input,
     Page::Network,
     Page::Dock,
@@ -143,6 +138,7 @@ impl SimpleComponent for App {
                 .build();
 
             let icon = gtk::Image::from_icon_name(page.icon());
+            icon.set_pixel_size(24);
             let label = gtk::Label::new(Some(page.label()));
             row_box.append(&icon);
             row_box.append(&label);
@@ -182,9 +178,6 @@ impl SimpleComponent for App {
 
         let appearance_page = pages::appearance::build();
         stack.add_named(&appearance_page, Some(Page::Appearance.stack_name()));
-
-        let panel_page = pages::panel::build();
-        stack.add_named(&panel_page, Some(Page::Panel.stack_name()));
 
         let input_page = pages::input::build();
         stack.add_named(&input_page, Some(Page::Input.stack_name()));
