@@ -51,9 +51,7 @@ pub fn build() -> adw::PreferencesGroup {
     let label_strs: Vec<&str> = dropdown_labels.iter().map(|s| s.as_str()).collect();
 
     for stream in &streams {
-        let row = adw::ActionRow::builder()
-            .title(&stream.name)
-            .build();
+        let row = adw::ActionRow::builder().title(&stream.name).build();
 
         let stream_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
         stream_icon.set_valign(gtk::Align::Center);

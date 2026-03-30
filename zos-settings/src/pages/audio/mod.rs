@@ -156,9 +156,7 @@ fn build_tools_section() -> gtk::Box {
         .margin_bottom(16)
         .build();
 
-    let group = adw::PreferencesGroup::builder()
-        .title("Tools")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Tools").build();
 
     let graph_row = adw::ActionRow::builder()
         .title("Open Audio Graph")

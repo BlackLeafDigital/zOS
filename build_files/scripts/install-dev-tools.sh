@@ -141,12 +141,14 @@ chmod +x /usr/bin/fx
 
 # --- CUDA Toolkit (NVIDIA variant only) ---
 if command -v nvidia-smi &>/dev/null; then
-    # In ostree/bootc images: /usr/local -> /var/usrlocal, /opt -> /var/opt
-    mkdir -p /var/usrlocal /var/opt
     dnf5 config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64/cuda-fedora43.repo
     dnf5 install -y cuda-toolkit
+    # CUDA installs to /usr/local/cuda-13.2 -> /var/usrlocal/cuda-13.2.
+    # /var is NOT part of the immutable image in bootc/ostree, so these files
+    # vanish on updates. Relocate under /usr/lib/cuda which is immutable.
+    mv /var/usrlocal/cuda-13.2 /usr/lib/cuda
     cat > /etc/profile.d/cuda.sh << 'EOF'
-export CUDA_HOME=/usr/local/cuda
+export CUDA_HOME=/usr/lib/cuda
 export PATH="${CUDA_HOME}/bin:${PATH}"
 EOF
 fi

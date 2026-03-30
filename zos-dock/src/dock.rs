@@ -5,7 +5,10 @@ use crate::hypr::{self, HyprWindow};
 use crate::hypr_events::{self, HyprEvent};
 use crate::icons::IconResolver;
 use iced::widget::{center, column, container, mouse_area, row, svg, text, tooltip, Space};
-use iced::{event, Background, Border, Color, Element, Event, Length, Subscription, Task, Theme};
+use iced::{
+    event, gradient, Background, Border, Color, ContentFit, Element, Event, Gradient, Length,
+    Radians, Subscription, Task, Theme,
+};
 use iced_anim::Spring;
 use iced_layershell::actions::ActionCallback;
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
@@ -28,6 +31,7 @@ const SURFACE_COLOR: Color = Color {
     b: 0x44 as f32 / 255.0,
     a: 1.0,
 };
+#[allow(dead_code)]
 const ACCENT_BLUE: Color = Color {
     r: 0x89 as f32 / 255.0,
     g: 0xB4 as f32 / 255.0,
@@ -45,6 +49,12 @@ const SEPARATOR_COLOR: Color = Color {
     g: 0x5B as f32 / 255.0,
     b: 0x70 as f32 / 255.0,
     a: 0.6,
+};
+const INDICATOR_COLOR: Color = Color {
+    r: 0x6C as f32 / 255.0,
+    g: 0x70 as f32 / 255.0,
+    b: 0x86 as f32 / 255.0,
+    a: 1.0,
 };
 
 /// A single item displayed in the dock.
@@ -124,6 +134,8 @@ pub struct Dock {
     pub last_trigger_y: Option<f32>,
     /// Whether the current show attempt was triggered by a fast downward slam.
     pub is_slam: bool,
+    /// Phase for animated focused-app indicator gradient (0.0–360.0 degrees).
+    pub indicator_phase: f32,
 }
 
 /// Messages handled by the dock.
@@ -185,6 +197,7 @@ pub fn boot() -> Dock {
         minimize_reveal_timer: None,
         last_trigger_y: None,
         is_slam: false,
+        indicator_phase: 0.0,
     };
     dock.rebuild_items(&windows);
     dock
@@ -208,6 +221,8 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 dock.slide_offset.update(iced_anim::Event::Tick(now));
                 any_energy = true;
             }
+            // Advance rainbow indicator phase (~30°/sec at 30fps).
+            dock.indicator_phase = (dock.indicator_phase + 1.0) % 360.0;
             // Check reveal timer — adaptive dwell time based on context
             let mut hidden_changed = false;
             if let Some(show_start) = dock.show_timer {
@@ -551,14 +566,16 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         let icon_widget: Element<'_, Message> = if let Some(path) = &item.icon_path {
             if path.extension().and_then(|e| e.to_str()) == Some("svg") {
                 svg(svg::Handle::from_path(path))
-                    .width(Length::Fixed(scaled_size as f32))
+                    .width(Length::Fixed(icon_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
+                    .content_fit(ContentFit::Cover)
                     .opacity(icon_opacity)
                     .into()
             } else {
                 iced::widget::image(path.to_string_lossy().to_string())
-                    .width(Length::Fixed(scaled_size as f32))
+                    .width(Length::Fixed(icon_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
+                    .content_fit(ContentFit::Cover)
                     .opacity(icon_opacity)
                     .into()
             }
@@ -582,11 +599,11 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
             container(
                 center(
                     text(label)
-                        .size(scaled_size as f32 * 0.5)
+                        .size(icon_size as f32 * 0.5)
                         .color(fallback_text_color),
                 )
-                .width(Length::Fixed(scaled_size as f32))
-                .height(Length::Fixed(scaled_size as f32)),
+                .width(Length::Fixed(icon_size as f32))
+                .height(Length::Fixed(icon_size as f32)),
             )
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(fallback_bg_color)),
@@ -600,51 +617,66 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
             .into()
         };
 
-        // Active indicator dot below the icon.
+        // Active indicator below the icon: animated pill for focused, dot for running.
         let dot: Element<'_, Message> = if item.minimized {
-            // Minimized items get a dimmed/muted dot.
-            container(Space::new().width(6).height(6))
+            container(Space::new().width(6).height(4))
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Color(SEPARATOR_COLOR)),
                     border: Border {
                         color: Color::TRANSPARENT,
                         width: 0.0,
-                        radius: 3.0.into(),
+                        radius: 2.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else if item.is_focused(&dock.active_address) {
+            let phase = dock.indicator_phase;
+            container(Space::new().width(16).height(4))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(Background::Gradient(Gradient::Linear(
+                        gradient::Linear::new(Radians(0.0))
+                            .add_stop(0.0, hsl_to_color(phase, 0.8, 0.7))
+                            .add_stop(0.5, hsl_to_color(phase + 120.0, 0.8, 0.7))
+                            .add_stop(1.0, hsl_to_color(phase + 240.0, 0.8, 0.7)),
+                    ))),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 2.0.into(),
                     },
                     ..Default::default()
                 })
                 .into()
         } else if item.is_running() {
-            let dot_color = if item.is_focused(&dock.active_address) {
-                ACCENT_BLUE
-            } else {
-                SURFACE_COLOR
-            };
-            container(Space::new().width(6).height(6))
+            container(Space::new().width(6).height(4))
                 .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(dot_color)),
+                    background: Some(Background::Color(INDICATOR_COLOR)),
                     border: Border {
                         color: Color::TRANSPARENT,
                         width: 0.0,
-                        radius: 3.0.into(),
+                        radius: 2.0.into(),
                     },
                     ..Default::default()
                 })
                 .into()
         } else {
-            Space::new().width(6).height(6).into()
+            Space::new().width(6).height(4).into()
         };
 
         let item_column = column![icon_widget, dot]
             .spacing(2)
             .align_x(iced::Alignment::Center);
 
-        let item_widget = mouse_area(container(item_column).padding(2).style(
-            move |_theme: &Theme| container::Style {
-                background: None,
-                ..Default::default()
-            },
-        ))
+        let item_widget = mouse_area(
+            container(item_column)
+                .width(Length::Fixed(icon_size as f32 + 4.0))
+                .padding(2)
+                .style(move |_theme: &Theme| container::Style {
+                    background: None,
+                    ..Default::default()
+                }),
+        )
         .on_press(Message::ItemClicked(i))
         .on_right_press(Message::ItemRightClicked(i));
 
@@ -713,6 +745,12 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
         event::listen().map(Message::IcedEvent),
     ];
 
+    let has_focused = !dock.hidden
+        && dock
+            .items
+            .iter()
+            .any(|item| item.is_focused(&dock.active_address));
+
     // When animating, tick at ~60fps for smooth spring physics.
     if any_animating
         || dock.slide_offset.has_energy()
@@ -721,6 +759,11 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     {
         subs.push(
             iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
+        );
+    } else if has_focused {
+        // Slower tick for rainbow indicator animation (~30fps).
+        subs.push(
+            iced::time::every(Duration::from_millis(33)).map(|_| Message::Tick(Instant::now())),
         );
     }
 
@@ -1097,5 +1140,32 @@ fn app_id_to_name(app_id: &str) -> String {
     match chars.next() {
         Some(c) => c.to_uppercase().to_string() + chars.as_str(),
         None => app_id.to_string(),
+    }
+}
+
+/// Convert HSL values to an iced Color. Hue in degrees (0–360), saturation/lightness in 0.0–1.0.
+fn hsl_to_color(hue: f32, saturation: f32, lightness: f32) -> Color {
+    let h = ((hue % 360.0) + 360.0) % 360.0;
+    let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = lightness - c / 2.0;
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    Color {
+        r: r + m,
+        g: g + m,
+        b: b + m,
+        a: 1.0,
     }
 }
