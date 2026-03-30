@@ -65,9 +65,7 @@ fn build_single_strip(
     strip.add_css_class("mixer-strip-input");
 
     // --- Header ---
-    let header = gtk::Label::builder()
-        .label(&config.description)
-        .build();
+    let header = gtk::Label::builder().label(&config.description).build();
     header.add_css_class("mixer-strip-header");
     strip.append(&header);
 
@@ -104,7 +102,7 @@ fn build_single_strip(
     let vol_group = adw::PreferencesGroup::builder().title("Volume").build();
     let vol_row = adw::ActionRow::builder().build();
     let vol_label = gtk::Label::builder()
-        .label(&format!("{}%", (current_vol * 100.0).round() as i32))
+        .label(format!("{}%", (current_vol * 100.0).round() as i32))
         .valign(gtk::Align::Center)
         .width_chars(5)
         .build();

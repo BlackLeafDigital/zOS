@@ -721,7 +721,10 @@ pub fn load_output_configs() -> Vec<OutputConfig> {
 
 fn default_output_configs() -> Vec<OutputConfig> {
     let sinks = list_sinks();
-    let physical: Vec<_> = sinks.iter().filter(|s| !s.name.starts_with("zos-")).collect();
+    let physical: Vec<_> = sinks
+        .iter()
+        .filter(|s| !s.name.starts_with("zos-"))
+        .collect();
     let first = physical.first().map(|s| s.name.clone()).unwrap_or_default();
     let second = physical.get(1).map(|s| s.name.clone()).unwrap_or_default();
 
@@ -730,9 +733,18 @@ fn default_output_configs() -> Vec<OutputConfig> {
         description: "A1".into(),
         physical_device: first,
         eq_enabled: false,
-        eq_low: EqBand { freq: 200.0, gain: 0.0 },
-        eq_mid: EqBand { freq: 1000.0, gain: 0.0 },
-        eq_high: EqBand { freq: 8000.0, gain: 0.0 },
+        eq_low: EqBand {
+            freq: 200.0,
+            gain: 0.0,
+        },
+        eq_mid: EqBand {
+            freq: 1000.0,
+            gain: 0.0,
+        },
+        eq_high: EqBand {
+            freq: 8000.0,
+            gain: 0.0,
+        },
     }];
     if !second.is_empty() {
         outputs.push(OutputConfig {
@@ -740,9 +752,18 @@ fn default_output_configs() -> Vec<OutputConfig> {
             description: "A2".into(),
             physical_device: second,
             eq_enabled: false,
-            eq_low: EqBand { freq: 200.0, gain: 0.0 },
-            eq_mid: EqBand { freq: 1000.0, gain: 0.0 },
-            eq_high: EqBand { freq: 8000.0, gain: 0.0 },
+            eq_low: EqBand {
+                freq: 200.0,
+                gain: 0.0,
+            },
+            eq_mid: EqBand {
+                freq: 1000.0,
+                gain: 0.0,
+            },
+            eq_high: EqBand {
+                freq: 8000.0,
+                gain: 0.0,
+            },
         });
     }
     outputs

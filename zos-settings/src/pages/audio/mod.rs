@@ -213,9 +213,7 @@ fn build_apply_button(
         .margin_bottom(16)
         .build();
 
-    let btn = gtk::Button::builder()
-        .label("Apply")
-        .build();
+    let btn = gtk::Button::builder().label("Apply").build();
     btn.add_css_class("suggested-action");
 
     let inputs = input_configs.clone();

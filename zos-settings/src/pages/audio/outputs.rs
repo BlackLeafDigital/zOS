@@ -56,9 +56,7 @@ fn build_single_strip(
     strip.add_css_class("mixer-strip-output");
 
     // --- Header ---
-    let header = gtk::Label::builder()
-        .label(&config.description)
-        .build();
+    let header = gtk::Label::builder().label(&config.description).build();
     header.add_css_class("mixer-strip-header");
     strip.append(&header);
 
@@ -99,7 +97,7 @@ fn build_single_strip(
     let vol_group = adw::PreferencesGroup::builder().title("Volume").build();
     let vol_row = adw::ActionRow::builder().build();
     let vol_label = gtk::Label::builder()
-        .label(&format!("{}%", (current_vol * 100.0).round() as i32))
+        .label(format!("{}%", (current_vol * 100.0).round() as i32))
         .valign(gtk::Align::Center)
         .width_chars(5)
         .build();
@@ -172,16 +170,43 @@ fn build_single_strip(
     eq_group.add(&eq_switch_row);
 
     // Low shelf band
-    build_eq_band(&eq_group, "Low", config.eq_low.freq, config.eq_low.gain,
-        20.0, 500.0, idx, output_configs, EqBandTarget::Low);
+    build_eq_band(
+        &eq_group,
+        "Low",
+        config.eq_low.freq,
+        config.eq_low.gain,
+        20.0,
+        500.0,
+        idx,
+        output_configs,
+        EqBandTarget::Low,
+    );
 
     // Mid peak band
-    build_eq_band(&eq_group, "Mid", config.eq_mid.freq, config.eq_mid.gain,
-        200.0, 8000.0, idx, output_configs, EqBandTarget::Mid);
+    build_eq_band(
+        &eq_group,
+        "Mid",
+        config.eq_mid.freq,
+        config.eq_mid.gain,
+        200.0,
+        8000.0,
+        idx,
+        output_configs,
+        EqBandTarget::Mid,
+    );
 
     // High shelf band
-    build_eq_band(&eq_group, "High", config.eq_high.freq, config.eq_high.gain,
-        2000.0, 20000.0, idx, output_configs, EqBandTarget::High);
+    build_eq_band(
+        &eq_group,
+        "High",
+        config.eq_high.freq,
+        config.eq_high.gain,
+        2000.0,
+        20000.0,
+        idx,
+        output_configs,
+        EqBandTarget::High,
+    );
 
     strip.append(&eq_group);
 
@@ -195,6 +220,7 @@ enum EqBandTarget {
     High,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_eq_band(
     group: &adw::PreferencesGroup,
     label: &str,
@@ -208,10 +234,10 @@ fn build_eq_band(
 ) {
     // Frequency row
     let freq_row = adw::ActionRow::builder()
-        .title(&format!("{label} Freq"))
+        .title(format!("{label} Freq"))
         .build();
     let freq_val_label = gtk::Label::builder()
-        .label(&format!("{:.0} Hz", freq))
+        .label(format!("{:.0} Hz", freq))
         .valign(gtk::Align::Center)
         .width_chars(8)
         .build();
@@ -244,10 +270,10 @@ fn build_eq_band(
 
     // Gain row
     let gain_row = adw::ActionRow::builder()
-        .title(&format!("{label} Gain"))
+        .title(format!("{label} Gain"))
         .build();
     let gain_val_label = gtk::Label::builder()
-        .label(&format!("{:.1} dB", gain))
+        .label(format!("{:.1} dB", gain))
         .valign(gtk::Align::Center)
         .width_chars(8)
         .build();
@@ -387,9 +413,18 @@ fn show_add_dialog(btn: &gtk::Button, configs: &Rc<RefCell<Vec<OutputConfig>>>) 
             description,
             physical_device: String::new(),
             eq_enabled: false,
-            eq_low: pipewire::EqBand { freq: 200.0, gain: 0.0 },
-            eq_mid: pipewire::EqBand { freq: 1000.0, gain: 0.0 },
-            eq_high: pipewire::EqBand { freq: 8000.0, gain: 0.0 },
+            eq_low: pipewire::EqBand {
+                freq: 200.0,
+                gain: 0.0,
+            },
+            eq_mid: pipewire::EqBand {
+                freq: 1000.0,
+                gain: 0.0,
+            },
+            eq_high: pipewire::EqBand {
+                freq: 8000.0,
+                gain: 0.0,
+            },
         };
         configs_clone.borrow_mut().push(new_output);
 

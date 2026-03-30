@@ -40,7 +40,7 @@ pub fn search(query: &str) -> Vec<PackageResult> {
     {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(0) {
+            for line in stdout.lines() {
                 let parts: Vec<&str> = line.splitn(3, '\t').collect();
                 if parts.len() >= 2 {
                     let app_id = parts[0].trim();
@@ -184,7 +184,7 @@ pub fn search_and_install(query: &str) -> Result<()> {
             .iter()
             .filter(|r| &r.source == source)
             .find(|r| r.name.to_lowercase() == query.to_lowercase())
-            .or_else(|| results.iter().filter(|r| &r.source == source).next())
+            .or_else(|| results.iter().find(|r| &r.source == source))
         {
             by_source.push(best.clone());
         }
