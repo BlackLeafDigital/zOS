@@ -139,4 +139,16 @@ rm -rf /tmp/yazi /tmp/yazi.zip
 gh_curl -o /usr/bin/fx https://github.com/antonmedv/fx/releases/latest/download/fx_linux_amd64
 chmod +x /usr/bin/fx
 
+# --- CUDA Toolkit (NVIDIA variant only) ---
+if command -v nvidia-smi &>/dev/null; then
+    # In ostree/bootc images: /usr/local -> /var/usrlocal, /opt -> /var/opt
+    mkdir -p /var/usrlocal /var/opt
+    dnf5 config-manager addrepo --from-repofile=https://developer.download.nvidia.com/compute/cuda/repos/fedora43/x86_64/cuda-fedora43.repo
+    dnf5 install -y cuda-toolkit
+    cat > /etc/profile.d/cuda.sh << 'EOF'
+export CUDA_HOME=/usr/local/cuda
+export PATH="${CUDA_HOME}/bin:${PATH}"
+EOF
+fi
+
 echo "Developer tools installation complete."
