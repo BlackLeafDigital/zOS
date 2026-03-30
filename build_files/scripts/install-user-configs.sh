@@ -19,9 +19,11 @@ cp /ctx/system_files/usr/share/zos/zshrc /usr/share/zos/zshrc
 cp /ctx/system_files/usr/share/zos/config-versions.json /usr/share/zos/config-versions.json
 
 # Source zOS config from global zshrc (loaded before ~/.zshrc)
-echo '' >> /etc/zshrc
-echo '# --- zOS shell configuration ---' >> /etc/zshrc
-echo '[ -f /usr/share/zos/zshrc ] && source /usr/share/zos/zshrc' >> /etc/zshrc
+{
+    echo ''
+    echo '# --- zOS shell configuration ---'
+    echo '[ -f /usr/share/zos/zshrc ] && source /usr/share/zos/zshrc'
+} >> /etc/zshrc
 
 # --- Oh My Zsh + Powerlevel10k (baked into skel for instant setup) ---
 export ZSH="/etc/skel/.oh-my-zsh"

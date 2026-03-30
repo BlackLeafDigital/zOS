@@ -113,10 +113,64 @@
     padding: 16px;
 }
 
-/* --- Audio mixer --- */
+/* --- Audio mixer strips --- */
 .mixer-bus-label {
     font-weight: 600;
     color: #cba6f7;
+}
+
+.mixer-strip {
+    background-color: #313244;
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 170px;
+}
+
+.mixer-strip-input {
+    border-top: 3px solid #89b4fa;
+}
+
+.mixer-strip-output {
+    border-top: 3px solid #cba6f7;
+}
+
+.mixer-strip-header {
+    font-weight: 700;
+    font-size: 1.1em;
+    color: #cdd6f4;
+    margin-bottom: 4px;
+}
+
+.mixer-divider {
+    background-color: #45475a;
+    min-width: 2px;
+    margin-start: 12px;
+    margin-end: 12px;
+}
+
+.mixer-section-label {
+    color: #a6adc8;
+    font-size: 0.85em;
+    font-weight: 600;
+    margin-top: 6px;
+}
+
+.mixer-mute-btn {
+    border-radius: 4px;
+}
+
+.mixer-mute-btn.muted {
+    background-color: alpha(#f38ba8, 0.3);
+    color: #f38ba8;
+}
+
+.mixer-app-indicator {
+    color: #a6adc8;
+    font-size: 0.8em;
+    padding: 2px 6px;
+    background-color: alpha(#89b4fa, 0.1);
+    border-radius: 4px;
+    margin-top: 2px;
 }
 
 /* --- Network signal --- */

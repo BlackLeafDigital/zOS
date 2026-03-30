@@ -51,6 +51,7 @@ brew install uv
 if [ ! -d "$HOME/.rustup" ]; then
     echo "[zOS] Setting up Rust toolchain via rustup..."
     rustup-init -y --default-toolchain stable --no-modify-path
+    # shellcheck source=/dev/null
     source "$HOME/.cargo/env"
 fi
 

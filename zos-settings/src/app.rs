@@ -40,11 +40,11 @@ impl Page {
     fn icon(self) -> &'static str {
         match self {
             Page::Overview => "user-home-symbolic",
-            Page::Display => "preferences-desktop-display-symbolic",
+            Page::Display => "video-display-symbolic",
             Page::Audio => "audio-volume-high-symbolic",
-            Page::Appearance => "preferences-desktop-wallpaper-symbolic",
-            Page::Input => "preferences-desktop-keyboard-symbolic",
-            Page::Network => "network-wireless-symbolic",
+            Page::Appearance => "applications-graphics-symbolic",
+            Page::Input => "input-keyboard-symbolic",
+            Page::Network => "network-wireless-signal-excellent-symbolic",
             Page::Dock => "go-down-symbolic",
             Page::Power => "system-shutdown-symbolic",
             Page::Boot => "drive-harddisk-symbolic",
@@ -103,7 +103,7 @@ impl SimpleComponent for App {
     fn init_root() -> Self::Root {
         adw::ApplicationWindow::builder()
             .title("zOS Settings")
-            .default_width(900)
+            .default_width(1100)
             .default_height(600)
             .build()
     }
