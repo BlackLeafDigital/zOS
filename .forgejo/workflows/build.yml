@@ -13,6 +13,8 @@ on:
       - 'zos-core/**'
       - 'zos-cli/**'
       - 'zos-settings/**'
+      - 'zos-dock/**'
+      - 'zos-tray/**'
       - 'disk_config/**'
       - 'Justfile'
   pull_request:
