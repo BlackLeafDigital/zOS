@@ -566,14 +566,14 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         let icon_widget: Element<'_, Message> = if let Some(path) = &item.icon_path {
             if path.extension().and_then(|e| e.to_str()) == Some("svg") {
                 svg(svg::Handle::from_path(path))
-                    .width(Length::Fixed(icon_size as f32))
+                    .width(Length::Fixed(scaled_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
                     .content_fit(ContentFit::Cover)
                     .opacity(icon_opacity)
                     .into()
             } else {
                 iced::widget::image(path.to_string_lossy().to_string())
-                    .width(Length::Fixed(icon_size as f32))
+                    .width(Length::Fixed(scaled_size as f32))
                     .height(Length::Fixed(scaled_size as f32))
                     .content_fit(ContentFit::Cover)
                     .opacity(icon_opacity)
@@ -599,11 +599,11 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
             container(
                 center(
                     text(label)
-                        .size(icon_size as f32 * 0.5)
+                        .size(scaled_size as f32 * 0.5)
                         .color(fallback_text_color),
                 )
-                .width(Length::Fixed(icon_size as f32))
-                .height(Length::Fixed(icon_size as f32)),
+                .width(Length::Fixed(scaled_size as f32))
+                .height(Length::Fixed(scaled_size as f32)),
             )
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(fallback_bg_color)),
@@ -670,7 +670,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
 
         let item_widget = mouse_area(
             container(item_column)
-                .width(Length::Fixed(icon_size as f32 + 4.0))
+                .width(Length::Fixed(scaled_size as f32 + 4.0))
                 .padding(2)
                 .style(move |_theme: &Theme| container::Style {
                     background: None,
@@ -890,6 +890,10 @@ impl Dock {
             let wm_class = entry
                 .map(|e| e.wm_class.to_lowercase())
                 .unwrap_or_else(|| key.clone());
+
+            // Mark both app_id and wm_class as seen so running windows
+            // with a different class name don't create duplicates.
+            seen.insert(wm_class.clone());
 
             let item_windows = window_groups.remove(&wm_class).unwrap_or_default();
 

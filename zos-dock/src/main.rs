@@ -18,7 +18,7 @@ fn main() -> iced_layershell::Result {
                 anchor: Anchor::Bottom | Anchor::Left | Anchor::Right,
                 layer: Layer::Top,
                 exclusive_zone: 0,
-                size: Some((0, 68)),
+                size: Some((0, 100)),
                 margin: (0, 0, 8, 0),
                 keyboard_interactivity: KeyboardInteractivity::None,
                 events_transparent: false,
