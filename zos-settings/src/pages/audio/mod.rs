@@ -1,4 +1,4 @@
-// === pages/audio/mod.rs — Voicemeeter-style mixer layout ===
+// === pages/audio/mod.rs — Voicemeeter-style responsive mixer layout ===
 
 mod inputs;
 mod outputs;
@@ -12,11 +12,12 @@ use relm4::gtk;
 
 use crate::services::pipewire::{self, InputConfig};
 
-/// Build the audio page with a Voicemeeter Potato-style mixer.
+/// Build the audio page with a responsive Voicemeeter Potato-style mixer.
 ///
 /// Layout:
 ///   Top:    App routing row (compact stream → input assignments)
 ///   Middle: [Virtual Input strips] | divider | [Virtual Output strips]
+///           — switches to vertical stacking on narrow windows via AdwBreakpoint
 ///   Bottom: Apply button
 pub fn build() -> gtk::Box {
     let input_configs = Rc::new(RefCell::new(pipewire::load_input_configs()));
@@ -40,40 +41,88 @@ pub fn build() -> gtk::Box {
         .vexpand(true)
         .build();
 
-    // Left section: Virtual Input strips
-    let inputs_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
+    // Input section header + strips (no inner ScrolledWindow — page-level scroll handles it)
+    let inputs_section = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
         .hexpand(true)
-        .vexpand(true)
+        .spacing(4)
         .build();
-    inputs_scroll.set_child(Some(&inputs::build_strips(&input_configs, &output_configs)));
-    mixer_box.append(&inputs_scroll);
+    let inputs_label = gtk::Label::builder()
+        .label("Virtual Inputs")
+        .halign(gtk::Align::Start)
+        .margin_start(8)
+        .build();
+    inputs_label.add_css_class("mixer-section-label");
+    inputs_section.append(&inputs_label);
+    inputs_section.append(&inputs::build_strips(&input_configs, &output_configs));
+    mixer_box.append(&inputs_section);
 
     // Vertical divider
     let divider = gtk::Separator::new(gtk::Orientation::Vertical);
     divider.add_css_class("mixer-divider");
     mixer_box.append(&divider);
 
-    // Right section: Virtual Output strips
-    let outputs_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
+    // Output section header + strips
+    let outputs_section = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
         .hexpand(true)
-        .vexpand(true)
+        .spacing(4)
         .build();
-    outputs_scroll.set_child(Some(&outputs::build_strips(&output_configs)));
-    mixer_box.append(&outputs_scroll);
+    let outputs_label = gtk::Label::builder()
+        .label("Virtual Outputs")
+        .halign(gtk::Align::Start)
+        .margin_start(8)
+        .build();
+    outputs_label.add_css_class("mixer-section-label");
+    outputs_section.append(&outputs_label);
+    outputs_section.append(&outputs::build_strips(&output_configs));
+    mixer_box.append(&outputs_section);
 
     wrapper.append(&mixer_box);
 
     // --- Bottom: Apply button ---
     wrapper.append(&build_apply_button(&input_configs, &output_configs));
 
+    // --- Responsive: wrap in BreakpointBin ---
+    let breakpoint_bin = adw::BreakpointBin::builder()
+        .width_request(300)
+        .height_request(200)
+        .child(&wrapper)
+        .build();
+
+    let bp = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 600sp").expect("valid breakpoint condition"),
+    );
+
+    let mixer_box_clone = mixer_box.clone();
+    let divider_clone = divider.clone();
+    bp.connect_apply(move |_| {
+        mixer_box_clone.set_orientation(gtk::Orientation::Vertical);
+        divider_clone.set_visible(false);
+    });
+
+    let mixer_box_clone = mixer_box;
+    let divider_clone = divider;
+    bp.connect_unapply(move |_| {
+        mixer_box_clone.set_orientation(gtk::Orientation::Horizontal);
+        divider_clone.set_visible(true);
+    });
+
+    breakpoint_bin.add_breakpoint(bp);
+
+    // Single page-level scroll
+    let scrolled = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true)
+        .vexpand(true)
+        .child(&breakpoint_bin)
+        .build();
+
     let outer = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
-    outer.append(&wrapper);
+    outer.append(&scrolled);
     outer
 }
 

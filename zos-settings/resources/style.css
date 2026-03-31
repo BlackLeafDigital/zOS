@@ -123,7 +123,8 @@
     background-color: #313244;
     border-radius: 8px;
     padding: 12px;
-    min-width: 170px;
+    min-width: 160px;
+    max-width: 320px;
 }
 
 .mixer-strip-input {

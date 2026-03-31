@@ -9,11 +9,15 @@ use relm4::gtk;
 
 use crate::services::pipewire::{self, OutputConfig};
 
-/// Build horizontal row of Virtual Output mixer strips.
-pub fn build_strips(output_configs: &Rc<RefCell<Vec<OutputConfig>>>) -> gtk::Box {
-    let container = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
+/// Build a reflowing grid of Virtual Output mixer strips.
+pub fn build_strips(output_configs: &Rc<RefCell<Vec<OutputConfig>>>) -> gtk::FlowBox {
+    let container = gtk::FlowBox::builder()
+        .homogeneous(true)
+        .min_children_per_line(1)
+        .max_children_per_line(8)
+        .column_spacing(8)
+        .row_spacing(8)
+        .selection_mode(gtk::SelectionMode::None)
         .margin_top(8)
         .margin_bottom(8)
         .margin_start(8)
@@ -25,17 +29,14 @@ pub fn build_strips(output_configs: &Rc<RefCell<Vec<OutputConfig>>>) -> gtk::Box
 
     let configs = output_configs.borrow();
     for (idx, output_cfg) in configs.iter().enumerate() {
-        container.append(&build_single_strip(
-            idx,
-            output_cfg,
-            &physical_sinks,
-            &all_sinks,
-            output_configs,
-        ));
+        container.insert(
+            &build_single_strip(idx, output_cfg, &physical_sinks, &all_sinks, output_configs),
+            -1,
+        );
     }
     drop(configs);
 
-    container.append(&build_add_button(output_configs));
+    container.insert(&build_add_button(output_configs), -1);
 
     container
 }
@@ -50,7 +51,6 @@ fn build_single_strip(
     let strip = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
-        .width_request(200)
         .build();
     strip.add_css_class("mixer-strip");
     strip.add_css_class("mixer-strip-output");
@@ -153,25 +153,29 @@ fn build_single_strip(
     });
     strip.append(&mute_btn);
 
-    // --- EQ Section (expandable) ---
-    let eq_group = adw::PreferencesGroup::builder().title("Equalizer").build();
+    // --- EQ Section (collapsible ExpanderRow) ---
+    let eq_group = adw::PreferencesGroup::new();
 
-    // EQ enable switch
-    let eq_switch_row = adw::SwitchRow::builder()
-        .title("Enable EQ")
-        .active(config.eq_enabled)
+    let eq_expander = adw::ExpanderRow::builder()
+        .title("Equalizer")
+        .show_enable_switch(true)
+        .enable_expansion(config.eq_enabled)
         .build();
+
+    let eq_icon = gtk::Image::from_icon_name("multimedia-equalizer-symbolic");
+    eq_icon.set_valign(gtk::Align::Center);
+    eq_expander.add_prefix(&eq_icon);
+
     let eq_configs = output_configs.clone();
-    eq_switch_row.connect_active_notify(move |row| {
+    eq_expander.connect_enable_expansion_notify(move |row| {
         if let Some(cfg) = eq_configs.borrow_mut().get_mut(idx) {
-            cfg.eq_enabled = row.is_active();
+            cfg.eq_enabled = row.enables_expansion();
         }
     });
-    eq_group.add(&eq_switch_row);
 
     // Low shelf band
-    build_eq_band(
-        &eq_group,
+    build_eq_band_rows(
+        &eq_expander,
         "Low",
         config.eq_low.freq,
         config.eq_low.gain,
@@ -183,8 +187,8 @@ fn build_single_strip(
     );
 
     // Mid peak band
-    build_eq_band(
-        &eq_group,
+    build_eq_band_rows(
+        &eq_expander,
         "Mid",
         config.eq_mid.freq,
         config.eq_mid.gain,
@@ -196,8 +200,8 @@ fn build_single_strip(
     );
 
     // High shelf band
-    build_eq_band(
-        &eq_group,
+    build_eq_band_rows(
+        &eq_expander,
         "High",
         config.eq_high.freq,
         config.eq_high.gain,
@@ -208,6 +212,7 @@ fn build_single_strip(
         EqBandTarget::High,
     );
 
+    eq_group.add(&eq_expander);
     strip.append(&eq_group);
 
     strip
@@ -221,8 +226,8 @@ enum EqBandTarget {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_eq_band(
-    group: &adw::PreferencesGroup,
+fn build_eq_band_rows(
+    expander: &adw::ExpanderRow,
     label: &str,
     freq: f32,
     gain: f32,
@@ -266,7 +271,7 @@ fn build_eq_band(
     });
     freq_row.add_suffix(&freq_scale);
     freq_row.add_suffix(&freq_val_label);
-    group.add(&freq_row);
+    expander.add_row(&freq_row);
 
     // Gain row
     let gain_row = adw::ActionRow::builder()
@@ -302,7 +307,7 @@ fn build_eq_band(
     });
     gain_row.add_suffix(&gain_scale);
     gain_row.add_suffix(&gain_val_label);
-    group.add(&gain_row);
+    expander.add_row(&gain_row);
 }
 
 fn build_add_button(output_configs: &Rc<RefCell<Vec<OutputConfig>>>) -> gtk::Box {

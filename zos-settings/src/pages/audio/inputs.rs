@@ -9,14 +9,18 @@ use relm4::gtk;
 
 use crate::services::pipewire::{self, InputConfig, OutputConfig};
 
-/// Build horizontal row of Virtual Input mixer strips.
+/// Build a reflowing grid of Virtual Input mixer strips.
 pub fn build_strips(
     input_configs: &Rc<RefCell<Vec<InputConfig>>>,
     output_configs: &Rc<RefCell<Vec<OutputConfig>>>,
-) -> gtk::Box {
-    let container = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
+) -> gtk::FlowBox {
+    let container = gtk::FlowBox::builder()
+        .homogeneous(true)
+        .min_children_per_line(1)
+        .max_children_per_line(8)
+        .column_spacing(8)
+        .row_spacing(8)
+        .selection_mode(gtk::SelectionMode::None)
         .margin_top(8)
         .margin_bottom(8)
         .margin_start(8)
@@ -29,20 +33,23 @@ pub fn build_strips(
 
     let configs = input_configs.borrow();
     for (idx, input_cfg) in configs.iter().enumerate() {
-        container.append(&build_single_strip(
-            idx,
-            input_cfg,
-            output_configs,
-            &all_sinks,
-            &saved_defaults,
-            &streams,
-            input_configs,
-        ));
+        container.insert(
+            &build_single_strip(
+                idx,
+                input_cfg,
+                output_configs,
+                &all_sinks,
+                &saved_defaults,
+                &streams,
+                input_configs,
+            ),
+            -1,
+        );
     }
     drop(configs);
 
     // "Add Input" button
-    container.append(&build_add_button(input_configs, output_configs));
+    container.insert(&build_add_button(input_configs, output_configs), -1);
 
     container
 }
@@ -59,7 +66,6 @@ fn build_single_strip(
     let strip = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
-        .width_request(180)
         .build();
     strip.add_css_class("mixer-strip");
     strip.add_css_class("mixer-strip-input");
