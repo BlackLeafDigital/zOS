@@ -18,6 +18,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Height of the layer-shell surface in pixels. Must match main.rs.
+const SURFACE_HEIGHT: f32 = 100.0;
+
 // --- Catppuccin Mocha colors ---
 const BG_COLOR: Color = Color {
     r: 0x18 as f32 / 255.0,
@@ -116,7 +119,7 @@ pub struct Dock {
     pub hide_timer: Option<Instant>,
     /// When the cursor entered the hidden dock trigger zone (for reveal delay).
     pub show_timer: Option<Instant>,
-    /// Animated slide offset for auto-hide (0.0 = visible, 68.0 = hidden).
+    /// Animated slide offset for auto-hide (0.0 = visible, SURFACE_HEIGHT = hidden).
     pub slide_offset: Spring<f32>,
     /// Last observed modification time of the config file.
     pub config_mtime: Option<std::time::SystemTime>,
@@ -251,7 +254,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             if let Some(timer) = dock.minimize_reveal_timer {
                 if timer.elapsed() >= Duration::from_secs(2) && dock.cursor_x.is_none() {
                     dock.hidden = true;
-                    dock.slide_offset.set_target(68.0);
+                    dock.slide_offset.set_target(SURFACE_HEIGHT);
                     dock.minimize_reveal_timer = None;
                     hidden_changed = true;
                 }
@@ -385,7 +388,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                         && dock.cursor_x.is_none()
                     {
                         dock.hidden = true;
-                        dock.slide_offset.set_target(68.0);
+                        dock.slide_offset.set_target(SURFACE_HEIGHT);
                         dock.hide_timer = None;
                     }
                 }
@@ -527,7 +530,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
     }
 
     let slide = *dock.slide_offset.value();
-    if slide > 66.0 {
+    if slide > SURFACE_HEIGHT - 2.0 {
         // Fully hidden — render transparent
         return container(Space::new())
             .width(Length::Fill)
@@ -1107,11 +1110,16 @@ impl Dock {
             .flat_map(|id| {
                 let (region_x, region_y, region_w, region_h) = if hidden && auto_hide {
                     // 12px trigger strip at the bottom of the surface (at screen edge)
-                    (0i32, 56i32, surface_width as i32, 12i32)
+                    (
+                        0i32,
+                        (SURFACE_HEIGHT as i32 - 12),
+                        surface_width as i32,
+                        12i32,
+                    )
                 } else {
                     // Only the visible centered dock area
                     let x = ((surface_width as f32 - dock_width) / 2.0).max(0.0) as i32;
-                    (x, 0i32, dock_width.ceil() as i32, 68i32)
+                    (x, 0i32, dock_width.ceil() as i32, SURFACE_HEIGHT as i32)
                 };
 
                 // Dynamic margin: 0 when hidden (surface touches screen edge), 8 when visible

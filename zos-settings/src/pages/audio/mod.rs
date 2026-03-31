@@ -38,7 +38,6 @@ pub fn build() -> gtk::Box {
         .margin_bottom(8)
         .margin_start(8)
         .margin_end(8)
-        .vexpand(true)
         .build();
 
     // Input section header + strips (no inner ScrolledWindow — page-level scroll handles it)
@@ -86,7 +85,6 @@ pub fn build() -> gtk::Box {
     // --- Responsive: wrap in BreakpointBin ---
     let breakpoint_bin = adw::BreakpointBin::builder()
         .width_request(300)
-        .height_request(200)
         .child(&wrapper)
         .build();
 

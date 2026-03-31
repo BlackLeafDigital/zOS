@@ -676,24 +676,26 @@ pub fn load_input_configs() -> Vec<InputConfig> {
 }
 
 fn default_input_configs() -> Vec<InputConfig> {
+    let outputs = load_output_configs();
+    let first_output = outputs.first().map(|o| o.name.clone()).unwrap_or_default();
     vec![
         InputConfig {
             name: "zos-main".into(),
             description: "Main".into(),
             gain: 0.0,
-            outputs: vec!["zos-out-a1".into()],
+            outputs: vec![first_output.clone()],
         },
         InputConfig {
             name: "zos-music".into(),
             description: "Music".into(),
             gain: 0.0,
-            outputs: vec!["zos-out-a1".into()],
+            outputs: vec![first_output.clone()],
         },
         InputConfig {
             name: "zos-chat".into(),
             description: "Chat / Voice".into(),
             gain: 0.0,
-            outputs: vec!["zos-out-a1".into()],
+            outputs: vec![first_output],
         },
     ]
 }
@@ -719,54 +721,66 @@ pub fn load_output_configs() -> Vec<OutputConfig> {
     default_output_configs()
 }
 
-fn default_output_configs() -> Vec<OutputConfig> {
-    let sinks = list_sinks();
-    let physical: Vec<_> = sinks
-        .iter()
-        .filter(|s| !s.name.starts_with("zos-"))
-        .collect();
-    let first = physical.first().map(|s| s.name.clone()).unwrap_or_default();
-    let second = physical.get(1).map(|s| s.name.clone()).unwrap_or_default();
+/// Convert a device name to a valid PipeWire node name slug.
+fn slugify(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
 
-    let mut outputs = vec![OutputConfig {
-        name: "zos-out-a1".into(),
-        description: "A1".into(),
-        physical_device: first,
-        eq_enabled: false,
-        eq_low: EqBand {
+fn default_eq() -> (EqBand, EqBand, EqBand) {
+    (
+        EqBand {
             freq: 200.0,
             gain: 0.0,
         },
-        eq_mid: EqBand {
+        EqBand {
             freq: 1000.0,
             gain: 0.0,
         },
-        eq_high: EqBand {
+        EqBand {
             freq: 8000.0,
             gain: 0.0,
         },
-    }];
-    if !second.is_empty() {
-        outputs.push(OutputConfig {
-            name: "zos-out-a2".into(),
-            description: "A2".into(),
-            physical_device: second,
+    )
+}
+
+fn default_output_configs() -> Vec<OutputConfig> {
+    let physical = list_physical_sinks();
+
+    if physical.is_empty() {
+        let (eq_low, eq_mid, eq_high) = default_eq();
+        return vec![OutputConfig {
+            name: "zos-out-default".into(),
+            description: "Default Output".into(),
+            physical_device: String::new(),
             eq_enabled: false,
-            eq_low: EqBand {
-                freq: 200.0,
-                gain: 0.0,
-            },
-            eq_mid: EqBand {
-                freq: 1000.0,
-                gain: 0.0,
-            },
-            eq_high: EqBand {
-                freq: 8000.0,
-                gain: 0.0,
-            },
-        });
+            eq_low,
+            eq_mid,
+            eq_high,
+        }];
     }
-    outputs
+
+    physical
+        .iter()
+        .map(|sink| {
+            let (eq_low, eq_mid, eq_high) = default_eq();
+            OutputConfig {
+                name: format!("zos-out-{}", slugify(&sink.name)),
+                description: sink.name.clone(),
+                physical_device: sink.name.clone(),
+                eq_enabled: false,
+                eq_low,
+                eq_mid,
+                eq_high,
+            }
+        })
+        .collect()
 }
 
 pub fn save_output_configs(configs: &[OutputConfig]) {
