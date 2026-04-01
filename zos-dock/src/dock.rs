@@ -1117,9 +1117,11 @@ impl Dock {
                         12i32,
                     )
                 } else {
-                    // Only the visible centered dock area
+                    // Only the visible dock pill area (bottom-aligned)
+                    let pill_height = (self.config.icon_size as f32 + 26.0).min(SURFACE_HEIGHT);
                     let x = ((surface_width as f32 - dock_width) / 2.0).max(0.0) as i32;
-                    (x, 0i32, dock_width.ceil() as i32, SURFACE_HEIGHT as i32)
+                    let y = (SURFACE_HEIGHT - pill_height) as i32;
+                    (x, y, dock_width.ceil() as i32, pill_height.ceil() as i32)
                 };
 
                 // Dynamic margin: 0 when hidden (surface touches screen edge), 8 when visible

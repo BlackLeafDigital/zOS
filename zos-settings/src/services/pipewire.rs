@@ -6,6 +6,8 @@
 
 use std::process::Command;
 
+const DEVICE_BLOCKLIST: &[&str] = &["speech-dispatcher", "dummy"];
+
 /// Describes an audio device reported by WirePlumber.
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
@@ -274,6 +276,11 @@ pub fn list_streams() -> Vec<AudioStream> {
         };
 
         if name.is_empty() {
+            continue;
+        }
+
+        let name_lower = name.to_lowercase();
+        if DEVICE_BLOCKLIST.iter().any(|b| name_lower.contains(b)) {
             continue;
         }
 
@@ -575,6 +582,314 @@ pub struct OutputConfig {
     pub eq_high: EqBand,
 }
 
+// ---------------------------------------------------------------------------
+// Unified Audio Bus config (replaces separate Input/Output split)
+// ---------------------------------------------------------------------------
+
+/// A single unified audio bus: apps route in → processing → physical device out.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AudioBusConfig {
+    pub name: String,
+    pub description: String,
+    pub gain: f32,
+    pub physical_device: String,
+    pub eq_enabled: bool,
+    pub eq_low: EqBand,
+    pub eq_mid: EqBand,
+    pub eq_high: EqBand,
+}
+
+/// Persisted UI state for the audio settings page.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct AudioUiState {
+    pub last_selected_bus: String,
+}
+
+fn audio_bus_configs_path() -> PathBuf {
+    zos_config_dir().join("audio-buses-v2.json")
+}
+
+fn audio_ui_state_path() -> PathBuf {
+    zos_config_dir().join("audio-settings.json")
+}
+
+fn pipewire_bus_input_path(name: &str) -> PathBuf {
+    pipewire_conf_dir().join(format!("10-zos-bus-{name}-input.conf"))
+}
+
+fn pipewire_bus_output_path(name: &str) -> PathBuf {
+    pipewire_conf_dir().join(format!("10-zos-bus-{name}-output.conf"))
+}
+
+/// Load unified audio bus configs with migration from old formats.
+pub fn load_audio_bus_configs() -> Vec<AudioBusConfig> {
+    let path = audio_bus_configs_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(configs) = serde_json::from_str::<Vec<AudioBusConfig>>(&data) {
+            if !configs.is_empty() {
+                return configs;
+            }
+        }
+    }
+
+    // Migration: merge old InputConfig + OutputConfig
+    let old_inputs_path = input_configs_path();
+    let old_outputs_path = output_configs_path();
+    if old_inputs_path.exists() || old_outputs_path.exists() {
+        let inputs = load_input_configs();
+        let outputs = load_output_configs();
+
+        let buses: Vec<AudioBusConfig> = inputs
+            .iter()
+            .map(|inp| {
+                let matched_output = inp
+                    .outputs
+                    .first()
+                    .and_then(|out_name| outputs.iter().find(|o| &o.name == out_name));
+
+                let (eq_low, eq_mid, eq_high) = default_eq();
+                AudioBusConfig {
+                    name: inp.name.clone(),
+                    description: inp.description.clone(),
+                    gain: inp.gain,
+                    physical_device: matched_output
+                        .map(|o| o.physical_device.clone())
+                        .unwrap_or_default(),
+                    eq_enabled: matched_output.map(|o| o.eq_enabled).unwrap_or(false),
+                    eq_low: matched_output.map(|o| o.eq_low.clone()).unwrap_or(eq_low),
+                    eq_mid: matched_output.map(|o| o.eq_mid.clone()).unwrap_or(eq_mid),
+                    eq_high: matched_output.map(|o| o.eq_high.clone()).unwrap_or(eq_high),
+                }
+            })
+            .collect();
+
+        if !buses.is_empty() {
+            save_audio_bus_configs(&buses);
+            return buses;
+        }
+    }
+
+    default_audio_bus_configs()
+}
+
+fn default_audio_bus_configs() -> Vec<AudioBusConfig> {
+    let physical = list_physical_sinks();
+    let default_device = physical.first().map(|s| s.name.clone()).unwrap_or_default();
+    let (eq_low, eq_mid, eq_high) = default_eq();
+    let (eq_low2, eq_mid2, eq_high2) = default_eq();
+
+    vec![
+        AudioBusConfig {
+            name: "zos-main".into(),
+            description: "Main".into(),
+            gain: 0.0,
+            physical_device: default_device.clone(),
+            eq_enabled: false,
+            eq_low,
+            eq_mid,
+            eq_high,
+        },
+        AudioBusConfig {
+            name: "zos-chat".into(),
+            description: "Chat / Voice".into(),
+            gain: 0.0,
+            physical_device: default_device,
+            eq_enabled: false,
+            eq_low: eq_low2,
+            eq_mid: eq_mid2,
+            eq_high: eq_high2,
+        },
+    ]
+}
+
+pub fn save_audio_bus_configs(configs: &[AudioBusConfig]) {
+    let dir = zos_config_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = audio_bus_configs_path();
+    if let Ok(json) = serde_json::to_string_pretty(configs) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+pub fn load_audio_ui_state() -> AudioUiState {
+    let path = audio_ui_state_path();
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        if let Ok(state) = serde_json::from_str::<AudioUiState>(&data) {
+            return state;
+        }
+    }
+    AudioUiState::default()
+}
+
+pub fn save_audio_ui_state(state: &AudioUiState) {
+    let dir = zos_config_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = audio_ui_state_path();
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Write PipeWire config fragments for a single bus (input sink + output node).
+fn create_bus_pipewire_nodes(config: &AudioBusConfig) {
+    let conf_dir = pipewire_conf_dir();
+    let _ = std::fs::create_dir_all(&conf_dir);
+
+    let name = &config.name;
+    let desc = &config.description;
+
+    // Input null-audio-sink (apps route audio here)
+    let input_content = format!(
+        r#"context.objects = [
+    {{ factory = adapter
+      args = {{
+          factory.name   = support.null-audio-sink
+          node.name       = "{name}"
+          node.description = "{desc}"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }}
+    }}
+]
+"#
+    );
+    let _ = std::fs::write(pipewire_bus_input_path(name), input_content);
+
+    // Output node: filter-chain with EQ if enabled, otherwise simple null-sink
+    let out_name = format!("{name}-out");
+    if config.eq_enabled && !config.physical_device.is_empty() {
+        let target = &config.physical_device;
+        let output_content = format!(
+            r#"context.modules = [
+    {{ name = libpipewire-module-filter-chain
+      args = {{
+          node.description = "{desc} Output"
+          filter.graph = {{
+              nodes = [
+                  {{ type = builtin label = bq_lowshelf name = eq_low
+                    control = {{ "Freq" = {low_freq} "Q" = 0.707 "Gain" = {low_gain} }} }}
+                  {{ type = builtin label = bq_peaking name = eq_mid
+                    control = {{ "Freq" = {mid_freq} "Q" = 1.0 "Gain" = {mid_gain} }} }}
+                  {{ type = builtin label = bq_highshelf name = eq_high
+                    control = {{ "Freq" = {high_freq} "Q" = 0.707 "Gain" = {high_gain} }} }}
+              ]
+              links = [
+                  {{ output = "eq_low:Out" input = "eq_mid:In" }}
+                  {{ output = "eq_mid:Out" input = "eq_high:In" }}
+              ]
+          }}
+          capture.props = {{
+              node.name    = "{out_name}"
+              media.class  = "Audio/Sink"
+              audio.position = [ FL FR ]
+          }}
+          playback.props = {{
+              node.name    = "{out_name}-play"
+              node.target  = "{target}"
+          }}
+      }}
+    }}
+]
+"#,
+            low_freq = config.eq_low.freq,
+            low_gain = config.eq_low.gain,
+            mid_freq = config.eq_mid.freq,
+            mid_gain = config.eq_mid.gain,
+            high_freq = config.eq_high.freq,
+            high_gain = config.eq_high.gain,
+        );
+        let _ = std::fs::write(pipewire_bus_output_path(name), output_content);
+    } else {
+        let output_content = format!(
+            r#"context.objects = [
+    {{ factory = adapter
+      args = {{
+          factory.name   = support.null-audio-sink
+          node.name       = "{out_name}"
+          node.description = "{desc} Output"
+          media.class     = "Audio/Sink"
+          audio.position  = [ FL FR ]
+          object.linger   = true
+      }}
+    }}
+]
+"#
+        );
+        let _ = std::fs::write(pipewire_bus_output_path(name), output_content);
+    }
+}
+
+/// Clean up all old PipeWire config fragments (bus, input, output formats).
+fn cleanup_all_zos_pipewire_configs() {
+    let dir = pipewire_conf_dir();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with("10-zos-") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+}
+
+/// Write all PipeWire config fragments for the unified bus model, restart
+/// PipeWire, and establish pw-link connections.
+pub fn apply_audio_bus_config(buses: &[AudioBusConfig]) {
+    cleanup_all_zos_pipewire_configs();
+
+    for bus in buses {
+        create_bus_pipewire_nodes(bus);
+    }
+
+    save_audio_bus_configs(buses);
+
+    let _ = Command::new("systemctl")
+        .args(["--user", "restart", "pipewire"])
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Establish pw-link connections per bus
+    for bus in buses {
+        let out_name = format!("{}-out", bus.name);
+
+        if bus.eq_enabled {
+            // EQ filter-chain handles its own output via node.target — just
+            // link the input sink's monitor to the filter-chain's capture.
+            create_link(
+                &format!("{}:monitor_FL", bus.name),
+                &format!("{out_name}:input_FL"),
+            );
+            create_link(
+                &format!("{}:monitor_FR", bus.name),
+                &format!("{out_name}:input_FR"),
+            );
+        } else if !bus.physical_device.is_empty() {
+            // No EQ: link input monitor directly to physical device
+            create_link(
+                &format!("{}:monitor_FL", bus.name),
+                &format!("{}:playback_FL", bus.physical_device),
+            );
+            create_link(
+                &format!("{}:monitor_FR", bus.name),
+                &format!("{}:playback_FR", bus.physical_device),
+            );
+        } else {
+            // No physical device set: link through the output null-sink anyway
+            create_link(
+                &format!("{}:monitor_FL", bus.name),
+                &format!("{out_name}:input_FL"),
+            );
+            create_link(
+                &format!("{}:monitor_FR", bus.name),
+                &format!("{out_name}:input_FR"),
+            );
+        }
+    }
+}
+
 /// Path to the zOS audio bus configuration file.
 pub fn bus_configs_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
@@ -643,15 +958,8 @@ pub fn output_configs_path() -> PathBuf {
     zos_config_dir().join("audio-outputs.json")
 }
 
-pub fn pipewire_input_config_path(name: &str) -> PathBuf {
-    pipewire_conf_dir().join(format!("10-zos-input-{name}.conf"))
-}
-
-pub fn pipewire_output_config_path(name: &str) -> PathBuf {
-    pipewire_conf_dir().join(format!("10-zos-output-{name}.conf"))
-}
-
 /// Load Virtual Input configs. Migrates from old audio-buses.json if needed.
+/// Used only for migration to AudioBusConfig.
 pub fn load_input_configs() -> Vec<InputConfig> {
     let path = input_configs_path();
     if let Ok(data) = std::fs::read_to_string(&path) {
@@ -700,17 +1008,8 @@ fn default_input_configs() -> Vec<InputConfig> {
     ]
 }
 
-pub fn save_input_configs(configs: &[InputConfig]) {
-    let path = input_configs_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(configs) {
-        let _ = std::fs::write(&path, json);
-    }
-}
-
 /// Load Virtual Output configs with sensible defaults.
+/// Used only for migration to AudioBusConfig.
 pub fn load_output_configs() -> Vec<OutputConfig> {
     let path = output_configs_path();
     if let Ok(data) = std::fs::read_to_string(&path) {
@@ -783,401 +1082,18 @@ fn default_output_configs() -> Vec<OutputConfig> {
         .collect()
 }
 
-pub fn save_output_configs(configs: &[OutputConfig]) {
-    let path = output_configs_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(configs) {
-        let _ = std::fs::write(&path, json);
-    }
-}
-
-/// List physical (non-zos) sinks only.
+/// List physical (non-zos) sinks only, excluding blocklisted devices.
 pub fn list_physical_sinks() -> Vec<AudioDevice> {
     list_sinks()
         .into_iter()
-        .filter(|s| !s.name.starts_with("zos-"))
+        .filter(|s| {
+            if s.name.starts_with("zos-") {
+                return false;
+            }
+            let name_lower = s.name.to_lowercase();
+            !DEVICE_BLOCKLIST.iter().any(|b| name_lower.contains(b))
+        })
         .collect()
-}
-
-/// Path to the PipeWire config fragment for a virtual bus.
-#[allow(dead_code)]
-pub fn pipewire_bus_config_path(bus_name: &str) -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/root"));
-    PathBuf::from(home).join(format!(
-        ".config/pipewire/pipewire.conf.d/10-zos-bus-{bus_name}.conf"
-    ))
-}
-
-/// Create a virtual null audio sink via a PipeWire config fragment and restart
-/// PipeWire so it picks up the change.
-#[allow(dead_code)]
-pub fn create_virtual_sink(name: &str, description: &str) {
-    let path = pipewire_bus_config_path(name);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    let config = format!(
-        r#"context.objects = [
-    {{ factory = adapter
-      args = {{
-          factory.name   = support.null-audio-sink
-          node.name       = "{name}"
-          node.description = "{description}"
-          media.class     = "Audio/Sink"
-          audio.position  = [ FL FR ]
-          object.linger   = true
-      }}
-    }}
-]
-"#
-    );
-
-    let _ = std::fs::write(&path, config);
-    let _ = Command::new("systemctl")
-        .args(["--user", "restart", "pipewire"])
-        .status();
-}
-
-/// Remove a virtual sink's config fragment and restart PipeWire.
-#[allow(dead_code)]
-pub fn remove_virtual_sink(name: &str) {
-    let path = pipewire_bus_config_path(name);
-    let _ = std::fs::remove_file(&path);
-    let _ = Command::new("systemctl")
-        .args(["--user", "restart", "pipewire"])
-        .status();
-}
-
-/// Query `pw-link --links` to find what a bus's monitor ports are connected to.
-///
-/// Returns the target node name (the part before `:playback_` or `:input_`).
-#[allow(dead_code)]
-pub fn get_bus_routing(bus_name: &str) -> Option<String> {
-    let output = run_cmd("pw-link", &["--links"])?;
-    let monitor_prefix = format!("{bus_name}:monitor_FL");
-
-    let mut found_our_port = false;
-    for line in output.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
-            if found_our_port {
-                let target = trimmed
-                    .trim_start_matches("|->")
-                    .trim_start_matches("\\->")
-                    .trim();
-                // Extract node name before `:playback_` or `:input_`
-                if let Some(colon) = target.find(":playback_").or_else(|| target.find(":input_")) {
-                    return Some(target[..colon].to_string());
-                }
-                return Some(target.to_string());
-            }
-        } else {
-            found_our_port = trimmed == monitor_prefix;
-        }
-    }
-
-    None
-}
-
-/// Disconnect any existing monitor links from a bus and connect it to the
-/// given target (physical sink or another bus).
-#[allow(dead_code)]
-pub fn route_bus_to_target(bus_name: &str, target: &BusTarget) {
-    // Disconnect existing monitor links from this bus
-    if let Some(links_output) = run_cmd("pw-link", &["--links"]) {
-        let monitor_fl = format!("{bus_name}:monitor_FL");
-        let monitor_fr = format!("{bus_name}:monitor_FR");
-
-        let mut current_output: Option<String> = None;
-        for line in links_output.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
-                if let Some(ref out) = current_output {
-                    if *out == monitor_fl || *out == monitor_fr {
-                        let input = trimmed
-                            .trim_start_matches("|->")
-                            .trim_start_matches("\\->")
-                            .trim();
-                        remove_link(out, input);
-                    }
-                }
-            } else {
-                current_output = Some(trimmed.to_string());
-            }
-        }
-    }
-
-    // Create new links based on target type
-    match target {
-        BusTarget::PhysicalSink(sink_name) => {
-            if !sink_name.is_empty() {
-                create_link(
-                    &format!("{bus_name}:monitor_FL"),
-                    &format!("{sink_name}:playback_FL"),
-                );
-                create_link(
-                    &format!("{bus_name}:monitor_FR"),
-                    &format!("{sink_name}:playback_FR"),
-                );
-            }
-        }
-        BusTarget::Bus(other_bus) => {
-            if !other_bus.is_empty() {
-                create_link(
-                    &format!("{bus_name}:monitor_FL"),
-                    &format!("{other_bus}:input_FL"),
-                );
-                create_link(
-                    &format!("{bus_name}:monitor_FR"),
-                    &format!("{other_bus}:input_FR"),
-                );
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// New Input/Output PipeWire config generation + routing
-// ---------------------------------------------------------------------------
-
-/// Write a PipeWire null-audio-sink config fragment for a Virtual Input.
-pub fn create_input_sink(config: &InputConfig) {
-    let path = pipewire_input_config_path(&config.name);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let name = &config.name;
-    let desc = &config.description;
-    let content = format!(
-        r#"context.objects = [
-    {{ factory = adapter
-      args = {{
-          factory.name   = support.null-audio-sink
-          node.name       = "{name}"
-          node.description = "{desc}"
-          media.class     = "Audio/Sink"
-          audio.position  = [ FL FR ]
-          object.linger   = true
-      }}
-    }}
-]
-"#
-    );
-    let _ = std::fs::write(&path, content);
-}
-
-/// Remove a Virtual Input's PipeWire config fragment.
-pub fn remove_input_sink(name: &str) {
-    let _ = std::fs::remove_file(pipewire_input_config_path(name));
-}
-
-/// Write a PipeWire config fragment for a Virtual Output.
-/// When EQ is enabled, creates a filter-chain with 3-band parametric EQ.
-/// When disabled, creates a simple null-audio-sink.
-pub fn create_output_node(config: &OutputConfig) {
-    let path = pipewire_output_config_path(&config.name);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let name = &config.name;
-    let desc = &config.description;
-
-    if config.eq_enabled && !config.physical_device.is_empty() {
-        let target = &config.physical_device;
-        let content = format!(
-            r#"context.modules = [
-    {{ name = libpipewire-module-filter-chain
-      args = {{
-          node.description = "{desc}"
-          filter.graph = {{
-              nodes = [
-                  {{ type = builtin label = bq_lowshelf name = eq_low
-                    control = {{ "Freq" = {low_freq} "Q" = 0.707 "Gain" = {low_gain} }} }}
-                  {{ type = builtin label = bq_peaking name = eq_mid
-                    control = {{ "Freq" = {mid_freq} "Q" = 1.0 "Gain" = {mid_gain} }} }}
-                  {{ type = builtin label = bq_highshelf name = eq_high
-                    control = {{ "Freq" = {high_freq} "Q" = 0.707 "Gain" = {high_gain} }} }}
-              ]
-              links = [
-                  {{ output = "eq_low:Out" input = "eq_mid:In" }}
-                  {{ output = "eq_mid:Out" input = "eq_high:In" }}
-              ]
-          }}
-          capture.props = {{
-              node.name    = "{name}"
-              media.class  = "Audio/Sink"
-              audio.position = [ FL FR ]
-          }}
-          playback.props = {{
-              node.name    = "{name}-play"
-              node.target  = "{target}"
-          }}
-      }}
-    }}
-]
-"#,
-            low_freq = config.eq_low.freq,
-            low_gain = config.eq_low.gain,
-            mid_freq = config.eq_mid.freq,
-            mid_gain = config.eq_mid.gain,
-            high_freq = config.eq_high.freq,
-            high_gain = config.eq_high.gain,
-        );
-        let _ = std::fs::write(&path, content);
-    } else {
-        let content = format!(
-            r#"context.objects = [
-    {{ factory = adapter
-      args = {{
-          factory.name   = support.null-audio-sink
-          node.name       = "{name}"
-          node.description = "{desc}"
-          media.class     = "Audio/Sink"
-          audio.position  = [ FL FR ]
-          object.linger   = true
-      }}
-    }}
-]
-"#
-        );
-        let _ = std::fs::write(&path, content);
-    }
-}
-
-/// Remove a Virtual Output's PipeWire config fragment.
-pub fn remove_output_node(name: &str) {
-    let _ = std::fs::remove_file(pipewire_output_config_path(name));
-}
-
-/// Disconnect all monitor_FL/FR links from a given node.
-pub fn disconnect_monitor_links(node_name: &str) {
-    if let Some(links_output) = run_cmd("pw-link", &["--links"]) {
-        let monitor_fl = format!("{node_name}:monitor_FL");
-        let monitor_fr = format!("{node_name}:monitor_FR");
-
-        let mut current_output: Option<String> = None;
-        for line in links_output.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed.starts_with("|->") || trimmed.starts_with("\\->") {
-                if let Some(ref out) = current_output {
-                    if *out == monitor_fl || *out == monitor_fr {
-                        let input = trimmed
-                            .trim_start_matches("|->")
-                            .trim_start_matches("\\->")
-                            .trim();
-                        remove_link(out, input);
-                    }
-                }
-            } else {
-                current_output = Some(trimmed.to_string());
-            }
-        }
-    }
-}
-
-/// Route a Virtual Input's monitor ports to multiple Virtual Outputs.
-pub fn route_input_to_outputs(input_name: &str, output_names: &[String]) {
-    disconnect_monitor_links(input_name);
-    for output_name in output_names {
-        if output_name.is_empty() {
-            continue;
-        }
-        create_link(
-            &format!("{input_name}:monitor_FL"),
-            &format!("{output_name}:input_FL"),
-        );
-        create_link(
-            &format!("{input_name}:monitor_FR"),
-            &format!("{output_name}:input_FR"),
-        );
-    }
-}
-
-/// Route a Virtual Output to its physical device (non-EQ path only).
-pub fn route_output_to_device(output_name: &str, device_name: &str) {
-    if device_name.is_empty() {
-        return;
-    }
-    disconnect_monitor_links(output_name);
-    create_link(
-        &format!("{output_name}:monitor_FL"),
-        &format!("{device_name}:playback_FL"),
-    );
-    create_link(
-        &format!("{output_name}:monitor_FR"),
-        &format!("{device_name}:playback_FR"),
-    );
-}
-
-/// Clean up old-format bus config fragments (10-zos-bus-*).
-fn cleanup_old_bus_configs() {
-    let dir = pipewire_conf_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with("10-zos-bus-") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-}
-
-/// Write all PipeWire config fragments, restart PipeWire, and establish links.
-pub fn apply_full_config(inputs: &[InputConfig], outputs: &[OutputConfig]) {
-    cleanup_old_bus_configs();
-
-    // Also clean existing input/output fragments to handle removals
-    let dir = pipewire_conf_dir();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with("10-zos-input-") || name.starts_with("10-zos-output-") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-
-    for input in inputs {
-        create_input_sink(input);
-    }
-    for output in outputs {
-        create_output_node(output);
-    }
-
-    save_input_configs(inputs);
-    save_output_configs(outputs);
-
-    let _ = Command::new("systemctl")
-        .args(["--user", "restart", "pipewire"])
-        .status();
-
-    // Wait for PipeWire to come back up
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // Establish pw-link connections
-    for input in inputs {
-        route_input_to_outputs(&input.name, &input.outputs);
-    }
-    for output in outputs {
-        if !output.eq_enabled {
-            route_output_to_device(&output.name, &output.physical_device);
-        }
-    }
 }
 
 /// Path to the per-app routing defaults file.

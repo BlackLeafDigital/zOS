@@ -123,16 +123,6 @@
     background-color: #313244;
     border-radius: 8px;
     padding: 12px;
-    min-width: 160px;
-    max-width: 320px;
-}
-
-.mixer-strip-input {
-    border-top: 3px solid #89b4fa;
-}
-
-.mixer-strip-output {
-    border-top: 3px solid #cba6f7;
 }
 
 .mixer-strip-header {
@@ -140,13 +130,6 @@
     font-size: 1.1em;
     color: #cdd6f4;
     margin-bottom: 4px;
-}
-
-.mixer-divider {
-    background-color: #45475a;
-    min-width: 2px;
-    margin-start: 12px;
-    margin-end: 12px;
 }
 
 .mixer-section-label {
