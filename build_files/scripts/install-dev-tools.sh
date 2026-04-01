@@ -80,7 +80,6 @@ dnf5 install -y \
     podman-docker \
     tmux \
     direnv \
-    sops \
     age
 
 # --- Modern CLI tools (Fedora repos) ---
@@ -140,6 +139,11 @@ rm -rf /tmp/yazi /tmp/yazi.zip
 # --- fx (interactive JSON explorer) ---
 gh_curl -o /usr/bin/fx https://github.com/antonmedv/fx/releases/latest/download/fx_linux_amd64
 chmod +x /usr/bin/fx
+
+# --- sops (secrets management, not in Fedora repos) ---
+SOPS_VERSION=$(gh_curl https://api.github.com/repos/getsops/sops/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')
+gh_curl -o /usr/bin/sops "https://github.com/getsops/sops/releases/latest/download/sops-v${SOPS_VERSION}.linux.amd64"
+chmod +x /usr/bin/sops
 
 # --- CUDA Toolkit (NVIDIA variant only) ---
 if command -v nvidia-smi &>/dev/null; then

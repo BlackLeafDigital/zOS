@@ -133,10 +133,6 @@ pub struct Dock {
     pub prev_item_count: usize,
     /// Timer for auto-re-hiding after a minimize-triggered reveal.
     pub minimize_reveal_timer: Option<Instant>,
-    /// Last cursor Y position in the trigger zone (for slam detection).
-    pub last_trigger_y: Option<f32>,
-    /// Whether the current show attempt was triggered by a fast downward slam.
-    pub is_slam: bool,
     /// Phase for animated focused-app indicator gradient (0.0–360.0 degrees).
     pub indicator_phase: f32,
 }
@@ -198,8 +194,6 @@ pub fn boot() -> Dock {
         known_window_ids: RefCell::new(Vec::new()),
         prev_item_count: 0,
         minimize_reveal_timer: None,
-        last_trigger_y: None,
-        is_slam: false,
         indicator_phase: 0.0,
     };
     dock.rebuild_items(&windows);
@@ -226,27 +220,23 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             }
             // Advance rainbow indicator phase (~30°/sec at 30fps).
             dock.indicator_phase = (dock.indicator_phase + 1.0) % 360.0;
-            // Check reveal timer — adaptive dwell time based on context
+            // Check reveal timer — 500ms dwell at bottom edge (matches macOS)
             let mut hidden_changed = false;
             if let Some(show_start) = dock.show_timer {
-                let reveal_delay = if dock.is_slam {
-                    // Fast slam to bottom edge: reveal quickly
-                    Duration::from_millis(150)
-                } else if hypr::is_active_window_fullscreen() {
-                    // Fullscreen app: require longer hover to avoid accidental triggers
-                    Duration::from_millis(500)
-                } else {
-                    // Normal mode
-                    Duration::from_millis(300)
-                };
-
-                if show_start.elapsed() >= reveal_delay {
+                if show_start.elapsed() >= Duration::from_millis(500) {
                     dock.hidden = false;
                     dock.slide_offset.set_target(0.0);
                     dock.hide_timer = None;
                     dock.show_timer = None;
-                    dock.last_trigger_y = None;
-                    dock.is_slam = false;
+                    hidden_changed = true;
+                }
+            }
+            // Check hide timer — 300ms after cursor leaves
+            if let Some(timer_start) = dock.hide_timer {
+                if timer_start.elapsed() >= Duration::from_millis(300) && dock.cursor_x.is_none() {
+                    dock.hidden = true;
+                    dock.slide_offset.set_target(SURFACE_HEIGHT);
+                    dock.hide_timer = None;
                     hidden_changed = true;
                 }
             }
@@ -271,20 +261,16 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             match event {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     if dock.hidden && dock.config.auto_hide {
-                        // Slam detection: fast downward cursor movement into trigger zone
-                        if let Some(last_y) = dock.last_trigger_y {
-                            let delta = position.y - last_y;
-                            if delta > 20.0 {
-                                dock.is_slam = true;
-                            }
-                        }
-                        dock.last_trigger_y = Some(position.y);
-
-                        // Start the reveal timer if not already running
+                        // Start the reveal dwell timer if not already running
                         if dock.show_timer.is_none() {
                             dock.show_timer = Some(Instant::now());
                         }
                     } else {
+                        // Re-enter during hide animation: reverse and stay visible
+                        if dock.hide_timer.is_some() {
+                            dock.hide_timer = None;
+                            dock.slide_offset.set_target(0.0);
+                        }
                         dock.cursor_x = Some(position.x);
                         dock.update_magnification();
                         // Cancel minimize-reveal auto-re-hide if user is interacting
@@ -293,9 +279,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 }
                 Event::Mouse(iced::mouse::Event::CursorLeft) => {
                     dock.cursor_x = None;
-                    dock.show_timer = None; // Cancel reveal if cursor leaves
-                    dock.last_trigger_y = None;
-                    dock.is_slam = false;
+                    dock.show_timer = None;
                     dock.reset_magnification();
                     if dock.config.auto_hide {
                         dock.hide_timer = Some(Instant::now());
@@ -308,8 +292,6 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
         Message::MouseLeft => {
             dock.cursor_x = None;
             dock.show_timer = None;
-            dock.last_trigger_y = None;
-            dock.is_slam = false;
             dock.reset_magnification();
             if dock.config.auto_hide {
                 dock.hide_timer = Some(Instant::now());
@@ -381,18 +363,6 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             let windows = hypr::get_windows();
             dock.active_address = hypr::get_active_window_address();
             dock.rebuild_items(&windows);
-            // Auto-hide check
-            if dock.config.auto_hide {
-                if let Some(timer_start) = dock.hide_timer {
-                    if timer_start.elapsed() >= Duration::from_millis(800)
-                        && dock.cursor_x.is_none()
-                    {
-                        dock.hidden = true;
-                        dock.slide_offset.set_target(SURFACE_HEIGHT);
-                        dock.hide_timer = None;
-                    }
-                }
-            }
             // Update input region if item count changed or hidden state changed
             if dock.prev_item_count != old_count || dock.hidden != was_hidden {
                 dock.input_region_tasks()
@@ -758,6 +728,7 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
     if any_animating
         || dock.slide_offset.has_energy()
         || dock.show_timer.is_some()
+        || dock.hide_timer.is_some()
         || dock.minimize_reveal_timer.is_some()
     {
         subs.push(
@@ -1109,12 +1080,12 @@ impl Dock {
             .into_iter()
             .flat_map(|id| {
                 let (region_x, region_y, region_w, region_h) = if hidden && auto_hide {
-                    // 12px trigger strip at the bottom of the surface (at screen edge)
+                    // 4px trigger strip at the very bottom edge (macOS-style)
                     (
                         0i32,
-                        (SURFACE_HEIGHT as i32 - 12),
+                        (SURFACE_HEIGHT as i32 - 4),
                         surface_width as i32,
-                        12i32,
+                        4i32,
                     )
                 } else {
                     // Only the visible dock pill area (bottom-aligned)
