@@ -79,7 +79,9 @@ dnf5 install -y \
     podman-compose \
     podman-docker \
     tmux \
-    direnv
+    direnv \
+    sops \
+    age
 
 # --- Modern CLI tools (Fedora repos) ---
 # Note: duf already in Bazzite
