@@ -1,18 +1,14 @@
-// === zos-tray — Standalone system tray for zOS ===
-//
-// GTK3-based AppIndicator tray icon. Runs as a separate process
-// to avoid GTK3/GTK4 conflicts with zos-settings.
+// === tray.rs — System tray icon with power actions ===
 
 use gtk::prelude::*;
 use libayatana_appindicator::{AppIndicator, AppIndicatorStatus};
 use std::process::Command;
 
-fn main() {
-    gtk::init().expect("failed to init GTK for tray");
-
-    let mut indicator = AppIndicator::new("zos-tray", "zos-settings-symbolic");
+/// Build and register the system tray icon with its menu.
+pub fn build_tray() {
+    let mut indicator = AppIndicator::new("zos-daemon", "zos-settings-symbolic");
     indicator.set_status(AppIndicatorStatus::Active);
-    indicator.set_title("zOS Settings");
+    indicator.set_title("zOS");
 
     let mut menu = gtk::Menu::new();
 
@@ -55,8 +51,6 @@ fn main() {
 
     menu.show_all();
     indicator.set_menu(&mut menu);
-
-    gtk::main();
 }
 
 fn logind_action(method: &str) {
@@ -66,7 +60,7 @@ fn logind_action(method: &str) {
             "--print-reply",
             "--dest=org.freedesktop.login1",
             "/org/freedesktop/login1",
-            &format!("org.freedesktop.login1.Manager.{}", method),
+            &format!("org.freedesktop.login1.Manager.{method}"),
             "boolean:true",
         ])
         .status();

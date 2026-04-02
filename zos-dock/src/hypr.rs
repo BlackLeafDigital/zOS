@@ -254,3 +254,90 @@ pub fn launch_app(app_id: &str) {
         let _ = Command::new(cmd).spawn();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Workspace / Monitor queries and operations
+// ---------------------------------------------------------------------------
+
+/// A Hyprland workspace.
+#[derive(Debug, Clone)]
+pub struct HyprWorkspace {
+    pub id: i32,
+    pub name: String,
+}
+
+/// A Hyprland monitor.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct HyprMonitor {
+    pub id: i32,
+    pub name: String,
+}
+
+/// List active workspaces via `hyprctl workspaces -j`.
+pub fn get_workspaces() -> Vec<HyprWorkspace> {
+    let output = match Command::new("hyprctl").args(["workspaces", "-j"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let mut workspaces: Vec<HyprWorkspace> = arr
+        .iter()
+        .filter_map(|w| {
+            let id = w.get("id")?.as_i64()? as i32;
+            if id < 0 {
+                return None;
+            } // skip special workspaces
+            let name = w
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(HyprWorkspace { id, name })
+        })
+        .collect();
+    workspaces.sort_by_key(|w| w.id);
+    workspaces
+}
+
+/// List connected monitors via `hyprctl monitors -j`.
+pub fn get_monitors() -> Vec<HyprMonitor> {
+    let output = match Command::new("hyprctl").args(["monitors", "-j"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    arr.iter()
+        .filter_map(|m| {
+            let id = m.get("id")?.as_i64()? as i32;
+            let name = m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(HyprMonitor { id, name })
+        })
+        .collect()
+}
+
+/// Move a window to a specific workspace.
+pub fn move_window_to_workspace(address: &str, workspace_id: i32) {
+    let _ = Command::new("hyprctl")
+        .args([
+            "dispatch",
+            "movetoworkspacesilent",
+            &format!("{},address:{}", workspace_id, address),
+        ])
+        .status();
+}
+
+/// Move a window to a specific monitor.
+pub fn move_window_to_monitor(address: &str, monitor_name: &str) {
+    let _ = Command::new("hyprctl")
+        .args([
+            "dispatch",
+            "movewindow",
+            &format!("mon:{},address:{}", monitor_name, address),
+        ])
+        .status();
+}

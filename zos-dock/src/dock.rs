@@ -100,6 +100,8 @@ pub struct ContextMenuState {
     pub is_running: bool,
     pub is_pinned: bool,
     pub is_minimized: bool,
+    /// Window addresses for workspace/monitor operations.
+    pub window_addresses: Vec<String>,
 }
 
 /// Main dock application state.
@@ -167,6 +169,10 @@ pub enum Message {
     ContextMenuLaunch(String),
     /// Dismiss the context menu.
     DismissMenu,
+    /// Move window to a workspace from context menu.
+    ContextMenuMoveWorkspace(String, i32),
+    /// Move window to a monitor from context menu.
+    ContextMenuMoveMonitor(String, String),
     /// Real-time event from Hyprland event socket.
     HyprEvent(HyprEvent),
 }
@@ -231,9 +237,16 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     hidden_changed = true;
                 }
             }
-            // Check hide timer — 300ms after cursor leaves
+            // Check hide timer — 300ms after cursor leaves (skip if context menu open)
             if let Some(timer_start) = dock.hide_timer {
-                if timer_start.elapsed() >= Duration::from_millis(300) && dock.cursor_x.is_none() {
+                if timer_start.elapsed() >= Duration::from_millis(300)
+                    && dock.cursor_x.is_none()
+                    && dock.context_menu.is_none()
+                {
+                    // Dismiss any open context menu before hiding
+                    if let Some(cm) = dock.context_menu.take() {
+                        return Task::done(Message::RemoveWindow(cm.id));
+                    }
                     dock.hidden = true;
                     dock.slide_offset.set_target(SURFACE_HEIGHT);
                     dock.hide_timer = None;
@@ -242,7 +255,13 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             }
             // Check minimize-reveal timer — re-hide after 2s if cursor isn't hovering
             if let Some(timer) = dock.minimize_reveal_timer {
-                if timer.elapsed() >= Duration::from_secs(2) && dock.cursor_x.is_none() {
+                if timer.elapsed() >= Duration::from_secs(2)
+                    && dock.cursor_x.is_none()
+                    && dock.context_menu.is_none()
+                {
+                    if let Some(cm) = dock.context_menu.take() {
+                        return Task::done(Message::RemoveWindow(cm.id));
+                    }
                     dock.hidden = true;
                     dock.slide_offset.set_target(SURFACE_HEIGHT);
                     dock.minimize_reveal_timer = None;
@@ -281,7 +300,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     dock.cursor_x = None;
                     dock.show_timer = None;
                     dock.reset_magnification();
-                    if dock.config.auto_hide {
+                    if dock.config.auto_hide && dock.context_menu.is_none() {
                         dock.hide_timer = Some(Instant::now());
                     }
                 }
@@ -293,7 +312,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             dock.cursor_x = None;
             dock.show_timer = None;
             dock.reset_magnification();
-            if dock.config.auto_hide {
+            if dock.config.auto_hide && dock.context_menu.is_none() {
                 dock.hide_timer = Some(Instant::now());
             }
             Task::none()
@@ -337,11 +356,28 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     tasks.push(Task::done(Message::RemoveWindow(old_cm.id)));
                 }
 
-                let menu_height: u32 = 2 * 36 + 16;
+                // Count menu items for dynamic height
+                let workspaces = hypr::get_workspaces();
+                let monitors = hypr::get_monitors();
+                let mut item_count: u32 = 2; // Pin/Unpin + Close/Launch
+                if item.is_running() && !item.minimized {
+                    item_count += workspaces.len() as u32; // Move to Workspace entries
+                    if monitors.len() > 1 {
+                        item_count += monitors.len() as u32; // Move to Monitor entries
+                    }
+                }
+                if item.minimized {
+                    item_count = 2; // Restore + Close
+                }
+
+                let menu_height: u32 = item_count * 36 + 16;
                 let (menu_id, open_task) = Message::menu_open(IcedNewMenuSettings {
-                    size: (180, menu_height),
+                    size: (220, menu_height),
                     direction: MenuDirection::Up,
                 });
+
+                let window_addresses: Vec<String> =
+                    item.windows.iter().map(|w| w.address.clone()).collect();
 
                 dock.context_menu = Some(ContextMenuState {
                     id: menu_id,
@@ -349,6 +385,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                     is_running: item.is_running(),
                     is_pinned: item.pinned,
                     is_minimized: item.minimized,
+                    window_addresses,
                 });
 
                 tasks.push(open_task);
@@ -432,6 +469,32 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 Task::done(Message::RemoveWindow(cm.id))
             } else {
                 Task::none()
+            }
+        }
+        Message::ContextMenuMoveWorkspace(address, workspace_id) => {
+            hypr::move_window_to_workspace(&address, workspace_id);
+            let windows = hypr::get_windows();
+            dock.rebuild_items(&windows);
+            if let Some(cm) = dock.context_menu.take() {
+                Task::batch([
+                    Task::done(Message::RemoveWindow(cm.id)),
+                    dock.input_region_tasks(),
+                ])
+            } else {
+                dock.input_region_tasks()
+            }
+        }
+        Message::ContextMenuMoveMonitor(address, monitor_name) => {
+            hypr::move_window_to_monitor(&address, &monitor_name);
+            let windows = hypr::get_windows();
+            dock.rebuild_items(&windows);
+            if let Some(cm) = dock.context_menu.take() {
+                Task::batch([
+                    Task::done(Message::RemoveWindow(cm.id)),
+                    dock.input_region_tasks(),
+                ])
+            } else {
+                dock.input_region_tasks()
             }
         }
         Message::DismissMenu => {
@@ -651,7 +714,8 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 }),
         )
         .on_press(Message::ItemClicked(i))
-        .on_right_press(Message::ItemRightClicked(i));
+        .on_right_press(Message::ItemRightClicked(i))
+        .interaction(iced::mouse::Interaction::Pointer);
 
         let tooltip_content = container(text(&item.name).size(12).color(TEXT_COLOR))
             .padding([4, 8])
@@ -777,21 +841,56 @@ fn render_context_menu(cm: &ContextMenuState) -> Element<'_, Message> {
     let mut items = column![].spacing(2).padding(8);
 
     if cm.is_minimized {
-        let id = app_id.clone();
-        items = items.push(menu_button("Restore", Message::ContextMenuRestore(id)));
-        let id = app_id.clone();
-        items = items.push(menu_button("Close", Message::ContextMenuClose(id)));
+        items = items.push(menu_button(
+            "Restore",
+            Message::ContextMenuRestore(app_id.clone()),
+        ));
+        items = items.push(menu_button(
+            "Close",
+            Message::ContextMenuClose(app_id.clone()),
+        ));
     } else if cm.is_running {
-        let id = app_id.clone();
-        items = items.push(menu_button("Close", Message::ContextMenuClose(id)));
-        let id = app_id.clone();
+        // Pin/Unpin
         let label = if cm.is_pinned { "Unpin" } else { "Pin" };
-        items = items.push(menu_button(label, Message::ContextMenuPin(id)));
+        items = items.push(menu_button(label, Message::ContextMenuPin(app_id.clone())));
+
+        // Move to Workspace options
+        let workspaces = hypr::get_workspaces();
+        let first_addr = cm.window_addresses.first().cloned().unwrap_or_default();
+        for ws in &workspaces {
+            let label = format!("Move to Workspace {}", ws.name);
+            items = items.push(menu_button(
+                &label,
+                Message::ContextMenuMoveWorkspace(first_addr.clone(), ws.id),
+            ));
+        }
+
+        // Move to Monitor options (only if multiple monitors)
+        let monitors = hypr::get_monitors();
+        if monitors.len() > 1 {
+            for mon in &monitors {
+                let label = format!("Move to {}", mon.name);
+                items = items.push(menu_button(
+                    &label,
+                    Message::ContextMenuMoveMonitor(first_addr.clone(), mon.name.clone()),
+                ));
+            }
+        }
+
+        // Close
+        items = items.push(menu_button(
+            "Close",
+            Message::ContextMenuClose(app_id.clone()),
+        ));
     } else {
-        let id = app_id.clone();
-        items = items.push(menu_button("Launch", Message::ContextMenuLaunch(id)));
-        let id = app_id.clone();
-        items = items.push(menu_button("Unpin", Message::ContextMenuPin(id)));
+        items = items.push(menu_button(
+            "Launch",
+            Message::ContextMenuLaunch(app_id.clone()),
+        ));
+        items = items.push(menu_button(
+            "Unpin",
+            Message::ContextMenuPin(app_id.clone()),
+        ));
     }
 
     container(items)
@@ -810,9 +909,9 @@ fn render_context_menu(cm: &ContextMenuState) -> Element<'_, Message> {
 }
 
 /// Create a styled menu button.
-fn menu_button(label: &str, msg: Message) -> Element<'_, Message> {
+fn menu_button(label: impl ToString, msg: Message) -> Element<'static, Message> {
     mouse_area(
-        container(text(label).size(14).color(TEXT_COLOR))
+        container(text(label.to_string()).size(14).color(TEXT_COLOR))
             .padding([6, 12])
             .width(Length::Fill)
             .style(|_theme: &Theme| container::Style {
@@ -826,6 +925,7 @@ fn menu_button(label: &str, msg: Message) -> Element<'_, Message> {
             }),
     )
     .on_press(msg)
+    .interaction(iced::mouse::Interaction::Pointer)
     .into()
 }
 
@@ -1044,13 +1144,16 @@ impl Dock {
 
         let magnification = self.config.magnification;
         let icon_size = self.config.icon_size as f32;
-        let spread = icon_size * 2.5;
+        let half_item = (icon_size + 4.0) / 2.0;
 
         for (i, item) in self.items.iter_mut().enumerate() {
             let item_x = self.item_positions.get(i).copied().unwrap_or(0.0);
             let distance = (dock_relative_x - item_x).abs();
-            let gaussian = (-(distance * distance) / (2.0 * spread * spread)).exp();
-            let target_scale = 1.0 + (magnification - 1.0) * gaussian;
+            let target_scale = if distance <= half_item {
+                magnification
+            } else {
+                1.0
+            };
             item.scale.set_target(target_scale);
         }
     }

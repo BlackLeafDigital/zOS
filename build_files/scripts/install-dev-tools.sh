@@ -31,7 +31,8 @@ dnf5 install -y \
     python3-pip \
     python3-devel \
     golang \
-    ShellCheck
+    ShellCheck \
+    protobuf-compiler
 
 # --- GUI / GTK / Wayland dev libraries ---
 dnf5 install -y \

@@ -1,9 +1,0 @@
-[package]
-name = "zos-tray"
-version = "0.1.0"
-edition = "2021"
-description = "System tray for zOS"
-
-[dependencies]
-gtk = "0.15"
-libayatana-appindicator = "0.2.0"

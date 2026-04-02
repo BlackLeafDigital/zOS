@@ -10,12 +10,12 @@ COPY Cargo.lock /Cargo.lock
 COPY zos-core /zos-core
 COPY zos-cli /zos-cli
 COPY zos-settings /zos-settings
-COPY zos-tray /zos-tray
 COPY zos-dock /zos-dock
+COPY zos-daemon /zos-daemon
 
 FROM ${BASE_IMAGE}
 
-### BUILD Rust workspace (zos-cli + zos-settings + zos-tray + zos-dock)
+### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon)
 ARG GH_TOKEN
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
@@ -25,7 +25,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
     cd /ctx && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
-    cargo build --release -p zos -p zos-settings -p zos-tray -p zos-dock && \
+    cargo build --release -p zos -p zos-settings -p zos-dock -p zos-daemon && \
     git clone --depth 1 https://github.com/Linus789/wl-clip-persist.git /tmp/wl-clip-persist && \
     cd /tmp/wl-clip-persist && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
@@ -42,8 +42,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     cd /ctx && \
     cp /tmp/cargo-target/release/zos /usr/bin/zos && \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
-    cp /tmp/cargo-target/release/zos-tray /usr/bin/zos-tray && \
     cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
+    cp /tmp/cargo-target/release/zos-daemon /usr/bin/zos-daemon && \
     dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
     dnf5 install -y adwaita-icon-theme
 

@@ -888,6 +888,18 @@ pub fn apply_audio_bus_config(buses: &[AudioBusConfig]) {
             );
         }
     }
+
+    // Apply gain to each bus's input sink as a volume offset
+    let all_sinks = list_sinks();
+    for bus in buses {
+        if bus.gain != 0.0 {
+            if let Some(sink) = all_sinks.iter().find(|s| s.name == bus.name) {
+                // Convert dB to linear: 10^(dB/20)
+                let linear = 10.0_f32.powf(bus.gain / 20.0);
+                set_volume(sink.id, linear);
+            }
+        }
+    }
 }
 
 /// Path to the zOS audio bus configuration file.

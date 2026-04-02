@@ -6,6 +6,7 @@ use std::rc::Rc;
 use relm4::adw;
 use relm4::adw::prelude::*;
 use relm4::gtk;
+use relm4::gtk::glib;
 
 use crate::services::pipewire::{self, AudioBusConfig};
 
@@ -15,6 +16,9 @@ pub fn build() -> gtk::Box {
     let ui_state = Rc::new(RefCell::new(pipewire::load_audio_ui_state()));
 
     let page = super::page_content();
+
+    // --- Global app routing ---
+    page.append(&build_global_app_routing(&bus_configs));
 
     // --- Bus selector row ---
     let selector_row = gtk::Box::builder()
@@ -76,7 +80,14 @@ pub fn build() -> gtk::Box {
         let selected = bus_combo.selected() as usize;
         let configs = bus_configs.borrow();
         if let Some(cfg) = configs.get(selected) {
-            build_bus_view(&bus_view_container, selected, cfg, &bus_configs);
+            build_bus_view(
+                &bus_view_container,
+                selected,
+                cfg,
+                &bus_configs,
+                &bus_model,
+                &bus_combo,
+            );
         }
     }
 
@@ -100,7 +111,13 @@ pub fn build() -> gtk::Box {
             b.set_label("Applying...");
             let c = configs.borrow();
             pipewire::apply_audio_bus_config(&c);
+            drop(c);
             b.set_label("Applied");
+            let btn = b.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
+                btn.set_label("Apply");
+                btn.set_sensitive(true);
+            });
         });
     }
 
@@ -112,6 +129,7 @@ pub fn build() -> gtk::Box {
         let configs = bus_configs.clone();
         let container = bus_view_container.clone();
         let state = ui_state.clone();
+        let model_for_handler = bus_model.clone();
         bus_combo.connect_selected_notify(move |combo| {
             let selected = combo.selected() as usize;
             let cfgs = configs.borrow();
@@ -129,7 +147,14 @@ pub fn build() -> gtk::Box {
 
                 let cfgs = configs.borrow();
                 if let Some(cfg) = cfgs.get(selected) {
-                    build_bus_view(&container, selected, cfg, &configs);
+                    build_bus_view(
+                        &container,
+                        selected,
+                        cfg,
+                        &configs,
+                        &model_for_handler,
+                        combo,
+                    );
                 }
             }
         });
@@ -157,45 +182,12 @@ fn build_bus_view(
     idx: usize,
     config: &AudioBusConfig,
     bus_configs: &Rc<RefCell<Vec<AudioBusConfig>>>,
+    bus_model: &gtk::StringList,
+    bus_combo: &adw::ComboRow,
 ) {
-    // --- App Routing for this bus ---
-    container.append(&build_bus_app_routing(config));
+    // --- Volume section (live — changes take effect immediately) ---
+    let vol_group = adw::PreferencesGroup::builder().title("Volume").build();
 
-    // --- Processing section ---
-    let proc_group = adw::PreferencesGroup::builder().title("Processing").build();
-
-    // Gain slider
-    let gain_row = adw::ActionRow::builder().title("Gain").build();
-    let gain_label = gtk::Label::builder()
-        .label(format!("{:.1} dB", config.gain))
-        .valign(gtk::Align::Center)
-        .width_chars(8)
-        .build();
-    let gain_scale = gtk::Scale::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .hexpand(true)
-        .valign(gtk::Align::Center)
-        .build();
-    gain_scale.set_range(-12.0, 12.0);
-    gain_scale.set_increments(0.5, 1.0);
-    gain_scale.set_value(config.gain as f64);
-
-    {
-        let label = gain_label.clone();
-        let configs = bus_configs.clone();
-        gain_scale.connect_value_changed(move |s| {
-            let val = s.value() as f32;
-            label.set_label(&format!("{:.1} dB", val));
-            if let Some(cfg) = configs.borrow_mut().get_mut(idx) {
-                cfg.gain = val;
-            }
-        });
-    }
-    gain_row.add_suffix(&gain_scale);
-    gain_row.add_suffix(&gain_label);
-    proc_group.add(&gain_row);
-
-    // Volume slider — find live PipeWire sink for this bus
     let all_sinks = pipewire::list_sinks();
     let live_sink = all_sinks.iter().find(|s| s.name == config.name);
     let sink_id = live_sink.map(|s| s.id).unwrap_or(0);
@@ -229,7 +221,7 @@ fn build_bus_view(
     }
     vol_row.add_suffix(&vol_scale);
     vol_row.add_suffix(&vol_label);
-    proc_group.add(&vol_row);
+    vol_group.add(&vol_row);
 
     // Mute toggle
     let muted = live_sink.map(|s| s.muted).unwrap_or(false);
@@ -261,7 +253,45 @@ fn build_bus_view(
         btn.set_icon_name(icon);
     });
     mute_row.add_suffix(&mute_btn);
-    proc_group.add(&mute_row);
+    vol_group.add(&mute_row);
+
+    container.append(&vol_group);
+
+    // --- Processing section (deferred — requires Apply) ---
+    let proc_group = adw::PreferencesGroup::builder()
+        .title("Processing")
+        .description("Changes take effect after Apply")
+        .build();
+
+    let gain_row = adw::ActionRow::builder().title("Gain").build();
+    let gain_label = gtk::Label::builder()
+        .label(format!("{:.1} dB", config.gain))
+        .valign(gtk::Align::Center)
+        .width_chars(8)
+        .build();
+    let gain_scale = gtk::Scale::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .hexpand(true)
+        .valign(gtk::Align::Center)
+        .build();
+    gain_scale.set_range(-12.0, 12.0);
+    gain_scale.set_increments(0.5, 1.0);
+    gain_scale.set_value(config.gain as f64);
+
+    {
+        let label = gain_label.clone();
+        let configs = bus_configs.clone();
+        gain_scale.connect_value_changed(move |s| {
+            let val = s.value() as f32;
+            label.set_label(&format!("{:.1} dB", val));
+            if let Some(cfg) = configs.borrow_mut().get_mut(idx) {
+                cfg.gain = val;
+            }
+        });
+    }
+    gain_row.add_suffix(&gain_scale);
+    gain_row.add_suffix(&gain_label);
+    proc_group.add(&gain_row);
 
     container.append(&proc_group);
 
@@ -371,8 +401,24 @@ fn build_bus_view(
 
         let configs = bus_configs.clone();
         let bus_name = config.name.clone();
+        let model = bus_model.clone();
+        let combo = bus_combo.clone();
         delete_btn.connect_clicked(move |_| {
-            configs.borrow_mut().retain(|c| c.name != bus_name);
+            {
+                let mut cfgs = configs.borrow_mut();
+                cfgs.retain(|c| c.name != bus_name);
+                pipewire::save_audio_bus_configs(&cfgs);
+            }
+            // Rebuild dropdown model
+            while model.n_items() > 0 {
+                model.remove(0);
+            }
+            let cfgs = configs.borrow();
+            for cfg in cfgs.iter() {
+                model.append(&cfg.description);
+            }
+            drop(cfgs);
+            combo.set_selected(0);
         });
 
         delete_container.append(&delete_btn);
@@ -381,109 +427,86 @@ fn build_bus_view(
 }
 
 // ---------------------------------------------------------------------------
-// Per-bus app routing
+// Global app routing
 // ---------------------------------------------------------------------------
 
-fn build_bus_app_routing(config: &AudioBusConfig) -> adw::PreferencesGroup {
+fn build_global_app_routing(
+    bus_configs: &Rc<RefCell<Vec<AudioBusConfig>>>,
+) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("App Routing")
-        .description("Audio streams assigned to this bus")
+        .description("Route application audio to buses")
         .build();
 
     let streams = pipewire::list_streams();
     let saved_defaults = pipewire::load_app_routing_defaults();
-    let bus_name = config.name.clone();
+    let configs = bus_configs.borrow();
 
-    // Streams routed to this bus
-    let mut has_streams = false;
-    for stream in &streams {
-        let is_here = saved_defaults
-            .get(&stream.name)
-            .map(|s| s == &bus_name)
-            .unwrap_or(false);
-        if is_here {
-            has_streams = true;
-            let row = adw::ActionRow::builder().title(&stream.name).build();
-            let icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
-            icon.set_valign(gtk::Align::Center);
-            row.add_prefix(&icon);
-
-            let remove_btn = gtk::Button::builder()
-                .icon_name("list-remove-symbolic")
-                .tooltip_text("Unassign from this bus")
-                .valign(gtk::Align::Center)
-                .build();
-            remove_btn.add_css_class("flat");
-
-            let stream_name = stream.name.clone();
-            let stream_id = stream.id;
-            remove_btn.connect_clicked(move |_| {
-                pipewire::save_app_routing_default(&stream_name, "");
-                pipewire::set_default(stream_id);
-            });
-
-            row.add_suffix(&remove_btn);
-            group.add(&row);
-        }
-    }
-
-    if !has_streams {
+    if streams.is_empty() {
         let empty_row = adw::ActionRow::builder()
-            .title("No streams assigned")
-            .subtitle("Use the dropdown below to route an app here")
+            .title("No active audio streams")
+            .subtitle("Play audio in an app to see it here")
             .build();
         let icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
         icon.set_valign(gtk::Align::Center);
         empty_row.add_prefix(&icon);
         group.add(&empty_row);
+        return group;
     }
 
-    // Dropdown to assign an unrouted stream to this bus
-    let unrouted: Vec<_> = streams
-        .iter()
-        .filter(|s| {
-            !saved_defaults
-                .get(&s.name)
-                .map(|v| !v.is_empty())
-                .unwrap_or(false)
-        })
-        .collect();
+    // Build bus dropdown options: ["Unassigned", "Main", "Chat / Voice", ...]
+    let mut bus_labels = vec!["Unassigned".to_string()];
+    let mut bus_names = vec![String::new()];
+    for cfg in configs.iter() {
+        bus_labels.push(cfg.description.clone());
+        bus_names.push(cfg.name.clone());
+    }
+    let label_strs: Vec<&str> = bus_labels.iter().map(|s| s.as_str()).collect();
 
-    if !unrouted.is_empty() {
-        let assign_row = adw::ActionRow::builder().title("Assign stream").build();
+    for stream in &streams {
+        let row = adw::ActionRow::builder().title(&stream.name).build();
+        let icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
+        icon.set_valign(gtk::Align::Center);
+        row.add_prefix(&icon);
 
-        let mut labels = vec!["Select...".to_string()];
-        let mut ids = vec![(0u32, String::new())];
-        for s in &unrouted {
-            labels.push(s.name.clone());
-            ids.push((s.id, s.name.clone()));
-        }
-        let label_strs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
         let model = gtk::StringList::new(&label_strs);
         let dropdown = gtk::DropDown::builder()
             .model(&model)
-            .selected(0)
             .valign(gtk::Align::Center)
             .build();
 
-        let bus_name_for_assign = bus_name.clone();
+        // Pre-select current assignment
+        let current_bus = saved_defaults
+            .get(&stream.name)
+            .cloned()
+            .unwrap_or_default();
+        let selected_idx = bus_names
+            .iter()
+            .position(|n| n == &current_bus)
+            .unwrap_or(0);
+        dropdown.set_selected(selected_idx as u32);
+
+        let stream_name = stream.name.clone();
+        let stream_id = stream.id;
+        let bus_names_clone = bus_names.clone();
         dropdown.connect_selected_notify(move |dd| {
             let sel = dd.selected() as usize;
-            if sel == 0 {
-                return;
-            }
-            if let Some((stream_id, ref stream_name)) = ids.get(sel) {
-                if !stream_name.is_empty() {
-                    pipewire::save_app_routing_default(stream_name, &bus_name_for_assign);
-                    pipewire::route_stream_to_sink(*stream_id, &bus_name_for_assign);
+            if let Some(bus_name) = bus_names_clone.get(sel) {
+                if bus_name.is_empty() {
+                    pipewire::save_app_routing_default(&stream_name, "");
+                    pipewire::set_default(stream_id);
+                } else {
+                    pipewire::save_app_routing_default(&stream_name, bus_name);
+                    pipewire::route_stream_to_sink(stream_id, bus_name);
                 }
             }
         });
 
-        assign_row.add_suffix(&dropdown);
-        group.add(&assign_row);
+        row.add_suffix(&dropdown);
+        group.add(&row);
     }
 
+    drop(configs);
     group
 }
 
@@ -698,6 +721,7 @@ fn show_add_bus_dialog(
 
         let mut cfgs = configs_clone.borrow_mut();
         cfgs.push(new_bus);
+        pipewire::save_audio_bus_configs(&cfgs);
         let new_idx = cfgs.len() - 1;
         drop(cfgs);
 

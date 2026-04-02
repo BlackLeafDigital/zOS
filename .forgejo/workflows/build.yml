@@ -14,7 +14,7 @@ on:
       - 'zos-cli/**'
       - 'zos-settings/**'
       - 'zos-dock/**'
-      - 'zos-tray/**'
+      - 'zos-daemon/**'
       - 'disk_config/**'
       - 'Justfile'
   pull_request:
