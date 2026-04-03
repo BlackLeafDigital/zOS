@@ -181,6 +181,67 @@ pub fn apply_custom_updates() -> Result<String> {
     }
 }
 
+/// Ensure flatpak/appimage overrides from custom-packages.json are applied
+/// to already-installed packages. Idempotent — safe to call on every update.
+pub fn ensure_custom_overrides() -> Result<()> {
+    use super::install::{load_custom_packages, slugify};
+
+    let packages = load_custom_packages();
+    let installed_flatpaks = Command::new("flatpak")
+        .args(["list", "--user", "--columns=application"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+
+    for pkg in &packages {
+        match pkg.install_type.as_str() {
+            "github-flatpak" => {
+                if let Some(overrides) = &pkg.flatpak_overrides {
+                    if installed_flatpaks
+                        .lines()
+                        .any(|l| l.trim() == overrides.app_id)
+                    {
+                        for (key, value) in &overrides.env {
+                            let env_arg = format!("--env={}={}", key, value);
+                            let _ = Command::new("flatpak")
+                                .args(["override", "--user", &env_arg, &overrides.app_id])
+                                .status();
+                        }
+                    }
+                }
+            }
+            "github-appimage" => {
+                if let Some(env_vars) = &pkg.env {
+                    let slug = slugify(&pkg.name);
+                    let bin_path = format!("{home}/.local/bin/{slug}");
+                    if std::path::Path::new(&bin_path).exists() {
+                        let env_prefix: String = env_vars
+                            .iter()
+                            .map(|(k, v)| format!("{}={}", k, v))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let exec_line = format!("env {} {}", env_prefix, bin_path);
+                        let desktop_dir = format!("{home}/.local/share/applications");
+                        let _ = std::fs::create_dir_all(&desktop_dir);
+                        let desktop_content = format!(
+                            "[Desktop Entry]\nType=Application\nName={}\nExec={}\nIcon=application-x-executable\nCategories=Graphics;3DGraphics;\nComment={}\n",
+                            pkg.name, exec_line, pkg.description
+                        );
+                        let _ = std::fs::write(
+                            format!("{desktop_dir}/{slug}.desktop"),
+                            desktop_content,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 // --- Internal helpers ---
 
 fn get_current_image() -> String {

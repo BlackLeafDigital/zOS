@@ -32,6 +32,12 @@ impl std::fmt::Display for Source {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+pub struct FlatpakOverrides {
+    pub app_id: String,
+    pub env: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct CustomPackage {
     pub name: String,
     pub description: String,
@@ -39,6 +45,8 @@ pub struct CustomPackage {
     pub install_type: String,
     pub github_repo: String,
     pub asset_pattern: String,
+    pub flatpak_overrides: Option<FlatpakOverrides>,
+    pub env: Option<std::collections::HashMap<String, String>>,
 }
 
 pub fn load_custom_packages() -> Vec<CustomPackage> {
@@ -120,7 +128,7 @@ pub fn resolve_github_release(repo: &str, asset_pattern: &str) -> Result<(String
     ))
 }
 
-fn slugify(name: &str) -> String {
+pub fn slugify(name: &str) -> String {
     name.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
@@ -153,6 +161,15 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
             if !install_status.success() {
                 return Err(color_eyre::eyre::eyre!("flatpak install failed"));
             }
+            // Apply flatpak environment overrides if configured
+            if let Some(overrides) = &pkg.flatpak_overrides {
+                for (key, value) in &overrides.env {
+                    let env_arg = format!("--env={}={}", key, value);
+                    let _ = Command::new("flatpak")
+                        .args(["override", "--user", &env_arg, &overrides.app_id])
+                        .status();
+                }
+            }
         }
         "github-appimage" => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
@@ -170,12 +187,22 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
             }
             let _ = Command::new("chmod").args(["+x", &bin_path]).status();
 
-            // Create .desktop launcher entry
+            // Create .desktop launcher entry (with env overrides if configured)
+            let exec_line = if let Some(env_vars) = &pkg.env {
+                let env_prefix: String = env_vars
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("env {} {}", env_prefix, bin_path)
+            } else {
+                bin_path.clone()
+            };
             let desktop_dir = format!("{home}/.local/share/applications");
             let _ = std::fs::create_dir_all(&desktop_dir);
             let desktop_content = format!(
                 "[Desktop Entry]\nType=Application\nName={}\nExec={}\nIcon=application-x-executable\nCategories=Graphics;3DGraphics;\nComment={}\n",
-                pkg.name, bin_path, pkg.description
+                pkg.name, exec_line, pkg.description
             );
             let _ = std::fs::write(format!("{desktop_dir}/{slug}.desktop"), desktop_content);
         }

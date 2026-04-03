@@ -5,7 +5,16 @@
     "search_terms": ["orca", "orcaslicer", "snapmaker", "slicer", "3d"],
     "install_type": "github-flatpak",
     "github_repo": "Snapmaker/OrcaSlicer",
-    "asset_pattern": "flatpak*x86_64*.flatpak"
+    "asset_pattern": "flatpak*x86_64*.flatpak",
+    "flatpak_overrides": {
+      "app_id": "io.github.Snapmaker.Snapmaker_Orca",
+      "env": {
+        "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
+        "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
+        "MESA_LOADER_DRIVER_OVERRIDE": "zink",
+        "GBM_BACKEND": "dri"
+      }
+    }
   },
   {
     "name": "Full Spectrum Orca",
@@ -13,6 +22,12 @@
     "search_terms": ["fullspectrum", "orca", "color", "cmyk", "mixing", "ratdoux", "slicer"],
     "install_type": "github-appimage",
     "github_repo": "ratdoux/OrcaSlicer-FullSpectrum",
-    "asset_pattern": "*AppImage*Ubuntu2404*.AppImage"
+    "asset_pattern": "*AppImage*Ubuntu2404*.AppImage",
+    "env": {
+      "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
+      "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
+      "MESA_LOADER_DRIVER_OVERRIDE": "zink",
+      "GBM_BACKEND": "dri"
+    }
   }
 ]

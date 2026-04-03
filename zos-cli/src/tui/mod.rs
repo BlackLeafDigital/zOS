@@ -275,6 +275,8 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     app.flatpak_message = Some(format!("Failed to check flatpaks: {e}"));
                 }
             }
+            // Sync custom package overrides (env vars for Wayland fixes, etc.)
+            let _ = update::ensure_custom_overrides();
         }
         _ => {}
     }
