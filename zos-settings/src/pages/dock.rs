@@ -23,7 +23,8 @@ fn default_config() -> serde_json::Value {
         "pinned": ["org.wezfurlong.wezterm", "org.mozilla.firefox", "org.kde.dolphin"],
         "icon_size": 48,
         "magnification": 1.6,
-        "auto_hide": false
+        "auto_hide": false,
+        "position": "bottom"
     })
 }
 
@@ -59,6 +60,27 @@ pub fn build() -> gtk::Box {
     auto_hide_icon.set_valign(gtk::Align::Center);
     auto_hide_row.add_prefix(&auto_hide_icon);
     behavior_group.add(&auto_hide_row);
+
+    // Position selector
+    let position_values = ["bottom", "top", "left", "right"];
+    let position_labels = ["Bottom", "Top", "Left", "Right"];
+    let current_position = config
+        .get("position")
+        .and_then(|v| v.as_str())
+        .unwrap_or("bottom");
+    let position_idx = position_values
+        .iter()
+        .position(|&v| v == current_position)
+        .unwrap_or(0) as u32;
+    let position_model = gtk::StringList::new(&position_labels);
+    let position_combo = adw::ComboRow::builder()
+        .title("Position")
+        .subtitle("Which screen edge the dock attaches to")
+        .model(&position_model)
+        .selected(position_idx)
+        .build();
+    behavior_group.add(&position_combo);
+
     page.append(&behavior_group);
 
     // --- Appearance ---
@@ -138,6 +160,9 @@ pub fn build() -> gtk::Box {
     let auto_hide_row_clone = auto_hide_row.clone();
     let icon_size_spin_clone = icon_size_spin.clone();
     let mag_scale_clone = mag_scale.clone();
+    let position_combo_clone = position_combo.clone();
+    let position_values_owned: Vec<String> =
+        position_values.iter().map(|s| s.to_string()).collect();
 
     apply_btn.connect_clicked(move |btn| {
         let mut config = read_dock_config();
@@ -148,6 +173,13 @@ pub fn build() -> gtk::Box {
         // Round magnification to 1 decimal place
         let mag_val = (mag_scale_clone.value() * 10.0).round() / 10.0;
         config["magnification"] = serde_json::Value::from(mag_val);
+        // Position
+        let pos_idx = position_combo_clone.selected() as usize;
+        let pos_val = position_values_owned
+            .get(pos_idx)
+            .cloned()
+            .unwrap_or_else(|| "bottom".to_string());
+        config["position"] = serde_json::Value::String(pos_val);
         save_dock_config(&config);
         btn.set_label("Applied");
     });

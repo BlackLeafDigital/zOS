@@ -5,8 +5,35 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Which screen edge the dock attaches to.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Bottom,
+    Top,
+    Left,
+    Right,
+}
+
+impl Default for DockPosition {
+    fn default() -> Self {
+        DockPosition::Bottom
+    }
+}
+
+impl DockPosition {
+    pub fn is_horizontal(self) -> bool {
+        matches!(self, DockPosition::Bottom | DockPosition::Top)
+    }
+
+    pub fn is_top(self) -> bool {
+        matches!(self, DockPosition::Top)
+    }
+}
+
 /// Dock configuration persisted to ~/.config/zos/dock.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DockConfig {
     /// Desktop app IDs for pinned applications (e.g. "org.wezfurlong.wezterm").
     pub pinned: Vec<String>,
@@ -16,6 +43,8 @@ pub struct DockConfig {
     pub magnification: f32,
     /// Whether the dock should auto-hide when no windows are focused on it.
     pub auto_hide: bool,
+    /// Which screen edge the dock attaches to.
+    pub position: DockPosition,
 }
 
 impl Default for DockConfig {
@@ -29,6 +58,7 @@ impl Default for DockConfig {
             icon_size: 48,
             magnification: 1.6,
             auto_hide: false,
+            position: DockPosition::default(),
         }
     }
 }

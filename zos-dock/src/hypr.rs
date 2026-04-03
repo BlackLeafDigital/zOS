@@ -202,6 +202,29 @@ pub fn get_monitor_widths() -> Vec<u32> {
         .collect()
 }
 
+/// Query Hyprland for connected monitor heights via `hyprctl monitors -j`.
+pub fn get_monitor_heights() -> Vec<u32> {
+    let output = match Command::new("hyprctl").args(["monitors", "-j"]).output() {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let json_str = match std::str::from_utf8(&output.stdout) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let monitors: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    monitors
+        .iter()
+        .filter_map(|m| m.get("height").and_then(|v| v.as_u64()).map(|h| h as u32))
+        .collect()
+}
+
 /// Check if the currently focused window is fullscreen.
 pub fn is_active_window_fullscreen() -> bool {
     let output = match Command::new("hyprctl")

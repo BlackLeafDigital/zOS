@@ -6,5 +6,13 @@
     "install_type": "github-flatpak",
     "github_repo": "Snapmaker/OrcaSlicer",
     "asset_pattern": "flatpak*x86_64*.flatpak"
+  },
+  {
+    "name": "Full Spectrum Orca",
+    "description": "Snapmaker Orca with CMYK color mixing",
+    "search_terms": ["fullspectrum", "orca", "color", "cmyk", "mixing", "ratdoux", "slicer"],
+    "install_type": "github-appimage",
+    "github_repo": "ratdoux/OrcaSlicer-FullSpectrum",
+    "asset_pattern": "*AppImage*Ubuntu2404*.AppImage"
   }
 ]

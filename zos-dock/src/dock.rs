@@ -1,6 +1,6 @@
 // === dock.rs — Main dock application: state, update, view ===
 
-use crate::config::DockConfig;
+use crate::config::{DockConfig, DockPosition};
 use crate::hypr::{self, HyprWindow};
 use crate::hypr_events::{self, HyprEvent};
 use crate::icons::IconResolver;
@@ -12,14 +12,15 @@ use iced::{
 use iced_anim::Spring;
 use iced_layershell::actions::ActionCallback;
 use iced_layershell::actions::{IcedNewMenuSettings, MenuDirection};
+use iced_layershell::reexport::Anchor;
 use iced_layershell::to_layer_message;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// Height of the layer-shell surface in pixels. Must match main.rs.
-const SURFACE_HEIGHT: f32 = 100.0;
+/// Thickness of the layer-shell surface in pixels (short axis). Must match main.rs.
+const SURFACE_THICKNESS: f32 = 100.0;
 
 // --- Catppuccin Mocha colors ---
 const BG_COLOR: Color = Color {
@@ -121,14 +122,14 @@ pub struct Dock {
     pub hide_timer: Option<Instant>,
     /// When the cursor entered the hidden dock trigger zone (for reveal delay).
     pub show_timer: Option<Instant>,
-    /// Animated slide offset for auto-hide (0.0 = visible, SURFACE_HEIGHT = hidden).
+    /// Animated slide offset for auto-hide (0.0 = visible, SURFACE_THICKNESS = hidden).
     pub slide_offset: Spring<f32>,
     /// Last observed modification time of the config file.
     pub config_mtime: Option<std::time::SystemTime>,
     /// Currently open context menu, if any.
     pub context_menu: Option<ContextMenuState>,
-    /// Surface width (monitor pixel width) for coordinate calculations.
-    pub surface_width: u32,
+    /// Surface length (long-axis monitor dimension) for coordinate calculations.
+    pub surface_length: u32,
     /// Main window IDs (one per monitor), captured from view() for input region updates.
     pub known_window_ids: RefCell<Vec<iced::window::Id>>,
     /// Previous item count, used to detect when input region needs updating.
@@ -137,6 +138,8 @@ pub struct Dock {
     pub minimize_reveal_timer: Option<Instant>,
     /// Phase for animated focused-app indicator gradient (0.0–360.0 degrees).
     pub indicator_phase: f32,
+    /// Which screen edge the dock is on.
+    pub position: DockPosition,
 }
 
 /// Messages handled by the dock.
@@ -181,7 +184,15 @@ pub fn boot() -> Dock {
     let config = DockConfig::load();
     let icon_resolver = IconResolver::new();
     let windows = hypr::get_windows();
-    let surface_width = hypr::get_monitor_widths().into_iter().max().unwrap_or(1920);
+    let position = config.position;
+    let surface_length = if position.is_horizontal() {
+        hypr::get_monitor_widths().into_iter().max().unwrap_or(1920)
+    } else {
+        hypr::get_monitor_heights()
+            .into_iter()
+            .max()
+            .unwrap_or(1080)
+    };
 
     let mut dock = Dock {
         items: Vec::new(),
@@ -196,11 +207,12 @@ pub fn boot() -> Dock {
         slide_offset: Spring::new(0.0),
         config_mtime: DockConfig::config_mtime(),
         context_menu: None,
-        surface_width,
+        surface_length,
         known_window_ids: RefCell::new(Vec::new()),
         prev_item_count: 0,
         minimize_reveal_timer: None,
         indicator_phase: 0.0,
+        position,
     };
     dock.rebuild_items(&windows);
     dock
@@ -248,7 +260,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                         return Task::done(Message::RemoveWindow(cm.id));
                     }
                     dock.hidden = true;
-                    dock.slide_offset.set_target(SURFACE_HEIGHT);
+                    dock.slide_offset.set_target(SURFACE_THICKNESS);
                     dock.hide_timer = None;
                     hidden_changed = true;
                 }
@@ -263,7 +275,7 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                         return Task::done(Message::RemoveWindow(cm.id));
                     }
                     dock.hidden = true;
-                    dock.slide_offset.set_target(SURFACE_HEIGHT);
+                    dock.slide_offset.set_target(SURFACE_THICKNESS);
                     dock.minimize_reveal_timer = None;
                     hidden_changed = true;
                 }
@@ -290,7 +302,11 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                             dock.hide_timer = None;
                             dock.slide_offset.set_target(0.0);
                         }
-                        dock.cursor_x = Some(position.x);
+                        dock.cursor_x = Some(if dock.position.is_horizontal() {
+                            position.x
+                        } else {
+                            position.y
+                        });
                         dock.update_magnification();
                         // Cancel minimize-reveal auto-re-hide if user is interacting
                         dock.minimize_reveal_timer = None;
@@ -373,7 +389,10 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
                 let menu_height: u32 = item_count * 36 + 16;
                 let (menu_id, open_task) = Message::menu_open(IcedNewMenuSettings {
                     size: (220, menu_height),
-                    direction: MenuDirection::Up,
+                    direction: match dock.position {
+                        DockPosition::Top | DockPosition::Left => MenuDirection::Down,
+                        DockPosition::Bottom | DockPosition::Right => MenuDirection::Up,
+                    },
                 });
 
                 let window_addresses: Vec<String> =
@@ -418,9 +437,51 @@ pub fn update(dock: &mut Dock, message: Message) -> Task<Message> {
             let new_mtime = DockConfig::config_mtime();
             if new_mtime != dock.config_mtime {
                 dock.config_mtime = new_mtime;
-                dock.config = DockConfig::load();
+                let new_config = DockConfig::load();
+                let position_changed = new_config.position != dock.position;
+                dock.config = new_config;
+                dock.position = dock.config.position;
                 let windows = hypr::get_windows();
                 dock.rebuild_items(&windows);
+
+                if position_changed {
+                    // Recompute surface length for the new axis
+                    dock.surface_length = if dock.position.is_horizontal() {
+                        hypr::get_monitor_widths().into_iter().max().unwrap_or(1920)
+                    } else {
+                        hypr::get_monitor_heights()
+                            .into_iter()
+                            .max()
+                            .unwrap_or(1080)
+                    };
+
+                    let new_anchor = match dock.position {
+                        DockPosition::Bottom => Anchor::Bottom | Anchor::Left | Anchor::Right,
+                        DockPosition::Top => Anchor::Top | Anchor::Left | Anchor::Right,
+                        DockPosition::Left => Anchor::Left | Anchor::Top | Anchor::Bottom,
+                        DockPosition::Right => Anchor::Right | Anchor::Top | Anchor::Bottom,
+                    };
+                    let new_size = if dock.position.is_horizontal() {
+                        (0u32, 100u32)
+                    } else {
+                        (100u32, 0u32)
+                    };
+
+                    let ids = dock.known_window_ids.borrow().clone();
+                    let mut tasks: Vec<Task<Message>> = ids
+                        .into_iter()
+                        .map(|id| {
+                            Task::done(Message::AnchorSizeChange {
+                                id,
+                                anchor: new_anchor,
+                                size: new_size,
+                            })
+                        })
+                        .collect();
+                    tasks.push(dock.input_region_tasks());
+                    return Task::batch(tasks);
+                }
+
                 return dock.input_region_tasks();
             }
             Task::none()
@@ -563,7 +624,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
     }
 
     let slide = *dock.slide_offset.value();
-    if slide > SURFACE_HEIGHT - 2.0 {
+    if slide > SURFACE_THICKNESS - 2.0 {
         // Fully hidden — render transparent
         return container(Space::new())
             .width(Length::Fill)
@@ -571,8 +632,9 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
             .into();
     }
 
-    let mut items_row = row![].spacing(4).align_y(iced::Alignment::End);
+    let is_horizontal = dock.position.is_horizontal();
 
+    let mut item_elements: Vec<Element<'_, Message>> = Vec::new();
     let mut has_pinned = false;
     let mut started_running = false;
     let mut started_minimized = false;
@@ -581,13 +643,13 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
         // Insert separator between pinned and unpinned-running items.
         if !item.pinned && !item.minimized && !started_running && has_pinned {
             started_running = true;
-            items_row = items_row.push(separator());
+            item_elements.push(separator(is_horizontal));
         }
         // Insert separator between running items and minimized items.
         if item.minimized && !started_minimized {
             started_minimized = true;
             if has_pinned || started_running {
-                items_row = items_row.push(separator());
+                item_elements.push(separator(is_horizontal));
             }
         }
         if item.pinned {
@@ -653,9 +715,17 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
             .into()
         };
 
-        // Active indicator below the icon: animated pill for focused, dot for running.
+        // Active indicator: animated pill for focused, dot for running.
+        // For horizontal docks, indicator dimensions are width x height;
+        // for vertical docks, swap so the indicator stays along the short axis.
+        let (dot_w, dot_h, focus_w, focus_h): (f32, f32, f32, f32) = if is_horizontal {
+            (6.0, 4.0, 16.0, 4.0)
+        } else {
+            (4.0, 6.0, 4.0, 16.0)
+        };
+
         let dot: Element<'_, Message> = if item.minimized {
-            container(Space::new().width(6).height(4))
+            container(Space::new().width(dot_w).height(dot_h))
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Color(SEPARATOR_COLOR)),
                     border: Border {
@@ -668,7 +738,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 .into()
         } else if item.is_focused(&dock.active_address) {
             let phase = dock.indicator_phase;
-            container(Space::new().width(16).height(4))
+            container(Space::new().width(focus_w).height(focus_h))
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Gradient(Gradient::Linear(
                         gradient::Linear::new(Radians(0.0))
@@ -685,7 +755,7 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 })
                 .into()
         } else if item.is_running() {
-            container(Space::new().width(6).height(4))
+            container(Space::new().width(dot_w).height(dot_h))
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(Background::Color(INDICATOR_COLOR)),
                     border: Border {
@@ -697,25 +767,51 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 })
                 .into()
         } else {
-            Space::new().width(6).height(4).into()
+            Space::new().width(dot_w).height(dot_h).into()
         };
 
-        let item_column = column![icon_widget, dot]
-            .spacing(2)
-            .align_x(iced::Alignment::Center);
+        // Arrange icon + indicator based on dock position:
+        //   Bottom: column![icon, dot]   Top: column![dot, icon]
+        //   Left:   row![dot, icon]      Right: row![icon, dot]
+        let item_layout: Element<'_, Message> = match dock.position {
+            DockPosition::Bottom => column![icon_widget, dot]
+                .spacing(2)
+                .align_x(iced::Alignment::Center)
+                .into(),
+            DockPosition::Top => column![dot, icon_widget]
+                .spacing(2)
+                .align_x(iced::Alignment::Center)
+                .into(),
+            DockPosition::Left => row![dot, icon_widget]
+                .spacing(2)
+                .align_y(iced::Alignment::Center)
+                .into(),
+            DockPosition::Right => row![icon_widget, dot]
+                .spacing(2)
+                .align_y(iced::Alignment::Center)
+                .into(),
+        };
 
-        let item_widget = mouse_area(
-            container(item_column)
+        let item_container = if is_horizontal {
+            container(item_layout)
                 .width(Length::Fixed(scaled_size as f32 + 4.0))
                 .padding(2)
-                .style(move |_theme: &Theme| container::Style {
+        } else {
+            container(item_layout)
+                .height(Length::Fixed(scaled_size as f32 + 4.0))
+                .padding(2)
+        };
+
+        let item_widget =
+            mouse_area(
+                item_container.style(move |_theme: &Theme| container::Style {
                     background: None,
                     ..Default::default()
                 }),
-        )
-        .on_press(Message::ItemClicked(i))
-        .on_right_press(Message::ItemRightClicked(i))
-        .interaction(iced::mouse::Interaction::Pointer);
+            )
+            .on_press(Message::ItemClicked(i))
+            .on_right_press(Message::ItemRightClicked(i))
+            .interaction(iced::mouse::Interaction::Pointer);
 
         let tooltip_content = container(text(&item.name).size(12).color(TEXT_COLOR))
             .padding([4, 8])
@@ -729,38 +825,110 @@ pub fn view(dock: &Dock, window_id: iced::window::Id) -> Element<'_, Message> {
                 ..Default::default()
             });
 
-        let item_with_tooltip =
-            tooltip(item_widget, tooltip_content, tooltip::Position::Top).gap(4);
+        let tip_pos = match dock.position {
+            DockPosition::Bottom => tooltip::Position::Top,
+            DockPosition::Top => tooltip::Position::Bottom,
+            DockPosition::Left => tooltip::Position::Right,
+            DockPosition::Right => tooltip::Position::Left,
+        };
+        let item_with_tooltip = tooltip(item_widget, tooltip_content, tip_pos).gap(4);
 
-        items_row = items_row.push(item_with_tooltip);
+        item_elements.push(item_with_tooltip.into());
     }
 
-    // Wrap in the dock background container.
-    let dock_bg = container(items_row.padding([6, 12]))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(BG_COLOR)),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 16.0.into(),
-            },
-            ..Default::default()
-        })
-        .center_x(Length::Shrink);
+    // Assemble items into a row (horizontal) or column (vertical).
+    let items_container: Element<'_, Message> = if is_horizontal {
+        let row_align = match dock.position {
+            DockPosition::Top => iced::Alignment::Start,
+            _ => iced::Alignment::End,
+        };
+        let mut r = row![].spacing(4).align_y(row_align);
+        for item in item_elements {
+            r = r.push(item);
+        }
+        r.into()
+    } else {
+        let col_align = match dock.position {
+            DockPosition::Left => iced::Alignment::Start,
+            _ => iced::Alignment::End,
+        };
+        let mut c = column![].spacing(4).align_x(col_align);
+        for item in item_elements {
+            c = c.push(item);
+        }
+        c.into()
+    };
 
-    // Outer container to center the dock horizontally.
-    let dock_view: Element<'_, Message> = container(dock_bg)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .align_y(iced::alignment::Vertical::Bottom)
-        .padding(iced::Padding {
+    // Wrap in the dock background container.
+    // Horizontal: thin top/bottom padding, wide left/right.
+    // Vertical: wide top/bottom, thin left/right.
+    let pill_padding: [u16; 2] = if is_horizontal { [6, 12] } else { [12, 6] };
+    let dock_bg =
+        container(container(items_container).padding(pill_padding)).style(|_theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(BG_COLOR)),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 16.0.into(),
+                },
+                ..Default::default()
+            }
+        });
+
+    // Outer container: position the dock pill against the correct edge with slide offset.
+    let slide_padding = match dock.position {
+        DockPosition::Bottom => iced::Padding {
             top: slide,
             right: 0.0,
             bottom: 0.0,
             left: 0.0,
-        })
-        .into();
+        },
+        DockPosition::Top => iced::Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: slide,
+            left: 0.0,
+        },
+        DockPosition::Left => iced::Padding {
+            top: 0.0,
+            right: slide,
+            bottom: 0.0,
+            left: 0.0,
+        },
+        DockPosition::Right => iced::Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: slide,
+        },
+    };
+
+    let dock_view: Element<'_, Message> = if is_horizontal {
+        let v_align = match dock.position {
+            DockPosition::Top => iced::alignment::Vertical::Top,
+            _ => iced::alignment::Vertical::Bottom,
+        };
+        container(dock_bg)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .align_y(v_align)
+            .padding(slide_padding)
+            .into()
+    } else {
+        let h_align = match dock.position {
+            DockPosition::Left => iced::alignment::Horizontal::Left,
+            _ => iced::alignment::Horizontal::Right,
+        };
+        container(dock_bg)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_y(Length::Fill)
+            .align_x(h_align)
+            .padding(slide_padding)
+            .into()
+    };
 
     // If a context menu is open, clicking the dock dismisses it
     if dock.context_menu.is_some() {
@@ -818,11 +986,14 @@ pub fn style(_dock: &Dock, _theme: &Theme) -> iced::theme::Style {
     }
 }
 
-/// Create a vertical separator element.
-fn separator<'a>() -> Element<'a, Message> {
-    container(Space::new().width(2))
-        .height(Length::Fixed(32.0))
-        .width(Length::Fixed(2.0))
+/// Create a separator element.
+/// Horizontal docks get a vertical bar (2px wide, 32px tall).
+/// Vertical docks get a horizontal bar (32px wide, 2px tall).
+fn separator<'a>(horizontal: bool) -> Element<'a, Message> {
+    let (w, h): (f32, f32) = if horizontal { (2.0, 32.0) } else { (32.0, 2.0) };
+    container(Space::new().width(w).height(h))
+        .width(Length::Fixed(w))
+        .height(Length::Fixed(h))
         .style(|_theme: &Theme| container::Style {
             background: Some(Background::Color(SEPARATOR_COLOR)),
             border: Border {
@@ -1097,7 +1268,7 @@ impl Dock {
     }
 
     /// Compute the total rendered width of the dock content (for centering/input region calculations).
-    fn compute_dock_content_width(&self) -> f32 {
+    fn compute_dock_content_length(&self) -> f32 {
         let icon_size = self.config.icon_size as f32;
         let spacing = 4.0;
         let padding = 12.0;
@@ -1138,8 +1309,8 @@ impl Dock {
 
         // Convert surface-relative cursor_x to dock-content-relative coordinates.
         // The dock content is centered within the full-width surface.
-        let dock_width = self.compute_dock_content_width();
-        let centering_offset = (self.surface_width as f32 - dock_width) / 2.0;
+        let dock_width = self.compute_dock_content_length();
+        let centering_offset = (self.surface_length as f32 - dock_width) / 2.0;
         let dock_relative_x = cursor_x - centering_offset;
 
         let magnification = self.config.magnification;
@@ -1166,46 +1337,77 @@ impl Dock {
     }
 
     /// Build tasks to update the input region and margin for all known main windows.
-    /// When visible: input region covers only the centered dock content, 8px bottom margin.
-    /// When hidden (auto-hide): 12px trigger strip at screen bottom edge, 0px margin.
+    /// When visible: input region covers only the centered dock content with edge margin.
+    /// When hidden (auto-hide): 4px trigger strip at the relevant screen edge, 0px margin.
     fn input_region_tasks(&self) -> Task<Message> {
         let ids = self.known_window_ids.borrow().clone();
         if ids.is_empty() {
             return Task::none();
         }
 
-        let dock_width = self.compute_dock_content_width();
-        let surface_width = self.surface_width;
+        let dock_length = self.compute_dock_content_length();
+        let sl = self.surface_length as i32;
+        let st = SURFACE_THICKNESS as i32;
         let hidden = self.hidden;
         let auto_hide = self.config.auto_hide;
+        let position = self.position;
+        let is_horizontal = position.is_horizontal();
+        let pill_size = (self.config.icon_size as f32 + 26.0)
+            .min(SURFACE_THICKNESS)
+            .ceil() as i32;
+        let has_context_menu = self.context_menu.is_some();
+        let dock_len_i = dock_length.ceil() as i32;
 
         let tasks: Vec<Task<Message>> = ids
             .into_iter()
             .flat_map(|id| {
                 let (region_x, region_y, region_w, region_h) = if hidden && auto_hide {
-                    // 4px trigger strip at the very bottom edge (macOS-style)
-                    (
-                        0i32,
-                        (SURFACE_HEIGHT as i32 - 4),
-                        surface_width as i32,
-                        4i32,
-                    )
-                } else if self.context_menu.is_some() {
+                    // 4px trigger strip at the screen edge
+                    match position {
+                        DockPosition::Bottom => (0, st - 4, sl, 4),
+                        DockPosition::Top => (0, 0, sl, 4),
+                        DockPosition::Left => (0, 0, 4, sl),
+                        DockPosition::Right => (st - 4, 0, 4, sl),
+                    }
+                } else if has_context_menu {
                     // Context menu open: full surface catches clicks to dismiss
-                    (0i32, 0i32, surface_width as i32, SURFACE_HEIGHT as i32)
+                    if is_horizontal {
+                        (0, 0, sl, st)
+                    } else {
+                        (0, 0, st, sl)
+                    }
                 } else {
-                    // Only the visible dock pill area (bottom-aligned)
-                    let pill_height = (self.config.icon_size as f32 + 26.0).min(SURFACE_HEIGHT);
-                    let x = ((surface_width as f32 - dock_width) / 2.0).max(0.0) as i32;
-                    let y = (SURFACE_HEIGHT - pill_height) as i32;
-                    (x, y, dock_width.ceil() as i32, pill_height.ceil() as i32)
+                    // Only the visible dock pill area, centered on the long axis
+                    match position {
+                        DockPosition::Bottom => {
+                            let cx = ((sl as f32 - dock_length) / 2.0).max(0.0) as i32;
+                            (cx, st - pill_size, dock_len_i, pill_size)
+                        }
+                        DockPosition::Top => {
+                            let cx = ((sl as f32 - dock_length) / 2.0).max(0.0) as i32;
+                            (cx, 0, dock_len_i, pill_size)
+                        }
+                        DockPosition::Left => {
+                            let cy = ((sl as f32 - dock_length) / 2.0).max(0.0) as i32;
+                            (0, cy, pill_size, dock_len_i)
+                        }
+                        DockPosition::Right => {
+                            let cy = ((sl as f32 - dock_length) / 2.0).max(0.0) as i32;
+                            (st - pill_size, cy, pill_size, dock_len_i)
+                        }
+                    }
                 };
 
                 // Dynamic margin: 0 when hidden (surface touches screen edge), 8 when visible
                 let margin = if hidden && auto_hide {
                     (0i32, 0i32, 0i32, 0i32)
                 } else {
-                    (0i32, 0i32, 8i32, 0i32)
+                    match position {
+                        DockPosition::Bottom => (0, 0, 8, 0),
+                        DockPosition::Top => (8, 0, 0, 0),
+                        DockPosition::Left => (0, 0, 0, 8),
+                        DockPosition::Right => (0, 8, 0, 0),
+                    }
                 };
 
                 vec![

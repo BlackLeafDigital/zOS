@@ -109,9 +109,10 @@ pub fn check_custom_updates() -> Result<Vec<String>> {
 
     let packages = load_custom_packages();
     let mut updatable = Vec::new();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
 
-    // Get installed flatpak list with versions
-    let installed = Command::new("flatpak")
+    // Get installed flatpak list for flatpak-type packages
+    let installed_flatpaks = Command::new("flatpak")
         .args(["list", "--user", "--columns=application,version"])
         .output()
         .ok()
@@ -119,25 +120,34 @@ pub fn check_custom_updates() -> Result<Vec<String>> {
         .unwrap_or_default();
 
     for pkg in &packages {
-        if pkg.install_type != "github-flatpak" {
-            continue;
-        }
-
-        // Check if this package's flatpak is installed
-        // Custom flatpaks won't have a standard app ID match, so just check
-        // if any installed flatpak name relates to this package
-        let pkg_lower = pkg.name.to_lowercase();
-        let is_installed = installed
-            .lines()
-            .any(|l| l.to_lowercase().contains(&pkg_lower) || l.to_lowercase().contains("orca"));
+        let is_installed = match pkg.install_type.as_str() {
+            "github-flatpak" => {
+                let pkg_lower = pkg.name.to_lowercase();
+                installed_flatpaks
+                    .lines()
+                    .any(|l| l.to_lowercase().contains(&pkg_lower))
+            }
+            "github-appimage" => {
+                let slug = pkg
+                    .name
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                    .collect::<String>()
+                    .split('-')
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("-");
+                std::path::Path::new(&format!("{home}/.local/bin/{slug}")).exists()
+            }
+            _ => false,
+        };
 
         if !is_installed {
             continue;
         }
 
-        // Check if a newer version exists on GitHub
         if let Ok((tag, _url)) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern) {
-            // We can't easily compare versions, so just report it as available
             updatable.push(format!("{} ({})", pkg.name, tag));
         }
     }

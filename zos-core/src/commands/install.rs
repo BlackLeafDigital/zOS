@@ -120,28 +120,68 @@ pub fn resolve_github_release(repo: &str, asset_pattern: &str) -> Result<(String
     ))
 }
 
-/// Install a custom package by downloading from GitHub and installing via flatpak.
+fn slugify(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Install a custom package from GitHub releases.
 pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
     let (tag, url) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern)?;
     println!("Found {} {} — downloading...", pkg.name, tag);
 
-    let tmp = "/tmp/zos-custom-install.flatpak";
+    match pkg.install_type.as_str() {
+        "github-flatpak" => {
+            let tmp = "/tmp/zos-custom-install.flatpak";
+            let dl_status = Command::new("curl")
+                .args(["-fsSL", "-o", tmp, &url])
+                .status()?;
+            if !dl_status.success() {
+                let _ = std::fs::remove_file(tmp);
+                return Err(color_eyre::eyre::eyre!("Failed to download {}", url));
+            }
+            let install_status = Command::new("flatpak")
+                .args(["install", "--user", "-y", tmp])
+                .status()?;
+            let _ = std::fs::remove_file(tmp);
+            if !install_status.success() {
+                return Err(color_eyre::eyre::eyre!("flatpak install failed"));
+            }
+        }
+        "github-appimage" => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+            let slug = slugify(&pkg.name);
+            let bin_dir = format!("{home}/.local/bin");
+            let _ = std::fs::create_dir_all(&bin_dir);
+            let bin_path = format!("{bin_dir}/{slug}");
 
-    let dl_status = Command::new("curl")
-        .args(["-fsSL", "-o", tmp, &url])
-        .status()?;
-    if !dl_status.success() {
-        let _ = std::fs::remove_file(tmp);
-        return Err(color_eyre::eyre::eyre!("Failed to download {}", url));
-    }
+            let dl_status = Command::new("curl")
+                .args(["-fsSL", "-o", &bin_path, &url])
+                .status()?;
+            if !dl_status.success() {
+                let _ = std::fs::remove_file(&bin_path);
+                return Err(color_eyre::eyre::eyre!("Failed to download {}", url));
+            }
+            let _ = Command::new("chmod").args(["+x", &bin_path]).status();
 
-    let install_status = Command::new("flatpak")
-        .args(["install", "--user", "-y", tmp])
-        .status()?;
-    let _ = std::fs::remove_file(tmp);
-
-    if !install_status.success() {
-        return Err(color_eyre::eyre::eyre!("flatpak install failed"));
+            // Create .desktop launcher entry
+            let desktop_dir = format!("{home}/.local/share/applications");
+            let _ = std::fs::create_dir_all(&desktop_dir);
+            let desktop_content = format!(
+                "[Desktop Entry]\nType=Application\nName={}\nExec={}\nIcon=application-x-executable\nCategories=Graphics;3DGraphics;\nComment={}\n",
+                pkg.name, bin_path, pkg.description
+            );
+            let _ = std::fs::write(format!("{desktop_dir}/{slug}.desktop"), desktop_content);
+        }
+        other => {
+            return Err(color_eyre::eyre::eyre!("Unknown install type: {other}"));
+        }
     }
 
     println!("{} {} installed.", pkg.name, tag);

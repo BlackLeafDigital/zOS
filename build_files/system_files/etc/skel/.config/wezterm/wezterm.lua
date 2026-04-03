@@ -47,8 +47,7 @@ config.cursor_blink_rate = 500
 config.scrollback_lines = 10000
 
 -- --- GPU ---
-config.front_end = "WebGpu"
-config.webgpu_power_preference = "HighPerformance"
+config.front_end = "OpenGL"
 
 -- --- Key bindings ---
 -- All use Ctrl+Shift (never intercepted by Hyprland)
