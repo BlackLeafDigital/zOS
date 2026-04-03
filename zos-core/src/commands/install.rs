@@ -17,6 +17,7 @@ pub enum Source {
     Flatpak,
     Brew,
     Mise,
+    Custom,
 }
 
 impl std::fmt::Display for Source {
@@ -25,13 +26,135 @@ impl std::fmt::Display for Source {
             Source::Flatpak => write!(f, "Flatpak"),
             Source::Brew => write!(f, "Brew"),
             Source::Mise => write!(f, "mise"),
+            Source::Custom => write!(f, "Custom"),
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CustomPackage {
+    pub name: String,
+    pub description: String,
+    pub search_terms: Vec<String>,
+    pub install_type: String,
+    pub github_repo: String,
+    pub asset_pattern: String,
+}
+
+pub fn load_custom_packages() -> Vec<CustomPackage> {
+    let path = std::path::Path::new("/usr/share/zos/custom-packages.json");
+    if let Ok(data) = std::fs::read_to_string(path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+fn search_custom(query: &str, packages: &[CustomPackage]) -> Vec<PackageResult> {
+    let q = query.to_lowercase();
+    packages
+        .iter()
+        .filter(|p| {
+            p.name.to_lowercase().contains(&q)
+                || p.search_terms.iter().any(|t| t.to_lowercase().contains(&q))
+        })
+        .map(|p| PackageResult {
+            source: Source::Custom,
+            name: p.name.clone(),
+            description: p.description.clone(),
+            install_cmd: format!("__custom__{}", p.github_repo),
+        })
+        .collect()
+}
+
+/// Resolve the latest GitHub release and find the download URL for a matching asset.
+pub fn resolve_github_release(repo: &str, asset_pattern: &str) -> Result<(String, String)> {
+    let api_url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github.v3+json",
+            &api_url,
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(color_eyre::eyre::eyre!(
+            "Failed to query GitHub API for {repo}"
+        ));
+    }
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let tag = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let assets = json.get("assets").and_then(|v| v.as_array());
+    let pattern_lower = asset_pattern.to_lowercase();
+    let pattern_parts: Vec<&str> = pattern_lower.split('*').collect();
+
+    if let Some(assets) = assets {
+        for asset in assets {
+            if let Some(name) = asset.get("name").and_then(|v| v.as_str()) {
+                let name_lower = name.to_lowercase();
+                let matches = pattern_parts.iter().all(|part| {
+                    if part.is_empty() {
+                        return true;
+                    }
+                    name_lower.contains(part)
+                });
+                if matches {
+                    if let Some(url) = asset.get("browser_download_url").and_then(|v| v.as_str()) {
+                        return Ok((tag, url.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "No asset matching '{asset_pattern}' in {repo} release {tag}"
+    ))
+}
+
+/// Install a custom package by downloading from GitHub and installing via flatpak.
+pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
+    let (tag, url) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern)?;
+    println!("Found {} {} — downloading...", pkg.name, tag);
+
+    let tmp = "/tmp/zos-custom-install.flatpak";
+
+    let dl_status = Command::new("curl")
+        .args(["-fsSL", "-o", tmp, &url])
+        .status()?;
+    if !dl_status.success() {
+        let _ = std::fs::remove_file(tmp);
+        return Err(color_eyre::eyre::eyre!("Failed to download {}", url));
+    }
+
+    let install_status = Command::new("flatpak")
+        .args(["install", "--user", "-y", tmp])
+        .status()?;
+    let _ = std::fs::remove_file(tmp);
+
+    if !install_status.success() {
+        return Err(color_eyre::eyre::eyre!("flatpak install failed"));
+    }
+
+    println!("{} {} installed.", pkg.name, tag);
+    Ok(())
 }
 
 /// Search all package sources for the given name.
 pub fn search(query: &str) -> Vec<PackageResult> {
     let mut results = Vec::new();
+
+    // Search custom packages registry
+    let custom_packages = load_custom_packages();
+    results.extend(search_custom(query, &custom_packages));
 
     // Search Flatpak
     if let Ok(output) = Command::new("flatpak")
@@ -118,6 +241,10 @@ pub fn search_and_print(query: &str) -> Result<()> {
         return Ok(());
     }
 
+    let custom: Vec<_> = results
+        .iter()
+        .filter(|r| r.source == Source::Custom)
+        .collect();
     let flatpak: Vec<_> = results
         .iter()
         .filter(|r| r.source == Source::Flatpak)
@@ -130,6 +257,14 @@ pub fn search_and_print(query: &str) -> Result<()> {
         .iter()
         .filter(|r| r.source == Source::Mise)
         .collect();
+
+    if !custom.is_empty() {
+        println!("\x1b[1;35m── Custom (zOS curated) ──\x1b[0m");
+        for r in &custom {
+            println!("  {} — {}", r.name, r.description);
+        }
+        println!();
+    }
 
     if !flatpak.is_empty() {
         println!("\x1b[1;34m── Flatpak (GUI apps) ──\x1b[0m");
@@ -179,7 +314,7 @@ pub fn search_and_install(query: &str) -> Result<()> {
 
     // Deduplicate sources — pick best match per source
     let mut by_source: Vec<PackageResult> = Vec::new();
-    for source in &[Source::Mise, Source::Flatpak, Source::Brew] {
+    for source in &[Source::Custom, Source::Mise, Source::Flatpak, Source::Brew] {
         if let Some(best) = results
             .iter()
             .filter(|r| &r.source == source)
@@ -218,6 +353,19 @@ pub fn search_and_install(query: &str) -> Result<()> {
         }
         &by_source[choice - 1]
     };
+
+    // Handle custom packages separately (they need GitHub resolution + download)
+    if chosen.source == Source::Custom {
+        let custom_packages = load_custom_packages();
+        if let Some(pkg) = custom_packages
+            .iter()
+            .find(|p| chosen.install_cmd.contains(&p.github_repo))
+        {
+            return install_custom_package(pkg);
+        }
+        println!("Custom package not found in registry.");
+        return Ok(());
+    }
 
     println!(
         "\x1b[1mInstalling via {}:\x1b[0m {}",

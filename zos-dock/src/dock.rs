@@ -1190,6 +1190,9 @@ impl Dock {
                         surface_width as i32,
                         4i32,
                     )
+                } else if self.context_menu.is_some() {
+                    // Context menu open: full surface catches clicks to dismiss
+                    (0i32, 0i32, surface_width as i32, SURFACE_HEIGHT as i32)
                 } else {
                     // Only the visible dock pill area (bottom-aligned)
                     let pill_height = (self.config.icon_size as f32 + 26.0).min(SURFACE_HEIGHT);

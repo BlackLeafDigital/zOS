@@ -46,6 +46,7 @@ pub struct App {
     grub_view: Option<grub::GrubView>,
     setup_view: Option<setup::SetupView>,
     update_message: Option<String>,
+    flatpak_message: Option<String>,
 }
 
 impl App {
@@ -58,6 +59,7 @@ impl App {
             grub_view: None,
             setup_view: None,
             update_message: None,
+            flatpak_message: None,
         }
     }
 
@@ -245,6 +247,35 @@ fn handle_update_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 }
             }
         }
+        KeyCode::Char('f') => {
+            // Check and apply flatpak updates
+            use zos_core::commands::update;
+            match update::check_flatpak_updates() {
+                Ok(updates) if updates.is_empty() => {
+                    app.flatpak_message = Some("All flatpaks are up to date.".into());
+                }
+                Ok(updates) => {
+                    app.flatpak_message = Some(format!("Updating {} flatpak(s)...", updates.len()));
+                    match update::apply_flatpak_updates() {
+                        Ok(output) if output.status.success() => {
+                            app.flatpak_message =
+                                Some(format!("{} flatpak(s) updated.", updates.len()));
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            app.flatpak_message =
+                                Some(format!("Flatpak update failed: {}", stderr.trim()));
+                        }
+                        Err(e) => {
+                            app.flatpak_message = Some(format!("Flatpak update error: {e}"));
+                        }
+                    }
+                }
+                Err(e) => {
+                    app.flatpak_message = Some(format!("Failed to check flatpaks: {e}"));
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -289,7 +320,7 @@ fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         View::Update => {
-            render_update_view(frame, outer[1], &app.update_message);
+            render_update_view(frame, outer[1], &app.update_message, &app.flatpak_message);
         }
     }
 }
@@ -318,22 +349,29 @@ fn render_title_bar(frame: &mut Frame, area: Rect, current: View) {
     frame.render_widget(Paragraph::new(title).block(block), area);
 }
 
-fn render_update_view(frame: &mut Frame, area: Rect, message: &Option<String>) {
+fn render_update_view(
+    frame: &mut Frame,
+    area: Rect,
+    os_message: &Option<String>,
+    flatpak_message: &Option<String>,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(8),    // Main content
-            Constraint::Length(3), // Keybinds
+            Constraint::Percentage(50), // OS update
+            Constraint::Percentage(50), // Flatpak update
+            Constraint::Length(3),      // Keybinds
         ])
         .split(area);
 
-    let block = Block::default()
+    // --- OS Update section ---
+    let os_block = Block::default()
         .title(Span::styled(" OS Update ", theme::title_style()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::SURFACE0))
         .style(Style::default().bg(theme::BASE));
 
-    let content = match message {
+    let os_content = match os_message {
         Some(msg) => {
             let lines: Vec<Line> = msg
                 .lines()
@@ -343,7 +381,7 @@ fn render_update_view(frame: &mut Frame, area: Rect, message: &Option<String>) {
         }
         None => Paragraph::new(vec![
             Line::from(Span::styled(
-                "  Press 'c' to check for updates.",
+                "  Press 'c' to check for OS updates.",
                 theme::subtext_style(),
             )),
             Line::from(Span::styled(
@@ -353,13 +391,39 @@ fn render_update_view(frame: &mut Frame, area: Rect, message: &Option<String>) {
         ]),
     };
 
-    frame.render_widget(content.block(block), chunks[0]);
+    frame.render_widget(os_content.block(os_block), chunks[0]);
 
+    // --- Flatpak Update section ---
+    let flatpak_block = Block::default()
+        .title(Span::styled(" Flatpak Update ", theme::title_style()))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::SURFACE0))
+        .style(Style::default().bg(theme::BASE));
+
+    let flatpak_content = match flatpak_message {
+        Some(msg) => {
+            let lines: Vec<Line> = msg
+                .lines()
+                .map(|l| Line::from(Span::styled(format!("  {}", l), theme::text_style())))
+                .collect();
+            Paragraph::new(lines)
+        }
+        None => Paragraph::new(vec![Line::from(Span::styled(
+            "  Press 'f' to check & update flatpaks.",
+            theme::subtext_style(),
+        ))]),
+    };
+
+    frame.render_widget(flatpak_content.block(flatpak_block), chunks[1]);
+
+    // --- Keybinds bar ---
     let hints = Line::from(vec![
         Span::styled(" [c]", theme::keybind_style()),
-        Span::styled(" Check  ", theme::subtext_style()),
+        Span::styled(" Check OS  ", theme::subtext_style()),
         Span::styled("[a]", theme::keybind_style()),
-        Span::styled(" Apply  ", theme::subtext_style()),
+        Span::styled(" Apply OS  ", theme::subtext_style()),
+        Span::styled("[f]", theme::keybind_style()),
+        Span::styled(" Flatpaks  ", theme::subtext_style()),
         Span::styled("[Esc]", theme::keybind_style()),
         Span::styled(" Back  ", theme::subtext_style()),
         Span::styled("[q]", theme::keybind_style()),
@@ -371,5 +435,5 @@ fn render_update_view(frame: &mut Frame, area: Rect, message: &Option<String>) {
         .border_style(Style::default().fg(theme::SURFACE0))
         .style(Style::default().bg(theme::MANTLE));
 
-    frame.render_widget(Paragraph::new(hints).block(keybind_block), chunks[1]);
+    frame.render_widget(Paragraph::new(hints).block(keybind_block), chunks[2]);
 }

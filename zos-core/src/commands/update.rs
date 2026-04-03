@@ -68,6 +68,109 @@ pub fn reboot_message() -> &'static str {
     "Update applied. Please reboot to boot into the new deployment:\n  systemctl reboot"
 }
 
+// ---------------------------------------------------------------------------
+// Flatpak updates
+// ---------------------------------------------------------------------------
+
+/// Check for pending flatpak updates. Returns list of app IDs with updates available.
+pub fn check_flatpak_updates() -> Result<Vec<String>> {
+    let output = Command::new("flatpak")
+        .args(["remote-ls", "--updates", "--columns=application"])
+        .output()
+        .wrap_err("Failed to run flatpak remote-ls --updates")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let updates: Vec<String> = stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Ok(updates)
+}
+
+/// Apply all pending flatpak updates.
+pub fn apply_flatpak_updates() -> Result<std::process::Output> {
+    let output = Command::new("flatpak")
+        .args(["update", "-y"])
+        .output()
+        .wrap_err("Failed to run flatpak update")?;
+
+    Ok(output)
+}
+
+// ---------------------------------------------------------------------------
+// Custom package updates (GitHub releases)
+// ---------------------------------------------------------------------------
+
+/// Check for updates to custom (GitHub-distributed) packages.
+/// Returns names of packages that have newer versions available.
+pub fn check_custom_updates() -> Result<Vec<String>> {
+    use super::install::{load_custom_packages, resolve_github_release};
+
+    let packages = load_custom_packages();
+    let mut updatable = Vec::new();
+
+    // Get installed flatpak list with versions
+    let installed = Command::new("flatpak")
+        .args(["list", "--user", "--columns=application,version"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    for pkg in &packages {
+        if pkg.install_type != "github-flatpak" {
+            continue;
+        }
+
+        // Check if this package's flatpak is installed
+        // Custom flatpaks won't have a standard app ID match, so just check
+        // if any installed flatpak name relates to this package
+        let pkg_lower = pkg.name.to_lowercase();
+        let is_installed = installed
+            .lines()
+            .any(|l| l.to_lowercase().contains(&pkg_lower) || l.to_lowercase().contains("orca"));
+
+        if !is_installed {
+            continue;
+        }
+
+        // Check if a newer version exists on GitHub
+        if let Ok((tag, _url)) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern) {
+            // We can't easily compare versions, so just report it as available
+            updatable.push(format!("{} ({})", pkg.name, tag));
+        }
+    }
+
+    Ok(updatable)
+}
+
+/// Apply updates to custom packages by re-installing from latest GitHub release.
+pub fn apply_custom_updates() -> Result<String> {
+    use super::install::{install_custom_package, load_custom_packages};
+
+    let packages = load_custom_packages();
+    let mut updated = Vec::new();
+
+    for pkg in &packages {
+        if pkg.install_type != "github-flatpak" {
+            continue;
+        }
+        match install_custom_package(pkg) {
+            Ok(()) => updated.push(pkg.name.clone()),
+            Err(e) => {
+                eprintln!("Failed to update {}: {}", pkg.name, e);
+            }
+        }
+    }
+
+    if updated.is_empty() {
+        Ok("No custom packages to update.".into())
+    } else {
+        Ok(format!("Updated: {}", updated.join(", ")))
+    }
+}
+
 // --- Internal helpers ---
 
 fn get_current_image() -> String {

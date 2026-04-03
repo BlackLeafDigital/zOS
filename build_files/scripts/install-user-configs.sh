@@ -17,6 +17,7 @@ cp /ctx/system_files/etc/skel/.config/starship.toml /etc/skel/.config/
 mkdir -p /usr/share/zos
 cp /ctx/system_files/usr/share/zos/zshrc /usr/share/zos/zshrc
 cp /ctx/system_files/usr/share/zos/config-versions.json /usr/share/zos/config-versions.json
+cp /ctx/system_files/usr/share/zos/custom-packages.json /usr/share/zos/custom-packages.json
 
 # Source zOS config from global zshrc (loaded before ~/.zshrc)
 {

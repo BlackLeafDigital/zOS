@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Snapmaker Orca",
+    "description": "3D printing slicer by Snapmaker",
+    "search_terms": ["orca", "orcaslicer", "snapmaker", "slicer", "3d"],
+    "install_type": "github-flatpak",
+    "github_repo": "Snapmaker/OrcaSlicer",
+    "asset_pattern": "flatpak*x86_64*.flatpak"
+  }
+]
