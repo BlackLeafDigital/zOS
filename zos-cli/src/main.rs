@@ -47,6 +47,8 @@ enum Commands {
         /// Package name to install
         name: String,
     },
+    /// Set Windows as next boot target and reboot
+    RebootToWindows,
 }
 
 fn main() -> Result<()> {
@@ -100,5 +102,8 @@ fn main() -> Result<()> {
         Some(Commands::Update) => tui::run(tui::View::Update),
         Some(Commands::Search { name }) => zos_core::commands::install::search_and_print(&name),
         Some(Commands::Install { name }) => zos_core::commands::install::search_and_install(&name),
+        Some(Commands::RebootToWindows) => {
+            zos_core::commands::grub::reboot_to_windows_elevated()
+        }
     }
 }

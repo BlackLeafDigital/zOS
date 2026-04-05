@@ -28,14 +28,14 @@ pub fn build_tray() {
     reboot_item.connect_activate(|_| logind_action("Reboot"));
     menu.append(&reboot_item);
 
-    let windows_item = gtk::MenuItem::with_label("Reboot to Windows");
-    windows_item.connect_activate(|_| {
-        let _ = Command::new("pkexec")
-            .args(["efibootmgr", "--bootnext", "0000"])
-            .status();
-        logind_action("Reboot");
-    });
-    menu.append(&windows_item);
+    // Only show "Reboot to Windows" if Windows is actually detected
+    if zos_core::commands::grub::detect_windows().is_some() {
+        let windows_item = gtk::MenuItem::with_label("Reboot to Windows");
+        windows_item.connect_activate(|_| {
+            let _ = zos_core::commands::grub::reboot_to_windows_elevated();
+        });
+        menu.append(&windows_item);
+    }
 
     let shutdown_item = gtk::MenuItem::with_label("Shut Down");
     shutdown_item.connect_activate(|_| logind_action("PowerOff"));

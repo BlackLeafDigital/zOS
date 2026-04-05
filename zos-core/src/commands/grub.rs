@@ -36,7 +36,7 @@ pub fn get_grub_status() -> GrubStatus {
 pub fn apply_grub_timeout(seconds: u32) -> Result<()> {
     check_root()?;
 
-    let content = format!("GRUB_TIMEOUT={}\n", seconds);
+    let content = format!("set timeout={}\n", seconds);
     let cfg_path = Path::new(GRUB_USER_CFG);
 
     if let Some(parent) = cfg_path.parent() {
@@ -51,9 +51,9 @@ pub fn apply_grub_timeout(seconds: u32) -> Result<()> {
         let updated: String = existing
             .lines()
             .map(|line| {
-                if line.starts_with("GRUB_TIMEOUT=") {
+                if line.starts_with("set timeout=") || line.starts_with("GRUB_TIMEOUT=") {
                     found = true;
-                    format!("GRUB_TIMEOUT={}", seconds)
+                    format!("set timeout={}", seconds)
                 } else {
                     line.to_string()
                 }
@@ -143,6 +143,7 @@ pub fn get_windows_boot_num() -> Option<String> {
 }
 
 /// Set Windows as the next boot target via EFI bootnext, then reboot.
+/// Requires root — use `reboot_to_windows_elevated()` from non-root contexts.
 pub fn reboot_to_windows() -> Result<()> {
     let boot_num = get_windows_boot_num()
         .ok_or_else(|| eyre!("No Windows Boot Manager found in EFI entries"))?;
@@ -159,7 +160,33 @@ pub fn reboot_to_windows() -> Result<()> {
         ));
     }
 
-    // Reboot via logind D-Bus
+    logind_reboot();
+    Ok(())
+}
+
+/// Set Windows as the next boot target using pkexec for privilege elevation.
+/// Safe to call from non-root GUI/daemon contexts.
+pub fn reboot_to_windows_elevated() -> Result<()> {
+    let boot_num = get_windows_boot_num()
+        .ok_or_else(|| eyre!("No Windows Boot Manager found in EFI entries"))?;
+
+    let status = Command::new("pkexec")
+        .args(["efibootmgr", "--bootnext", &boot_num])
+        .status()
+        .wrap_err("Failed to run pkexec efibootmgr")?;
+
+    if !status.success() {
+        return Err(eyre!(
+            "pkexec efibootmgr --bootnext failed (exit {})",
+            status.code().unwrap_or(-1)
+        ));
+    }
+
+    logind_reboot();
+    Ok(())
+}
+
+fn logind_reboot() {
     let _ = Command::new("dbus-send")
         .args([
             "--system",
@@ -170,8 +197,6 @@ pub fn reboot_to_windows() -> Result<()> {
             "boolean:true",
         ])
         .status();
-
-    Ok(())
 }
 
 /// Check if we are running as root.
@@ -205,6 +230,10 @@ fn check_root() -> Result<()> {
 fn read_grub_timeout() -> Option<u32> {
     let content = fs::read_to_string(GRUB_USER_CFG).ok()?;
     for line in content.lines() {
+        // Support both syntaxes: "set timeout=N" (correct) and "GRUB_TIMEOUT=N" (legacy)
+        if let Some(val) = line.strip_prefix("set timeout=") {
+            return val.trim().parse().ok();
+        }
         if let Some(val) = line.strip_prefix("GRUB_TIMEOUT=") {
             return val.trim().parse().ok();
         }

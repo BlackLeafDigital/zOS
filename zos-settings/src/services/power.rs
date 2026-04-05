@@ -13,11 +13,7 @@ pub fn shutdown() {
 }
 
 pub fn reboot_to_windows() {
-    // Set Windows as next boot via EFI
-    let _ = Command::new("pkexec")
-        .args(["efibootmgr", "--bootnext", "0000"])
-        .status();
-    logind_action("Reboot");
+    let _ = zos_core::commands::grub::reboot_to_windows_elevated();
 }
 
 fn logind_action(method: &str) {

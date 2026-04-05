@@ -6828,6 +6828,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "zos-core",
 ]
 
 [[package]]
