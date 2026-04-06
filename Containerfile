@@ -20,7 +20,8 @@ ARG GH_TOKEN
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git && \
+    dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel && \
     export HOME=/tmp && \
     if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
     cd /ctx && \
@@ -44,7 +45,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
     cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
     cp /tmp/cargo-target/release/zos-daemon /usr/bin/zos-daemon && \
-    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel git && \
+    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git && \
+    dnf5 remove -y pipewire-devel && \
     dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)

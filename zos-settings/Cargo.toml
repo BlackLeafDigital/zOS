@@ -13,3 +13,4 @@ tracing-subscriber = "0.3.23"
 serde_json = "1.0.149"
 cairo-rs = { version = "0.21", features = ["png"] }
 serde = { version = "1.0.228", features = ["derive"] }
+pipewire = "0.8"

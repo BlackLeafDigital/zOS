@@ -51,11 +51,21 @@ dnf5 install -y \
     papirus-icon-theme
 
 # --- Hyprland development headers (for hyprshell plugin compilation) ---
-# Cannot use dnf5 because mesa-libgbm-devel conflicts with Bazzite's Terra mesa.
+# Cannot use dnf5 for hyprland-devel because mesa-libgbm-devel conflicts with Bazzite's Terra mesa.
 # hyprland-devel is headers-only — the mesa dep is only needed for building Hyprland itself.
 dnf5 download hyprland-devel --destdir /tmp/
 rpm -ivh --nodeps /tmp/hyprland-devel*.rpm
 rm -f /tmp/hyprland-devel*.rpm
+
+# Transitive devel deps that hyprland-devel headers #include but don't auto-pull.
+# Without these, hyprshell's runtime plugin build fails with "hyprgraphics/color/Color.hpp:
+# No such file or directory" and the daemon silently falls back to flaky socket mode for
+# Alt+Tab modifier-release detection (switcher gets stuck open until you cycle through all
+# windows). These three packages have no mesa conflict so they can use a normal dnf5 install.
+dnf5 install -y \
+    hyprgraphics-devel \
+    hyprlang-devel \
+    hyprutils-devel
 
 # --- HyprPanel (Ubuntu-style panel with quick settings, replaces waybar+swaync+blueman+nm-applet) ---
 # Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
