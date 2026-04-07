@@ -37,6 +37,7 @@ dnf5 install -y \
     tldr \
     git-delta \
     git-crypt \
+    git-lfs \
     liquidctl \
     libayatana-appindicator-gtk3
 
