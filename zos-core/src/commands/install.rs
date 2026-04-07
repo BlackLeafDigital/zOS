@@ -76,47 +76,89 @@ fn search_custom(query: &str, packages: &[CustomPackage]) -> Vec<PackageResult> 
 }
 
 /// Resolve the latest GitHub release and find the download URL for a matching asset.
+///
+/// Tries `/releases/latest` first (the strict endpoint that only returns
+/// non-prerelease releases). If that 404s or has no matching asset, falls back
+/// to `/releases` (which includes prereleases, sorted newest first) and scans
+/// until a release with a matching asset is found. This is needed for repos
+/// like `ratdoux/OrcaSlicer-FullSpectrum` where every release is marked as a
+/// prerelease, so the strict endpoint always returns 404.
 pub fn resolve_github_release(repo: &str, asset_pattern: &str) -> Result<(String, String)> {
-    let api_url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    if let Ok(result) = try_resolve_release(
+        &format!("https://api.github.com/repos/{repo}/releases/latest"),
+        asset_pattern,
+        false,
+    ) {
+        return Ok(result);
+    }
+
+    try_resolve_release(
+        &format!("https://api.github.com/repos/{repo}/releases"),
+        asset_pattern,
+        true,
+    )
+    .map_err(|e| {
+        color_eyre::eyre::eyre!("No release with asset matching '{asset_pattern}' in {repo}: {e}")
+    })
+}
+
+/// Hit a GitHub releases API URL and find the first release whose assets
+/// include one matching `asset_pattern`. `is_array` controls whether the
+/// response is a single release object (`/releases/latest`) or an array of
+/// releases (`/releases`).
+fn try_resolve_release(
+    api_url: &str,
+    asset_pattern: &str,
+    is_array: bool,
+) -> Result<(String, String)> {
     let output = Command::new("curl")
         .args([
             "-fsSL",
             "-H",
             "Accept: application/vnd.github.v3+json",
-            &api_url,
+            api_url,
         ])
         .output()?;
 
     if !output.status.success() {
-        return Err(color_eyre::eyre::eyre!(
-            "Failed to query GitHub API for {repo}"
-        ));
+        return Err(color_eyre::eyre::eyre!("GitHub API call failed: {api_url}"));
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let tag = json
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let releases: Vec<&serde_json::Value> = if is_array {
+        json.as_array()
+            .map(|a| a.iter().collect())
+            .unwrap_or_default()
+    } else {
+        vec![&json]
+    };
 
-    let assets = json.get("assets").and_then(|v| v.as_array());
     let pattern_lower = asset_pattern.to_lowercase();
     let pattern_parts: Vec<&str> = pattern_lower.split('*').collect();
 
-    if let Some(assets) = assets {
-        for asset in assets {
-            if let Some(name) = asset.get("name").and_then(|v| v.as_str()) {
-                let name_lower = name.to_lowercase();
-                let matches = pattern_parts.iter().all(|part| {
-                    if part.is_empty() {
-                        return true;
-                    }
-                    name_lower.contains(part)
-                });
-                if matches {
-                    if let Some(url) = asset.get("browser_download_url").and_then(|v| v.as_str()) {
-                        return Ok((tag, url.to_string()));
+    for release in releases {
+        let tag = release
+            .get("tag_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let assets = release.get("assets").and_then(|v| v.as_array());
+        if let Some(assets) = assets {
+            for asset in assets {
+                if let Some(name) = asset.get("name").and_then(|v| v.as_str()) {
+                    let name_lower = name.to_lowercase();
+                    let matches = pattern_parts.iter().all(|part| {
+                        if part.is_empty() {
+                            return true;
+                        }
+                        name_lower.contains(part)
+                    });
+                    if matches {
+                        if let Some(url) =
+                            asset.get("browser_download_url").and_then(|v| v.as_str())
+                        {
+                            return Ok((tag, url.to_string()));
+                        }
                     }
                 }
             }
@@ -124,7 +166,7 @@ pub fn resolve_github_release(repo: &str, asset_pattern: &str) -> Result<(String
     }
 
     Err(color_eyre::eyre::eyre!(
-        "No asset matching '{asset_pattern}' in {repo} release {tag}"
+        "No asset matching '{asset_pattern}' found"
     ))
 }
 
