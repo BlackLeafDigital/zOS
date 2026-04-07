@@ -45,8 +45,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
     cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
     cp /tmp/cargo-target/release/zos-daemon /usr/bin/zos-daemon && \
-    dnf5 remove -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git && \
-    dnf5 remove -y pipewire-devel && \
     dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)
@@ -60,8 +58,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     git clone --depth 1 https://github.com/rharish101/ReGreet.git /tmp/regreet && \
     cd /tmp/regreet && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target cargo build --release && \
-    cp /tmp/cargo-target/release/regreet /usr/bin/regreet && \
-    dnf5 remove -y rust cargo gtk4-devel git
+    cp /tmp/cargo-target/release/regreet /usr/bin/regreet
 
 ### MODIFICATIONS
 ARG GH_TOKEN

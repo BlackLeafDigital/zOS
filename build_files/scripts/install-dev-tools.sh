@@ -57,9 +57,10 @@ dnf5 install -y \
     libayatana-appindicator-gtk3-devel
 
 # --- Multimedia dev libraries ---
-# Runtime libs already in Bazzite; these are the -devel headers
-# Note: ffmpeg-devel, x264-devel, x265-devel, libfdk-aac-devel, pipewire-devel
-# conflict with Bazzite's custom builds (excluded/filtered packages)
+# Runtime libs already in Bazzite; these are the -devel headers.
+# ffmpeg/x264/x265/libfdk-aac/pipewire devel headers live in repos that are
+# disabled by default on Bazzite. They're all installable when we enable the
+# right repo per-transaction; no actual version conflict with Bazzite's runtime.
 dnf5 install -y \
     libdav1d-devel \
     opus-devel \
@@ -67,6 +68,24 @@ dnf5 install -y \
     lame-devel \
     pulseaudio-libs-devel \
     alsa-lib-devel
+
+# Negativo17's fedora-multimedia repo is enabled=0 in Bazzite by default.
+# --enablerepo enables it just for this transaction. Versions match Bazzite's
+# installed runtime exactly (verified ffmpeg 7.1.3, x264 0.165, x265 4.1,
+# libfdk-aac 2.0.3). Pulls in libav*-devel transitive deps (~14 MiB total).
+dnf5 install -y --enablerepo=fedora-multimedia \
+    ffmpeg-devel \
+    x264-devel \
+    x265-devel \
+    libfdk-aac-devel
+
+# pipewire-devel: upstream Fedora's package strict-requires a pipewire-libs
+# version that Bazzite excludes (Bazzite ships its own pinned pipewire build).
+# Bazzite ships their own matching pipewire-devel in the bazzite-multilib COPR
+# (enabled=0 by default; --repo= overrides). Required for `cargo check -p
+# zos-settings` after the audio panel rewrite added `pipewire = "0.8"`.
+# See AUDIO_HANDOFF.md.
+dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel
 
 # --- Android / mobile dev ---
 # Note: bluez-libs-devel conflicts with Bazzite's custom bluez build

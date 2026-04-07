@@ -82,6 +82,103 @@ The whole point: **toggle buttons, not dropdowns**. Each strip can route to many
 
 ---
 
+## UI RESPONSIVENESS REQUIREMENTS — NOT NEGOTIABLE
+
+The audio panel **must be responsive at every window size** the rest of zos-settings supports. The user has been burned by previous iterations where the panel hard-broke at narrow widths or froze the GTK main loop. This section is rules, not suggestions.
+
+### Layout responsiveness
+
+1. **Use `AdwBreakpoint` on the parent window** (or `AdwBreakpointBin` for the audio page specifically) to swap layouts at narrow widths. Define at minimum:
+   - `min-width: 800sp` → desktop layout (horizontal strip mixer, all strips visible)
+   - `max-width: 799sp` → narrow layout (strips reflow, OR the strip mixer becomes vertically scrolling with each strip as a card)
+   - **No hardcoded pixel widths anywhere.** Use `set_hexpand(true)` / `set_vexpand(true)` and let GTK negotiate sizes.
+
+2. **Wrap the strip mixer in `gtk::ScrolledWindow`** with:
+   - `hscrollbar-policy: Automatic`
+   - `vscrollbar-policy: Automatic`
+   - `propagate-natural-height: true`
+   - `min-content-height: 320` (enough to show one strip's fader + meter + toggle row + mute button without clipping)
+   When the user has 8 buses on a 1280px window, horizontal scrolling kicks in. When they have 2 buses on a 1920px window, the strips center via `AdwClamp` so they're not stretched grotesquely.
+
+3. **App routing rows** use `gtk::FlowBox` for the toggle buttons inside each row, so when the bus list grows past the row width, buttons wrap to a new line instead of overflowing.
+
+4. **Strip width**: each strip has `width-request: 140`, no `max-width`. Vertical scale gets `vexpand: true` so it grows with available height. Toggle button rows use `gtk::FlowBox` so a strip with 6 sinks doesn't blow out the strip width — the buttons reflow to multiple rows.
+
+5. **The window MUST resize smoothly** down to 360×500 (the GNOME mobile breakpoint) without crashing or clipping critical controls. Test by dragging the window edge to phone size and back.
+
+6. **`AdwClamp`** wraps the page content with `maximum-size: 1600` so on ultrawide monitors the panel doesn't sprawl edge-to-edge.
+
+7. **No fixed-size `Box` or `Grid`.** Use `gtk::Orientation::Vertical` boxes with `set_spacing(8)` and let children negotiate size.
+
+### Performance responsiveness (the main thread MUST stay free)
+
+8. **Apply must run in `gio::spawn_blocking`.** The closure passes the `PwClient` handle, performs all node creation/destruction/linking, then `glib::MainContext::spawn_local`s a callback that re-enables the Apply button and posts a toast. **Never** call PipeWire commands from the GTK main thread directly.
+
+9. **PipeWire main loop is on its own OS thread.** The GTK main thread must never block on PipeWire. Communication is one-way:
+   - GTK → PW: send `Cmd` over an `mpsc::channel`, the PipeWire mainloop wakes via `mainloop.add_event` and processes commands in its own loop tick.
+   - PW → GTK: send `PwEvent` over `async_channel::unbounded`, GTK side reads via `glib::MainContext::spawn_local` reading from the receiver.
+
+10. **Throttle peak meter events.** The PipeWire stream `process` callback runs at audio rate (hundreds of Hz). The peak helper must:
+    - Track `last_emit: Instant`
+    - Skip the send if `last_emit.elapsed() < Duration::from_millis(33)` (~30 Hz max)
+    - Use `try_send` instead of `send` so a slow GTK consumer doesn't backpressure the audio thread
+    - Drop events on full channel — peak meters are advisory, missing one is fine
+
+11. **Coalesce live update events.** When 5 streams appear within 10ms (e.g. opening Firefox), don't redraw the app routing list 5 times. Use a debounce: on `NodeAdded`, schedule a `glib::timeout_add_local_once(50ms)` redraw and ignore further events until it fires.
+
+12. **No synchronous file I/O on the main thread.** The current page reads `~/.config/zos/audio-buses-v2.json` and shells out to `wpctl status` from the GTK thread. The new version reads config ONCE on page init (acceptable) and never touches disk again from the main thread. Saves go through `gio::spawn_blocking`.
+
+13. **No `std::thread::sleep` anywhere on the main thread.** Period. If you need to wait for something, use `glib::timeout_add_local` or an async channel.
+
+14. **Bounded channels for commands**, unbounded for events. Commands queue up; events drop the oldest if backed up.
+
+15. **Strip widget redraws via `#[watch]` and `#[track]`** in Relm4 — never rebuild the entire factory on a single bus update. A gain change on bus 3 must redraw bus 3's `Scale`, not the entire mixer.
+
+16. **Apply button is a one-shot:** disable on click, show "Applying..." label, re-enable from the spawn_blocking completion callback. Add a 1.5s "Applied" confirmation, then back to "Apply". Existing logic at `audio/mod.rs:109-120` already does this — preserve the pattern but feed it from the async path.
+
+### Visual polish requirements
+
+17. **Catppuccin Mocha** is the project theme. Toggle buttons in the routing matrix should use:
+    - Inactive: default `gtk::ToggleButton` (Mocha base background)
+    - Active: `add_css_class("suggested-action")` for accent blue (#89b4fa)
+    - Mute when active: `add_css_class("destructive-action")` for accent red (#f38ba8)
+
+18. **Each bus strip is an `adw::PreferencesGroup` or a `gtk::Frame` with `add_css_class("card")`** so they have visual separation against the page background.
+
+19. **Peak meter uses `add_css_class("peakmeter")` plus a custom CSS rule** in `resources/style.css` to color the level segments green→yellow→red. Default `LevelBar` discrete styling already supports `low`/`high`/`full` offsets — set via `add_offset_value(LEVEL_BAR_OFFSET_LOW, 0.7)` and `add_offset_value(LEVEL_BAR_OFFSET_HIGH, 0.9)`.
+
+20. **Tooltips on every toggle button** so users discover what they do without having to guess. App routing buttons: `"Route Firefox to Main"`. Bus output buttons: `"Send Main to USB Headphones"`. Use `set_tooltip_text(Some(...))`.
+
+21. **Empty states matter.** If no buses exist, show an `adw::StatusPage` with `icon-name: "audio-x-generic-symbolic"`, title `"No audio buses"`, description `"Click + Add Bus to create one"`. If no apps are playing, the routing section shows a small `gtk::Label` saying `"No apps are currently playing audio"` with `dim-label` CSS class.
+
+22. **Animations**: toggle button activation should NOT use custom transitions — let libadwaita's default motion do its thing. Anything that "pops in" should be wrapped in `gtk::Revealer` with `transition-type: SlideDown`, `transition-duration: 200ms`.
+
+### Forbidden patterns (do not let any of this slip in)
+
+- ❌ `set_size_request(width, height)` with hardcoded pixels
+- ❌ `set_width_request(N)` where N > 200 — strips can request a min, not a fixed size
+- ❌ `set_height_request(N)` on `Scale`, `LevelBar`, or any vertically-expanding widget — use `set_vexpand: true` instead so the widget grows with the strip's available height
+- ❌ `gtk::Grid` with hardcoded row/column counts (use `FlowBox` or `Box`)
+- ❌ Any `std::thread::sleep` outside the PipeWire mainloop thread
+- ❌ Any `Command::new("wpctl").arg("set-default")` from a click handler — the new code uses `pipewire_native` exclusively for live changes
+- ❌ Synchronous network/disk reads on the GTK thread
+- ❌ Re-rendering the whole audio page when one bus changes
+- ❌ Fixed pixel margins/padding > 24 — use `set_margin_*: 8/12/16/24` only
+- ❌ More than 60Hz update rate on any GTK widget
+
+### How to verify responsiveness manually
+
+After implementing, with `just dev` running:
+
+1. Drag the window from full-screen down to 360px wide. The page must reflow gracefully — strips should scroll horizontally OR collapse to a vertical list, never overflow off-screen, never clip critical controls.
+2. Add 8 buses via the Add Bus dialog. Window stays interactive throughout.
+3. Click Apply. The window must still respond to mouse-over events while applying — no freeze.
+4. Open and close Firefox while the audio page is visible. The app routing list must update within ~100ms with NO visible flicker (debouncing must work).
+5. Play loud audio through a bus. The peak meter must animate smoothly at ~30Hz, no dropped frames in the rest of the UI.
+6. Open `htop` in another window. zos-settings CPU usage must stay under 5% while idle, under 15% with peak meters active. If it's higher, the throttle is broken.
+
+---
+
 ## What's been done
 
 1. **`zos-settings/Cargo.toml`** — `pipewire = "0.8"` added (line 16). Verified pulls in `pipewire-sys 0.8.0`, `libspa 0.8.0`, `libspa-sys 0.8.0`, `bindgen 0.69.5`, `nix 0.27.1`, etc.
@@ -488,7 +585,7 @@ impl FactoryComponent for AudioStrip {
                 set_inverted: true,
                 set_range: (-12.0, 12.0),
                 set_value: self.config.gain as f64,
-                set_height_request: 200,
+                set_vexpand: true,
                 connect_value_changed[sender] => move |s| {
                     sender.input(AudioStripMsg::GainChanged(s.value() as f32));
                 },
@@ -500,7 +597,7 @@ impl FactoryComponent for AudioStrip {
                 set_max_value: 1.0,
                 #[watch]
                 set_value: self.peak_level as f64,
-                set_height_request: 100,
+                set_vexpand: true,
             },
 
             // Routing toggle buttons — one per physical sink
@@ -615,16 +712,110 @@ pipewire = "0.8"
 
 ## Key references
 
+### Visual / UX references
+
 | URL | What |
 |---|---|
-| https://github.com/theRealCarneiro/pulsemeeter | Visual reference — the Linux Voicemeeter clone |
-| https://gitlab.freedesktop.org/pipewire/helvum | Reference Rust + GTK4 + pipewire-rs codebase |
-| https://github.com/dimtpap/coppwr | Reference for peak metering with pipewire-rs streams |
-| https://relm4.org/book/stable/factory.html | Relm4 FactoryComponent docs (for the strip widget) |
-| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/ | pipewire-rs API docs |
-| https://wiki.hyprland.org/ | Hyprland — relevant for understanding the broader desktop |
+| https://github.com/theRealCarneiro/pulsemeeter | **Linux Voicemeeter clone — visual reference for our strip layout** |
+| https://github.com/theRealCarneiro/pulsemeeter#screenshots | Pulsemeeter screenshots (look at these BEFORE writing strip widget) |
+| https://vb-audio.com/Voicemeeter/VoicemeeterBanana_UserManual.pdf | Voicemeeter Banana manual — 5×5 strip/bus matrix spec |
+| https://vb-audio.com/Voicemeeter/VoicemeeterPotato_UserManual.pdf | Voicemeeter Potato manual — 8×8 matrix (the more elaborate version) |
+| https://joe.ptrkv.ch/ultimate-voicemeeter-visual-setup-guide/ | Voicemeeter visual setup guide with annotated screenshots |
+
+### PipeWire — concepts and C API
+
+| URL | What |
+|---|---|
+| https://docs.pipewire.org/ | PipeWire main docs site (Doxygen) |
+| https://docs.pipewire.org/page_overview.html | PipeWire overview — Core, Context, MainLoop, Registry concepts |
+| https://docs.pipewire.org/page_objects_design.html | PipeWire object model: nodes, ports, links, devices |
+| https://docs.pipewire.org/page_pipewire.html | libpipewire API reference (the C headers bindgen wraps) |
+| https://docs.pipewire.org/group__pw__link.html | Link API (what we use for create/destroy link) |
+| https://docs.pipewire.org/group__pw__node.html | Node API (what we use for null sinks and volume) |
+| https://docs.pipewire.org/group__pw__registry.html | Registry API (where we listen for global add/remove) |
+| https://docs.pipewire.org/group__pw__stream.html | Stream API (for peak meters) |
+| https://docs.pipewire.org/page_module_filter_chain.html | Filter chain module — how the EQ biquad chain works |
+| https://docs.pipewire.org/page_module_null_audio_sink.html | Null audio sink module — what backs each bus |
+| https://docs.pipewire.org/page_man_pw-link_1.html | `pw-link` CLI — useful when sanity-checking from a terminal |
+| https://docs.pipewire.org/page_man_pw-cli_1.html | `pw-cli` CLI — useful for inspecting object IDs by hand |
+| https://docs.pipewire.org/page_man_pw-dump_1.html | `pw-dump` — JSON dump of all objects (use this to debug) |
+| https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Virtual-devices | PipeWire wiki: how to declare virtual devices in `.conf` files |
+| https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/FAQ | PipeWire FAQ (covers common gotchas) |
+| https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Config-PipeWire | PipeWire config file format reference |
+
+### WirePlumber (the session manager that ships in Bazzite)
+
+| URL | What |
+|---|---|
+| https://pipewire.pages.freedesktop.org/wireplumber/ | WirePlumber docs site |
+| https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration.html | WirePlumber config (relevant if buses get auto-routed unexpectedly) |
+| https://docs.pipewire.org/page_man_wpctl_1.html | `wpctl` man page (we still use it for read-only enumeration in some helpers) |
+
+### pipewire-rs (Rust bindings)
+
+| URL | What |
+|---|---|
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/ | pipewire-rs main rustdoc |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/main_loop/struct.MainLoop.html | `MainLoop` — must run on a dedicated thread |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/context/struct.Context.html | `Context::connect` |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/core/struct.Core.html | `Core` — exposes `create_object`, `get_registry` |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/registry/struct.Registry.html | `Registry::add_listener_local` (for global add/remove) |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/link/struct.Link.html | `Link` — `core.create_object::<Link, _>("link-factory", &props)` |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/node/struct.Node.html | `Node` — for null sinks via `"adapter"` factory |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/stream/struct.Stream.html | `Stream` — for peak metering process callback |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/pipewire/properties/struct.Properties.html | `Properties` — how to build the props for `create_object` |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/libspa/ | libspa (Simple Plugin API) bindings — needed for parameters |
+| https://pipewire.pages.freedesktop.org/pipewire-rs/libspa/param/index.html | SPA param building — for `Props`, `EnumFormat`, etc. |
+| https://gitlab.freedesktop.org/pipewire/pipewire-rs/-/tree/main/pipewire/examples | pipewire-rs official examples — start here, especially `roundtrip.rs` and `tutorial1.rs` |
+| https://gitlab.freedesktop.org/pipewire/helvum/-/blob/main/src/pipewire_connection.rs | **Helvum's full pipewire-rs integration — the canonical reference** |
+| https://github.com/dimtpap/coppwr/blob/main/src/backend/pipewire.rs | coppwr's PipeWire backend — read this for peak metering |
+
+### Rust GUI stack
+
+| URL | What |
+|---|---|
+| https://relm4.org/book/stable/ | Relm4 book (current architecture, message passing) |
+| https://relm4.org/book/stable/factory.html | Relm4 `FactoryComponent` (for the strip widget) |
+| https://relm4.org/book/stable/efficient_ui.html | Relm4 efficient UI guide (`#[watch]`, `#[track]`) |
+| https://docs.rs/relm4/latest/relm4/ | Relm4 API rustdoc |
+| https://relm4.org/docs/stable/relm4/ | Relm4 `RelmWidgetExt` and `view!` macro reference |
+| https://gtk-rs.org/gtk4-rs/stable/latest/docs/gtk4/ | gtk4-rs main API rustdoc |
+| https://gtk-rs.org/gtk4-rs/stable/latest/book/ | gtk4-rs book |
+| https://world.pages.gitlab.gnome.org/Rust/libadwaita-rs/stable/latest/docs/libadwaita/ | libadwaita-rs API rustdoc |
+| https://docs.gtk.org/gtk4/ | GTK4 main docs (widget reference) |
+| https://docs.gtk.org/gtk4/class.ScrolledWindow.html | `GtkScrolledWindow` — used for the horizontal strip scroller |
+| https://docs.gtk.org/gtk4/class.LevelBar.html | `GtkLevelBar` — used for the peak meters |
+| https://docs.gtk.org/gtk4/class.ToggleButton.html | `GtkToggleButton` — the routing matrix buttons |
+| https://docs.gtk.org/gtk4/class.Scale.html | `GtkScale` — the gain faders |
+| https://docs.gtk.org/gtk4/class.FlowBox.html | `GtkFlowBox` — for responsive reflow when window narrows |
+| https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/ | libadwaita main docs |
+| https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.Breakpoint.html | **`AdwBreakpoint` — for responsive layout adaptation** |
+| https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.BreakpointBin.html | `AdwBreakpointBin` — non-window breakpoint container |
+| https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.Clamp.html | `AdwClamp` — caps content width responsively |
+| https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/class.OverlaySplitView.html | `AdwOverlaySplitView` — collapses sidebars on narrow screens |
+| https://developer.gnome.org/hig/ | **GNOME Human Interface Guidelines (read the Adaptive Layouts section)** |
+| https://developer.gnome.org/hig/guidelines/adaptive.html | HIG: adaptive layouts — required reading before sizing anything |
+| https://developer.gnome.org/hig/patterns/containers/boxed-lists.html | HIG: boxed lists pattern (used for app routing rows) |
+
+### Icons
+
+| URL | What |
+|---|---|
+| https://docs.gtk.org/gtk4/class.IconTheme.html | `GtkIconTheme` API |
+| https://gitlab.gnome.org/GNOME/adwaita-icon-theme/-/tree/master/Adwaita/symbolic | **Adwaita symbolic icon source — verify icon names exist HERE before using** |
+| https://teams.pages.gitlab.gnome.org/Design/icon-development-kit-www/ | GNOME icon development kit (icon name reference) |
+| https://specifications.freedesktop.org/icon-naming-spec/icon-naming-spec-latest.html | freedesktop icon naming spec (`audio-x-generic-symbolic` etc.) |
+
+### Other / general
+
+| URL | What |
+|---|---|
+| https://wiki.hyprland.org/ | Hyprland — desktop context |
 | https://docs.bazzite.gg/ | Bazzite docs — base image |
-| https://vb-audio.com/Voicemeeter/VoicemeeterBanana_UserManual.pdf | Original Voicemeeter Banana manual (UI spec) |
+| https://docs.fedoraproject.org/en-US/atomic-desktops/ | Fedora Atomic Desktops — host OS architecture |
+| https://github.com/saivert/pwvucontrol | pwvucontrol — another GTK4+Rust+PipeWire app, useful pattern reference |
+| https://gitlab.freedesktop.org/pulseaudio/pavucontrol | pavucontrol — the canonical PA volume control, GTK pattern reference |
+| https://github.com/wwmm/easyeffects | EasyEffects — GTK4+libadwaita audio app, look here for filter chain UI patterns |
 
 ---
 
