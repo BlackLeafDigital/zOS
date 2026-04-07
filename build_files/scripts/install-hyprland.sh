@@ -130,6 +130,18 @@ rm -f /usr/share/xsessions/plasma.desktop
 mkdir -p /usr/share/zos/hypr
 cp /ctx/system_files/usr/share/zos/hypr/*.conf /usr/share/zos/hypr/
 cp /ctx/system_files/usr/share/zos/version /usr/share/zos/version
+
+# --- xdg-desktop-portal override: route the Secret interface to kwallet ---
+# xdg-desktop-portal-kde (inherited from Bazzite) ships kwallet.portal which
+# provides org.freedesktop.impl.portal.Secret, but Bazzite's default
+# /usr/share/xdg-desktop-portal/hyprland-portals.conf routes only default=hyprland;gtk
+# and omits Secret entirely. Sandboxed flatpaks (Snapmaker Orca, Floorp, etc.)
+# that use libsecret via the portal therefore cannot persist credentials. This
+# /etc/xdg override adds the missing Secret routing to the kwallet backend
+# (which is ksecretd, already pre-started by greetd's PAM session).
+mkdir -p /etc/xdg/xdg-desktop-portal
+cp /ctx/system_files/etc/xdg/xdg-desktop-portal/hyprland-portals.conf \
+   /etc/xdg/xdg-desktop-portal/hyprland-portals.conf
 # --- Copy default Hyprland configs to skeleton (new user defaults) ---
 cp -r /ctx/system_files/etc/skel/.config/hypr /etc/skel/.config/
 cp -r /ctx/system_files/etc/skel/.config/waybar /etc/skel/.config/
