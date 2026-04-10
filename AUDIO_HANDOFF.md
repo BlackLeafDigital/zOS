@@ -43,7 +43,7 @@ User chose **(a)** full Voicemeeter strip-mixer rewrite and **(b)** migration to
 
 | In scope | Out of scope |
 |---|---|
-| `zos-settings/Cargo.toml` — add `pipewire = "0.8"` | The other 8 settings panels (Display, Network, Power, Boot, Dock, Input, Appearance, Overview) |
+| `zos-settings/Cargo.toml` — add `pipewire = "0.9"` | The other 8 settings panels (Display, Network, Power, Boot, Dock, Input, Appearance, Overview) |
 | `Containerfile` — add `clang-devel` and `pipewire-devel` to build deps | JACK / non-PipeWire audio stacks |
 | **NEW:** `zos-settings/src/services/pipewire_native.rs` | |
 | `zos-settings/src/services/mod.rs` — register the new module | |
@@ -181,7 +181,7 @@ After implementing, with `just dev` running:
 
 ## What's been done
 
-1. **`zos-settings/Cargo.toml`** — `pipewire = "0.8"` added (line 16). Verified pulls in `pipewire-sys 0.8.0`, `libspa 0.8.0`, `libspa-sys 0.8.0`, `bindgen 0.69.5`, `nix 0.27.1`, etc.
+1. **`zos-settings/Cargo.toml`** — `pipewire = "0.9"` added (line 16). Verified pulls in `pipewire-sys 0.8.0`, `libspa 0.8.0`, `libspa-sys 0.8.0`, `bindgen 0.69.5`, `nix 0.27.1`, etc.
 2. **`Containerfile`** — added `clang-devel` to the main `dnf5 install` line and `dnf5 remove` line for the Rust workspace build stage. **The user manually edited the Containerfile** to install `pipewire-devel` from the `copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib` COPR repo as a separate dnf5 call (line 24), and remove it separately (line 49). This is the bazzite workaround — see the gotcha section below.
 3. **`/home/zach/.claude/plans/breezy-stargazing-ember.md`** — full plan written and approved.
 4. **Verified `cargo check` passes on plain Fedora 43** in a podman container (took ~28s, no errors, only pre-existing dead-code warnings that will be deleted as part of this work).
@@ -695,7 +695,7 @@ tracing-subscriber = "0.3.23"
 serde_json = "1.0.149"
 cairo-rs = { version = "0.21", features = ["png"] }
 serde = { version = "1.0.228", features = ["derive"] }
-pipewire = "0.8"
+pipewire = "0.9"
 ```
 
 ### `Containerfile` lines 23-24 and 48-49 (modified by user)

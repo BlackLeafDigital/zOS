@@ -185,6 +185,7 @@ pub fn boot() -> Dock {
     let icon_resolver = IconResolver::new();
     let windows = hypr::get_windows();
     let position = config.position;
+    let auto_hide = config.auto_hide;
     let surface_length = if position.is_horizontal() {
         hypr::get_monitor_widths().into_iter().max().unwrap_or(1920)
     } else {
@@ -201,10 +202,10 @@ pub fn boot() -> Dock {
         cursor_x: None,
         item_positions: Vec::new(),
         active_address: hypr::get_active_window_address(),
-        hidden: false,
+        hidden: auto_hide,
         hide_timer: None,
         show_timer: None,
-        slide_offset: Spring::new(0.0),
+        slide_offset: Spring::new(if auto_hide { SURFACE_THICKNESS } else { 0.0 }),
         config_mtime: DockConfig::config_mtime(),
         context_menu: None,
         surface_length,

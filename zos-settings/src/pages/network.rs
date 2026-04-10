@@ -1,467 +1,502 @@
-// === pages/network.rs — Network configuration page ===
+// === network.rs — Network settings page ===
+//
+// Shows IP details, active connections, available WiFi networks (with
+// connect / disconnect / rescan), a WiFi radio toggle, and device listing.
+// All data comes from nmcli via `crate::services::network`.
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
-
-use std::cell::RefCell;
+use std::collections::HashMap;
 use std::process::Command;
-use std::rc::Rc;
+
+use iced::widget::{button, column, container, row, scrollable, text, text_input, toggler, Space};
+use iced::{Background, Border, Element, Length, Task};
 
 use crate::services::network;
+use crate::theme;
 
-/// Build the network configuration page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
+// ---------------------------------------------------------------------------
+// Message
+// ---------------------------------------------------------------------------
 
-    page.append(&build_devices_section());
-    page.append(&build_connection_section());
-    page.append(&build_wifi_section());
-    page.append(&build_details_section());
-    page.append(&build_actions_section());
-
-    super::page_wrapper(&page)
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Reload all network state from nmcli.
+    Refresh,
+    /// Rescan WiFi networks specifically.
+    RescanWifi,
+    /// Toggle WiFi radio on/off.
+    ToggleWifi(bool),
+    /// Disconnect an active connection by name.
+    Disconnect(String),
+    /// Begin connecting to a WiFi SSID (open networks connect immediately).
+    ConnectWifi(String),
+    /// Password field changed for a given SSID.
+    PasswordChanged { ssid: String, value: String },
+    /// Submit the password form and connect to the secured network.
+    SubmitPassword(String),
 }
 
-/// Return the appropriate WiFi signal icon name and CSS class for a given signal strength.
-fn wifi_signal_icon_and_class(signal: Option<u32>) -> (&'static str, &'static str) {
-    match signal {
-        Some(s) if s >= 75 => (
-            "network-wireless-signal-excellent-symbolic",
-            "signal-excellent",
-        ),
-        Some(s) if s >= 50 => ("network-wireless-signal-good-symbolic", "signal-good"),
-        Some(s) if s >= 25 => ("network-wireless-signal-ok-symbolic", "signal-fair"),
-        _ => ("network-wireless-signal-weak-symbolic", "signal-weak"),
-    }
+// ---------------------------------------------------------------------------
+// NetworkPage state
+// ---------------------------------------------------------------------------
+
+pub struct NetworkPage {
+    /// IP address, gateway, DNS for the primary device.
+    ip_details: (String, String, String),
+    /// Active connections: (name, type, device).
+    active_connections: Vec<(String, String, String)>,
+    /// Available WiFi networks: (ssid, signal_percent, security, in_use).
+    wifi_networks: Vec<(String, String, String, bool)>,
+    /// Network devices: (name, type, state, connection, signal).
+    devices: Vec<(String, String, String, String, Option<u32>)>,
+    /// Whether WiFi radio is currently enabled.
+    wifi_enabled: bool,
+    /// Per-SSID password input state (for secured networks).
+    password_input: HashMap<String, String>,
 }
 
-// --- Devices Section ---
+impl NetworkPage {
+    pub fn new() -> Self {
+        let wifi_enabled = read_wifi_enabled();
 
-fn build_devices_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Devices").build();
-
-    let mut devices = network::get_devices();
-    let favorites = Rc::new(RefCell::new(network::load_favorites()));
-
-    // Sort: favorites first, then alphabetical by device name
-    {
-        let favs = favorites.borrow();
-        devices.sort_by(|a, b| {
-            let a_fav = favs.contains(&a.0);
-            let b_fav = favs.contains(&b.0);
-            match (a_fav, b_fav) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.0.cmp(&b.0),
-            }
-        });
-    }
-
-    if devices.is_empty() {
-        let row = adw::ActionRow::builder().title("No devices found").build();
-        group.add(&row);
-    } else {
-        for (dev_name, dev_type, state, connection, signal) in &devices {
-            let row = adw::ActionRow::builder()
-                .title(dev_name.as_str())
-                .subtitle(&format!("{} \u{2014} {}", dev_type, state))
-                .build();
-
-            // Prefix icon based on device type and signal strength
-            let (icon_name, icon_class) = if dev_type == "wifi" {
-                if state == "disconnected" {
-                    ("network-wireless-offline-symbolic", "signal-weak")
-                } else {
-                    wifi_signal_icon_and_class(*signal)
-                }
-            } else {
-                ("network-wired-symbolic", "")
-            };
-            let icon = gtk::Image::from_icon_name(icon_name);
-            icon.set_valign(gtk::Align::Center);
-            if !icon_class.is_empty() {
-                icon.add_css_class(icon_class);
-            }
-            row.add_prefix(&icon);
-
-            // Show connection name if connected
-            if !connection.is_empty() && state == "connected" {
-                let conn_label = gtk::Label::builder()
-                    .label(connection.as_str())
-                    .valign(gtk::Align::Center)
-                    .css_classes(["dim-label"])
-                    .build();
-                row.add_suffix(&conn_label);
-            }
-
-            // Status dot
-            let status_class = if state == "connected" {
-                "status-badge-green"
-            } else if state.contains("connecting") {
-                "status-badge-yellow"
-            } else {
-                "status-badge-red"
-            };
-            let status_dot = gtk::Label::builder()
-                .label("\u{25CF}")
-                .valign(gtk::Align::Center)
-                .css_classes([status_class])
-                .build();
-            row.add_suffix(&status_dot);
-
-            // Star toggle button for favorites
-            let is_fav = favorites.borrow().contains(dev_name);
-            let star_icon = if is_fav {
-                "starred-symbolic"
-            } else {
-                "non-starred-symbolic"
-            };
-            let star_btn = gtk::ToggleButton::builder()
-                .icon_name(star_icon)
-                .valign(gtk::Align::Center)
-                .active(is_fav)
-                .css_classes(["flat"])
-                .build();
-
-            let dev_name_clone = dev_name.clone();
-            let favorites_clone = Rc::clone(&favorites);
-            star_btn.connect_toggled(move |btn| {
-                let active = btn.is_active();
-                let icon = if active {
-                    "starred-symbolic"
-                } else {
-                    "non-starred-symbolic"
-                };
-                btn.set_icon_name(icon);
-
-                let mut favs = favorites_clone.borrow_mut();
-                if active {
-                    if !favs.contains(&dev_name_clone) {
-                        favs.push(dev_name_clone.clone());
-                    }
-                } else {
-                    favs.retain(|f| f != &dev_name_clone);
-                }
-                network::save_favorites(&favs);
-            });
-            row.add_suffix(&star_btn);
-
-            group.add(&row);
+        Self {
+            ip_details: network::get_ip_details(),
+            active_connections: network::get_active_connections(),
+            wifi_networks: network::get_wifi_networks(),
+            devices: network::get_devices(),
+            wifi_enabled,
+            password_input: HashMap::new(),
         }
     }
 
-    group
-}
-
-// --- Connection Status Section ---
-
-fn build_connection_section() -> adw::PreferencesGroup {
-    let conn_group = adw::PreferencesGroup::builder().title("Connection").build();
-
-    let active_connections = network::get_active_connections();
-    if active_connections.is_empty() {
-        let row = adw::ActionRow::builder()
-            .title("No active connections")
-            .build();
-        conn_group.add(&row);
-    } else {
-        for (name, conn_type, device) in &active_connections {
-            let row = adw::ActionRow::builder()
-                .title(name.as_str())
-                .subtitle(&format!("{} \u{2014} {}", conn_type, device))
-                .build();
-
-            let conn_type_lower = conn_type.to_lowercase();
-            let icon_name =
-                if conn_type_lower.contains("wireless") || conn_type_lower.contains("wifi") {
-                    "network-wireless-symbolic"
-                } else if conn_type_lower.contains("vpn") {
-                    "network-vpn-symbolic"
-                } else {
-                    "network-wired-symbolic"
-                };
-            let icon = gtk::Image::from_icon_name(icon_name);
-            icon.set_valign(gtk::Align::Center);
-            row.add_prefix(&icon);
-
-            let conn_name_clone = name.clone();
-            let disconnect_btn = gtk::Button::builder()
-                .label("Disconnect")
-                .valign(gtk::Align::Center)
-                .css_classes(["flat"])
-                .build();
-            disconnect_btn.connect_clicked(move |_| {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Refresh => {
+                self.ip_details = network::get_ip_details();
+                self.active_connections = network::get_active_connections();
+                self.wifi_networks = network::get_wifi_networks();
+                self.devices = network::get_devices();
+                self.wifi_enabled = read_wifi_enabled();
+            }
+            Message::RescanWifi => {
+                // Trigger a rescan then reload the list.
                 let _ = Command::new("nmcli")
-                    .args(["connection", "down", &conn_name_clone])
+                    .args(["device", "wifi", "rescan"])
                     .status();
-            });
-            row.add_suffix(&disconnect_btn);
+                self.wifi_networks = network::get_wifi_networks();
+            }
+            Message::ToggleWifi(on) => {
+                let arg = if on { "on" } else { "off" };
+                let _ = Command::new("nmcli").args(["radio", "wifi", arg]).status();
+                self.wifi_enabled = on;
+                // Refresh the network list after toggling.
+                self.wifi_networks = network::get_wifi_networks();
+                self.active_connections = network::get_active_connections();
+                self.ip_details = network::get_ip_details();
+            }
+            Message::Disconnect(name) => {
+                let _ = Command::new("nmcli")
+                    .args(["connection", "down", &name])
+                    .status();
+                // Refresh after disconnect.
+                self.active_connections = network::get_active_connections();
+                self.ip_details = network::get_ip_details();
+                self.wifi_networks = network::get_wifi_networks();
+            }
+            Message::ConnectWifi(ssid) => {
+                // Check if the network requires a password by looking up its security.
+                let needs_password = self
+                    .wifi_networks
+                    .iter()
+                    .any(|(s, _, sec, _)| s == &ssid && !sec.is_empty() && sec != "--");
 
-            conn_group.add(&row);
+                if needs_password {
+                    // Open password entry -- insert empty string if not already present.
+                    self.password_input.entry(ssid).or_default();
+                } else {
+                    // Open network -- connect directly.
+                    network::connect_wifi(&ssid, None);
+                    self.active_connections = network::get_active_connections();
+                    self.ip_details = network::get_ip_details();
+                    self.wifi_networks = network::get_wifi_networks();
+                }
+            }
+            Message::PasswordChanged { ssid, value } => {
+                self.password_input.insert(ssid, value);
+            }
+            Message::SubmitPassword(ssid) => {
+                let password = self.password_input.remove(&ssid).unwrap_or_default();
+                let pw = if password.is_empty() {
+                    None
+                } else {
+                    Some(password.as_str())
+                };
+                network::connect_wifi(&ssid, pw);
+                self.active_connections = network::get_active_connections();
+                self.ip_details = network::get_ip_details();
+                self.wifi_networks = network::get_wifi_networks();
+            }
         }
+        Task::none()
     }
 
-    conn_group
-}
+    pub fn view(&self) -> Element<'_, Message> {
+        // -- Header --
+        let title = text("Network").size(28).color(theme::TEXT);
 
-// --- WiFi Networks Section ---
+        let refresh_btn = accent_button("Refresh", Message::Refresh);
 
-fn build_wifi_section() -> adw::PreferencesGroup {
-    let wifi_group = adw::PreferencesGroup::builder().title("WiFi").build();
+        let header = row![title, Space::new().width(Length::Fill), refresh_btn]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
 
-    // Refresh button at top of group
-    let scan_btn = gtk::Button::builder()
-        .icon_name("view-refresh-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text("Rescan WiFi networks")
-        .css_classes(["flat"])
-        .build();
-    scan_btn.connect_clicked(|_| {
-        let _ = Command::new("nmcli")
-            .args(["device", "wifi", "rescan"])
-            .spawn();
-    });
-    wifi_group.set_header_suffix(Some(&scan_btn));
+        // -- Sections --
+        let ip_card = self.view_ip_details();
+        let active_section = self.view_active_connections();
+        let wifi_section = self.view_wifi_networks();
+        let devices_section = self.view_devices();
 
-    let mut networks = network::get_wifi_networks();
+        let content = column![
+            header,
+            ip_card,
+            active_section,
+            wifi_section,
+            devices_section,
+        ]
+        .spacing(16)
+        .padding(4);
 
-    // Sort: connected first, then by signal strength descending
-    networks.sort_by(|a, b| {
-        // in_use first
-        match (b.3, a.3) {
-            (true, false) => return std::cmp::Ordering::Greater,
-            (false, true) => return std::cmp::Ordering::Less,
-            _ => {}
+        scrollable(content)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
+    }
+
+    // -- IP Details card ------------------------------------------------------
+
+    fn view_ip_details(&self) -> Element<'_, Message> {
+        let (ip, gateway, dns) = &self.ip_details;
+
+        let heading = text("IP Details").size(18).color(theme::TEXT);
+
+        let ip_row = detail_row("IP Address", ip);
+        let gw_row = detail_row("Gateway", gateway);
+        let dns_row = detail_row("DNS", dns);
+
+        let content = column![heading, ip_row, gw_row, dns_row].spacing(6);
+
+        card(content)
+    }
+
+    // -- Active connections ---------------------------------------------------
+
+    fn view_active_connections(&self) -> Element<'_, Message> {
+        let heading = text("Active Connections").size(18).color(theme::TEXT);
+
+        if self.active_connections.is_empty() {
+            let empty = text("No active connections")
+                .size(13)
+                .color(theme::OVERLAY0);
+            return card(column![heading, empty].spacing(8));
         }
-        // Then by signal descending
-        let a_signal = a.1.parse::<u32>().unwrap_or(0);
-        let b_signal = b.1.parse::<u32>().unwrap_or(0);
-        b_signal.cmp(&a_signal)
-    });
 
-    if networks.is_empty() {
-        let row = adw::ActionRow::builder()
-            .title("No WiFi networks found")
-            .subtitle("WiFi may be disabled or unavailable")
-            .build();
-        wifi_group.add(&row);
-    } else {
-        for (ssid, signal, security, in_use) in &networks {
+        let mut rows = column![].spacing(6);
+
+        for (name, conn_type, device) in &self.active_connections {
+            let info = text(format!("{name}  ({conn_type} on {device})"))
+                .size(13)
+                .color(theme::TEXT);
+
+            let disconnect_btn = small_button("Disconnect", theme::RED, {
+                let name = name.clone();
+                Message::Disconnect(name)
+            });
+
+            let r = row![info, Space::new().width(Length::Fill), disconnect_btn]
+                .spacing(8)
+                .align_y(iced::Alignment::Center);
+
+            rows = rows.push(r);
+        }
+
+        card(column![heading, rows].spacing(8))
+    }
+
+    // -- WiFi networks --------------------------------------------------------
+
+    fn view_wifi_networks(&self) -> Element<'_, Message> {
+        let heading = text("WiFi Networks").size(18).color(theme::TEXT);
+
+        // WiFi toggle
+        let wifi_toggle = toggler(self.wifi_enabled)
+            .on_toggle(Message::ToggleWifi)
+            .size(20.0);
+
+        let toggle_label = text(if self.wifi_enabled {
+            "WiFi On"
+        } else {
+            "WiFi Off"
+        })
+        .size(13)
+        .color(theme::SUBTEXT0);
+
+        let rescan_btn = accent_button("Rescan", Message::RescanWifi);
+
+        let controls = row![
+            toggle_label,
+            wifi_toggle,
+            Space::new().width(Length::Fill),
+            rescan_btn,
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+
+        if !self.wifi_enabled || self.wifi_networks.is_empty() {
+            let empty_text = if !self.wifi_enabled {
+                "WiFi radio is disabled"
+            } else {
+                "No WiFi networks found"
+            };
+            let empty = text(empty_text).size(13).color(theme::OVERLAY0);
+            return card(column![heading, controls, empty].spacing(8));
+        }
+
+        let mut network_rows = column![].spacing(6);
+
+        for (ssid, signal, security, in_use) in &self.wifi_networks {
+            // Skip empty SSIDs (hidden networks).
             if ssid.is_empty() {
                 continue;
             }
 
-            let signal_val = signal.parse::<u32>().ok();
-            let (signal_icon_name, signal_class) = wifi_signal_icon_and_class(signal_val);
+            let signal_icon = signal_indicator(signal);
 
-            let row = adw::ActionRow::builder()
-                .title(ssid.as_str())
-                .subtitle(&format!("Security: {}", security))
-                .build();
+            let ssid_label = text(ssid).size(13).color(theme::TEXT);
 
-            // Signal strength icon as prefix
-            let signal_icon = gtk::Image::from_icon_name(signal_icon_name);
-            signal_icon.set_valign(gtk::Align::Center);
-            signal_icon.add_css_class(signal_class);
-            row.add_prefix(&signal_icon);
+            let sec_label = text(if security.is_empty() || security == "--" {
+                "Open"
+            } else {
+                security.as_str()
+            })
+            .size(11)
+            .color(theme::SUBTEXT0);
 
-            if *in_use {
-                let check = gtk::Image::from_icon_name("emblem-default-symbolic");
-                check.set_valign(gtk::Align::Center);
-                check.add_css_class("signal-excellent");
-                row.add_suffix(&check);
+            let connected_badge: Element<'_, Message> = if *in_use {
+                text("Connected").size(11).color(theme::GREEN).into()
+            } else {
+                Space::new().into()
+            };
 
-                let connected_label = gtk::Label::builder()
-                    .label("Connected")
-                    .valign(gtk::Align::Center)
-                    .css_classes(["dim-label"])
-                    .build();
-                row.add_suffix(&connected_label);
+            let action: Element<'_, Message> = if *in_use {
+                // Already connected -- no connect button needed.
+                Space::new().into()
             } else {
                 let ssid_clone = ssid.clone();
-                let secured = !security.is_empty() && security != "--";
-                let connect_btn = gtk::Button::builder()
-                    .label("Connect")
-                    .valign(gtk::Align::Center)
-                    .build();
-                connect_btn.connect_clicked(move |btn| {
-                    if secured {
-                        show_password_dialog(btn, &ssid_clone);
-                    } else {
-                        network::connect_wifi(&ssid_clone, None);
-                    }
-                });
-                row.add_suffix(&connect_btn);
-            }
+                small_button("Connect", theme::BLUE, Message::ConnectWifi(ssid_clone))
+            };
 
-            wifi_group.add(&row);
+            let main_row = row![
+                signal_icon,
+                ssid_label,
+                sec_label,
+                connected_badge,
+                Space::new().width(Length::Fill),
+                action,
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+            network_rows = network_rows.push(main_row);
+
+            // Password input row (if user clicked Connect on a secured network).
+            if let Some(password) = self.password_input.get(ssid) {
+                let ssid_for_input = ssid.clone();
+                let ssid_for_submit = ssid.clone();
+
+                let pw_input = text_input("Password", password)
+                    .on_input(move |s| Message::PasswordChanged {
+                        ssid: ssid_for_input.clone(),
+                        value: s,
+                    })
+                    .on_submit(Message::SubmitPassword(ssid_for_submit.clone()))
+                    .secure(true)
+                    .size(13.0)
+                    .width(Length::Fixed(220.0));
+
+                let submit_btn = small_button(
+                    "Join",
+                    theme::GREEN,
+                    Message::SubmitPassword(ssid_for_submit),
+                );
+
+                let pw_row = row![Space::new().width(28), pw_input, submit_btn,]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center);
+
+                network_rows = network_rows.push(pw_row);
+            }
         }
+
+        card(column![heading, controls, network_rows].spacing(8))
     }
 
-    wifi_group
+    // -- Devices --------------------------------------------------------------
+
+    fn view_devices(&self) -> Element<'_, Message> {
+        let heading = text("Devices").size(18).color(theme::TEXT);
+
+        if self.devices.is_empty() {
+            let empty = text("No network devices found")
+                .size(13)
+                .color(theme::OVERLAY0);
+            return card(column![heading, empty].spacing(8));
+        }
+
+        let mut rows = column![].spacing(6);
+
+        for (name, dev_type, state, connection, signal) in &self.devices {
+            let state_color = if state.contains("connected") {
+                theme::GREEN
+            } else {
+                theme::OVERLAY0
+            };
+
+            let name_label = text(name).size(13).color(theme::TEXT);
+            let type_label = text(dev_type).size(11).color(theme::SUBTEXT0);
+            let state_label = text(state).size(11).color(state_color);
+
+            let conn_label = if connection.is_empty() || connection == "--" {
+                text("").size(11).color(theme::OVERLAY0)
+            } else {
+                text(connection).size(11).color(theme::SUBTEXT0)
+            };
+
+            let signal_text: Element<'_, Message> = match signal {
+                Some(s) => text(format!("{s}%")).size(11).color(theme::SUBTEXT0).into(),
+                None => Space::new().into(),
+            };
+
+            let r = row![
+                name_label,
+                type_label,
+                state_label,
+                conn_label,
+                Space::new().width(Length::Fill),
+                signal_text,
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+            rows = rows.push(r);
+        }
+
+        card(column![heading, rows].spacing(8))
+    }
 }
 
-// --- IP Details Section ---
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-fn build_details_section() -> adw::PreferencesGroup {
-    let details_group = adw::PreferencesGroup::builder().title("Details").build();
-
-    let (ip, gateway, dns) = network::get_ip_details();
-
-    let ip_row = adw::ActionRow::builder()
-        .title("IP Address")
-        .subtitle(&ip)
-        .build();
-    let ip_icon = gtk::Image::from_icon_name("network-workgroup-symbolic");
-    ip_icon.set_valign(gtk::Align::Center);
-    ip_row.add_prefix(&ip_icon);
-    details_group.add(&ip_row);
-
-    let gw_row = adw::ActionRow::builder()
-        .title("Gateway")
-        .subtitle(&gateway)
-        .build();
-    let gw_icon = gtk::Image::from_icon_name("network-server-symbolic");
-    gw_icon.set_valign(gtk::Align::Center);
-    gw_row.add_prefix(&gw_icon);
-    details_group.add(&gw_row);
-
-    let dns_row = adw::ActionRow::builder()
-        .title("DNS")
-        .subtitle(&dns)
-        .build();
-    let dns_icon = gtk::Image::from_icon_name("preferences-system-network-symbolic");
-    dns_icon.set_valign(gtk::Align::Center);
-    dns_row.add_prefix(&dns_icon);
-    details_group.add(&dns_row);
-
-    details_group
-}
-
-// --- Actions Section ---
-
-fn build_actions_section() -> adw::PreferencesGroup {
-    let actions_group = adw::PreferencesGroup::builder().build();
-
-    // WiFi enable/disable toggle
-    let wifi_row = adw::ActionRow::builder()
-        .title("WiFi")
-        .subtitle("Enable or disable WiFi radio")
-        .build();
-    let wifi_icon = gtk::Image::from_icon_name("network-wireless-symbolic");
-    wifi_icon.set_valign(gtk::Align::Center);
-    wifi_row.add_prefix(&wifi_icon);
-
-    // Check current wifi status
-    let wifi_enabled = Command::new("nmcli")
+/// Read whether WiFi radio is currently enabled.
+fn read_wifi_enabled() -> bool {
+    Command::new("nmcli")
         .args(["radio", "wifi"])
         .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string() == "enabled")
-        .unwrap_or(true);
-
-    let wifi_switch = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .active(wifi_enabled)
-        .build();
-    wifi_switch.connect_state_set(move |_sw, active| {
-        let state = if active { "on" } else { "off" };
-        let _ = Command::new("nmcli")
-            .args(["radio", "wifi", state])
-            .status();
-        gtk::glib::Propagation::Proceed
-    });
-    wifi_row.add_suffix(&wifi_switch);
-    actions_group.add(&wifi_row);
-
-    // Advanced network configuration (nmtui)
-    let nm_row = adw::ActionRow::builder()
-        .title("Network Connections")
-        .subtitle("Advanced network configuration")
-        .build();
-    let nm_icon = gtk::Image::from_icon_name("utilities-terminal-symbolic");
-    nm_icon.set_valign(gtk::Align::Center);
-    nm_row.add_prefix(&nm_icon);
-    let nm_btn = gtk::Button::builder()
-        .label("Open")
-        .valign(gtk::Align::Center)
-        .build();
-    nm_btn.connect_clicked(|_| {
-        let _ = Command::new("wezterm").args(["-e", "nmtui"]).spawn();
-    });
-    nm_row.add_suffix(&nm_btn);
-    nm_row.set_activatable_widget(Some(&nm_btn));
-    actions_group.add(&nm_row);
-
-    actions_group
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("enabled"))
+        .unwrap_or(false)
 }
 
-/// Show a password dialog for secured WiFi networks.
-fn show_password_dialog(btn: &gtk::Button, ssid: &str) {
-    let ssid_owned = ssid.to_string();
+/// A Catppuccin-styled card container.
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
 
-    let dialog = gtk::Window::builder()
-        .title(&format!("Connect to {}", ssid))
-        .modal(true)
-        .default_width(350)
-        .build();
+/// A label: value detail row.
+fn detail_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
+    let l = text(label).size(13).color(theme::SUBTEXT0);
+    let v = text(value).size(13).color(theme::TEXT);
 
-    if let Some(window) = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
-        dialog.set_transient_for(Some(&window));
-    }
+    row![l, Space::new().width(12), v]
+        .spacing(4)
+        .align_y(iced::Alignment::Center)
+        .into()
+}
 
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(24)
-        .margin_bottom(24)
-        .margin_start(24)
-        .margin_end(24)
-        .build();
+/// Small pill-shaped action button with a custom background color.
+fn small_button(label: &str, color: iced::Color, msg: Message) -> Element<'_, Message> {
+    let bg_color = color;
+    button(text(label).size(12).color(theme::BASE))
+        .on_press(msg)
+        .padding([4, 12])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => {
+                    let mut c = bg_color;
+                    c.a = 0.8;
+                    c
+                }
+                _ => bg_color,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: theme::BASE,
+                border: Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
 
-    let label = gtk::Label::new(Some("Enter the WiFi password:"));
-    content.append(&label);
+/// Accent-colored action button (blue background).
+fn accent_button(label: &str, msg: Message) -> Element<'_, Message> {
+    button(text(label).size(13).color(theme::BASE))
+        .on_press(msg)
+        .padding([6, 16])
+        .style(|_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme::LAVENDER,
+                _ => theme::BLUE,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: theme::BASE,
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
 
-    let entry = gtk::PasswordEntry::builder()
-        .show_peek_icon(true)
-        .hexpand(true)
-        .build();
-    content.append(&entry);
+/// Render a signal strength indicator as colored text.
+fn signal_indicator(signal_str: &str) -> Element<'_, Message> {
+    let strength: u32 = signal_str.parse().unwrap_or(0);
 
-    let button_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
-        .halign(gtk::Align::End)
-        .build();
+    let (icon, color) = if strength >= 75 {
+        ("||||", theme::GREEN)
+    } else if strength >= 50 {
+        ("|||.", theme::YELLOW)
+    } else if strength >= 25 {
+        ("||..", theme::PEACH)
+    } else {
+        ("|...", theme::RED)
+    };
 
-    let cancel_btn = gtk::Button::builder().label("Cancel").build();
-    let connect_btn = gtk::Button::builder()
-        .label("Connect")
-        .css_classes(["suggested-action"])
-        .build();
-
-    button_box.append(&cancel_btn);
-    button_box.append(&connect_btn);
-    content.append(&button_box);
-
-    dialog.set_child(Some(&content));
-
-    let dialog_clone = dialog.clone();
-    cancel_btn.connect_clicked(move |_| {
-        dialog_clone.close();
-    });
-
-    let dialog_clone = dialog.clone();
-    let entry_clone = entry.clone();
-    connect_btn.connect_clicked(move |_| {
-        let password = entry_clone.text();
-        let password_str = password.as_str();
-        if !password_str.is_empty() {
-            network::connect_wifi(&ssid_owned, Some(password_str));
-        }
-        dialog_clone.close();
-    });
-
-    dialog.present();
+    text(icon).size(12).color(color).into()
 }

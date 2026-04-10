@@ -1,658 +1,533 @@
-// === pages/display.rs — Monitor configuration page ===
+// === display.rs — Monitor configuration page ===
+//
+// Reads monitor info from `hyprctl monitors -j`, lets the user change
+// resolution, scale, rotation, and position per monitor, then writes
+// to ~/.config/hypr/monitors.conf and reloads Hyprland.
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
-use relm4::gtk::glib;
-use std::sync::{Arc, Mutex};
+use std::fmt;
+use std::fs;
+use std::process::Command;
 
-/// A single resolution + refresh rate mode reported by the monitor.
-#[derive(Debug, Clone)]
+use iced::widget::{button, column, container, pick_list, row, scrollable, slider, text, Space};
+use iced::{Background, Border, Element, Length, Task};
+use serde::Deserialize;
+
+use crate::services::hyprctl;
+use crate::theme;
+
+// ---------------------------------------------------------------------------
+// Data model
+// ---------------------------------------------------------------------------
+
+/// A single mode reported by Hyprland (e.g. "2560x1440@143.97").
+#[derive(Debug, Clone, PartialEq)]
 struct Mode {
-    width: i64,
-    height: i64,
-    refresh_rate: f64,
+    width: u32,
+    height: u32,
+    refresh: f32,
 }
 
-impl Mode {
-    /// Label shown in the combo: `2560x1440 @ 144Hz`
-    fn label(&self) -> String {
-        format!(
-            "{}x{} @ {:.0}Hz",
-            self.width, self.height, self.refresh_rate
-        )
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}x{}@{:.2}", self.width, self.height, self.refresh)
     }
 }
 
-/// Monitor configuration state shared between UI callbacks and Apply.
-struct MonitorConfig {
+/// Rotation/transform variants matching Hyprland's transform values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transform {
+    Normal,
+    Rotate90,
+    Rotate180,
+    Rotate270,
+    Flipped,
+    Flipped90,
+    Flipped180,
+    Flipped270,
+}
+
+impl Transform {
+    const ALL: [Transform; 8] = [
+        Transform::Normal,
+        Transform::Rotate90,
+        Transform::Rotate180,
+        Transform::Rotate270,
+        Transform::Flipped,
+        Transform::Flipped90,
+        Transform::Flipped180,
+        Transform::Flipped270,
+    ];
+
+    fn from_hyprland(val: u32) -> Self {
+        match val {
+            1 => Transform::Rotate90,
+            2 => Transform::Rotate180,
+            3 => Transform::Rotate270,
+            4 => Transform::Flipped,
+            5 => Transform::Flipped90,
+            6 => Transform::Flipped180,
+            7 => Transform::Flipped270,
+            _ => Transform::Normal,
+        }
+    }
+
+    fn to_hyprland(self) -> u32 {
+        match self {
+            Transform::Normal => 0,
+            Transform::Rotate90 => 1,
+            Transform::Rotate180 => 2,
+            Transform::Rotate270 => 3,
+            Transform::Flipped => 4,
+            Transform::Flipped90 => 5,
+            Transform::Flipped180 => 6,
+            Transform::Flipped270 => 7,
+        }
+    }
+}
+
+impl fmt::Display for Transform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Transform::Normal => write!(f, "Normal"),
+            Transform::Rotate90 => write!(f, "90\u{b0}"),
+            Transform::Rotate180 => write!(f, "180\u{b0}"),
+            Transform::Rotate270 => write!(f, "270\u{b0}"),
+            Transform::Flipped => write!(f, "Flipped"),
+            Transform::Flipped90 => write!(f, "Flipped 90\u{b0}"),
+            Transform::Flipped180 => write!(f, "Flipped 180\u{b0}"),
+            Transform::Flipped270 => write!(f, "Flipped 270\u{b0}"),
+        }
+    }
+}
+
+/// State for a single monitor as edited by the user.
+#[derive(Debug, Clone)]
+struct MonitorState {
     name: String,
-    width: i64,
-    height: i64,
-    refresh_rate: f64,
-    scale: f64,
-    transform: i64,
-    x: i64,
-    y: i64,
+    description: String,
     available_modes: Vec<Mode>,
+    selected_mode: Option<Mode>,
+    scale: f32,
+    transform: Transform,
+    x: i32,
+    y: i32,
 }
 
-/// Parse an `availableModes` entry like `"2560x1440@143.97Hz"` into a `Mode`.
-fn parse_mode_string(s: &str) -> Option<Mode> {
-    let s = s.trim().trim_end_matches("Hz");
-    let (res, rate) = s.split_once('@')?;
-    let (w, h) = res.split_once('x')?;
-    Some(Mode {
-        width: w.parse().ok()?,
-        height: h.parse().ok()?,
-        refresh_rate: rate.parse().ok()?,
-    })
+// ---------------------------------------------------------------------------
+// JSON structs for hyprctl monitors -j
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct HyprMonitor {
+    name: String,
+    description: String,
+    width: u32,
+    height: u32,
+    #[serde(alias = "refreshRate")]
+    refresh_rate: f32,
+    x: i32,
+    y: i32,
+    scale: f32,
+    transform: u32,
+    #[serde(alias = "availableModes")]
+    available_modes: Vec<String>,
 }
 
-/// Query connected monitors via `hyprctl monitors -j` and parse with serde_json.
-fn query_monitors() -> Vec<MonitorConfig> {
-    let output = std::process::Command::new("hyprctl")
-        .args(["monitors", "-j"])
-        .output();
+// ---------------------------------------------------------------------------
+// Message
+// ---------------------------------------------------------------------------
 
-    let output = match output {
-        Ok(o) if o.status.success() => o,
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Re-read monitor state from Hyprland.
+    Refresh,
+    /// User selected a resolution mode for a monitor.
+    SelectMode { index: usize, mode: String },
+    /// User changed the scale slider for a monitor.
+    SetScale { index: usize, scale: f32 },
+    /// User selected a transform/rotation for a monitor.
+    SetTransform { index: usize, transform: String },
+    /// User changed position X for a monitor.
+    SetPositionX { index: usize, value: String },
+    /// User changed position Y for a monitor.
+    SetPositionY { index: usize, value: String },
+    /// Write monitors.conf and reload Hyprland.
+    Apply,
+}
+
+// ---------------------------------------------------------------------------
+// DisplayPage
+// ---------------------------------------------------------------------------
+
+pub struct DisplayPage {
+    monitors: Vec<MonitorState>,
+    /// Transient text input buffers for position fields so the user can type
+    /// freely without the input snapping to parsed integers mid-keystroke.
+    position_x_buf: Vec<String>,
+    position_y_buf: Vec<String>,
+    /// Status message shown after apply (success or error).
+    status: Option<String>,
+}
+
+impl DisplayPage {
+    pub fn new() -> Self {
+        let monitors = read_monitors();
+        let x_bufs: Vec<String> = monitors.iter().map(|m| m.x.to_string()).collect();
+        let y_bufs: Vec<String> = monitors.iter().map(|m| m.y.to_string()).collect();
+        Self {
+            monitors,
+            position_x_buf: x_bufs,
+            position_y_buf: y_bufs,
+            status: None,
+        }
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Refresh => {
+                self.monitors = read_monitors();
+                self.position_x_buf = self.monitors.iter().map(|m| m.x.to_string()).collect();
+                self.position_y_buf = self.monitors.iter().map(|m| m.y.to_string()).collect();
+                self.status = None;
+            }
+            Message::SelectMode { index, mode } => {
+                if let Some(mon) = self.monitors.get_mut(index) {
+                    if let Some(parsed) = parse_mode(&mode) {
+                        mon.selected_mode = Some(parsed);
+                    }
+                }
+            }
+            Message::SetScale { index, scale } => {
+                if let Some(mon) = self.monitors.get_mut(index) {
+                    // Round to nearest 0.25 increment.
+                    mon.scale = (scale * 4.0).round() / 4.0;
+                }
+            }
+            Message::SetTransform { index, transform } => {
+                if let Some(mon) = self.monitors.get_mut(index) {
+                    for t in Transform::ALL {
+                        if t.to_string() == transform {
+                            mon.transform = t;
+                            break;
+                        }
+                    }
+                }
+            }
+            Message::SetPositionX { index, value } => {
+                if let Some(buf) = self.position_x_buf.get_mut(index) {
+                    *buf = value.clone();
+                }
+                if let Some(mon) = self.monitors.get_mut(index) {
+                    if let Ok(v) = value.parse::<i32>() {
+                        mon.x = v;
+                    }
+                }
+            }
+            Message::SetPositionY { index, value } => {
+                if let Some(buf) = self.position_y_buf.get_mut(index) {
+                    *buf = value.clone();
+                }
+                if let Some(mon) = self.monitors.get_mut(index) {
+                    if let Ok(v) = value.parse::<i32>() {
+                        mon.y = v;
+                    }
+                }
+            }
+            Message::Apply => {
+                self.status = Some(apply_monitors(&self.monitors));
+            }
+        }
+        Task::none()
+    }
+
+    pub fn view(&self) -> Element<'_, Message> {
+        // -- Header --
+        let title = text("Display").size(28).color(theme::TEXT);
+
+        let refresh_btn = button(text("Refresh").size(13).color(theme::BASE))
+            .on_press(Message::Refresh)
+            .padding([8, 16])
+            .style(|_theme, _status| button::Style {
+                background: Some(Background::Color(theme::BLUE)),
+                text_color: theme::BASE,
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
+        let header = row![title, Space::new().width(Length::Fill), refresh_btn]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        // -- Monitor cards --
+        let mut cards = column![].spacing(16);
+
+        if self.monitors.is_empty() {
+            cards = cards.push(
+                text("No monitors detected. Is Hyprland running?")
+                    .size(14)
+                    .color(theme::OVERLAY0),
+            );
+        }
+
+        for (i, mon) in self.monitors.iter().enumerate() {
+            cards = cards.push(self.view_monitor_card(i, mon));
+        }
+
+        // -- Apply button --
+        let apply_btn = button(text("Apply").size(15).color(theme::BASE))
+            .on_press(Message::Apply)
+            .padding([10, 32])
+            .style(|_theme, status| {
+                let bg = match status {
+                    button::Status::Hovered => theme::GREEN,
+                    _ => theme::BLUE,
+                };
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: theme::BASE,
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+
+        // -- Status text --
+        let status_el: Element<'_, Message> = match &self.status {
+            Some(msg) => {
+                let color = if msg.starts_with("Error") {
+                    theme::RED
+                } else {
+                    theme::GREEN
+                };
+                text(msg).size(13).color(color).into()
+            }
+            None => Space::new().into(),
+        };
+
+        let bottom_row =
+            row![apply_btn, Space::new().width(12), status_el].align_y(iced::Alignment::Center);
+
+        let content = column![header, cards, bottom_row]
+            .spacing(16)
+            .padding(4)
+            .width(Length::Fill);
+
+        scrollable(content).height(Length::Fill).into()
+    }
+
+    fn view_monitor_card<'a>(
+        &'a self,
+        index: usize,
+        mon: &'a MonitorState,
+    ) -> Element<'a, Message> {
+        // -- Name + description --
+        let name_label = text(&mon.name).size(18).color(theme::TEXT);
+        let desc_label = text(&mon.description).size(12).color(theme::SUBTEXT0);
+
+        // -- Resolution picker --
+        let mode_strings: Vec<String> = mon.available_modes.iter().map(|m| m.to_string()).collect();
+        let selected_mode = mon.selected_mode.as_ref().map(|m| m.to_string());
+
+        let res_label = text("Resolution").size(13).color(theme::SUBTEXT0);
+        let res_picker = pick_list(mode_strings, selected_mode, move |mode| {
+            Message::SelectMode { index, mode }
+        })
+        .width(Length::Fixed(280.0))
+        .text_size(13.0);
+
+        // -- Scale slider --
+        let scale_label = text(format!("Scale: {:.2}", mon.scale))
+            .size(13)
+            .color(theme::SUBTEXT0);
+
+        let scale_slider = slider(0.5..=3.0_f32, mon.scale, move |s| Message::SetScale {
+            index,
+            scale: s,
+        })
+        .step(0.25)
+        .width(Length::Fixed(280.0));
+
+        // -- Transform picker --
+        let transform_strings: Vec<String> = Transform::ALL.iter().map(|t| t.to_string()).collect();
+        let selected_transform = mon.transform.to_string();
+
+        let transform_label = text("Rotation").size(13).color(theme::SUBTEXT0);
+        let transform_picker = pick_list(
+            transform_strings,
+            Some(selected_transform),
+            move |transform| Message::SetTransform { index, transform },
+        )
+        .width(Length::Fixed(280.0))
+        .text_size(13.0);
+
+        // -- Position --
+        let pos_label = text("Position").size(13).color(theme::SUBTEXT0);
+
+        let x_buf = self
+            .position_x_buf
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| mon.x.to_string());
+        let y_buf = self
+            .position_y_buf
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| mon.y.to_string());
+
+        let x_label = text("X:").size(13).color(theme::SUBTEXT0);
+        let x_input = iced::widget::text_input("0", &x_buf)
+            .on_input(move |value| Message::SetPositionX { index, value })
+            .width(Length::Fixed(100.0))
+            .size(13.0);
+
+        let y_label = text("Y:").size(13).color(theme::SUBTEXT0);
+        let y_input = iced::widget::text_input("0", &y_buf)
+            .on_input(move |value| Message::SetPositionY { index, value })
+            .width(Length::Fixed(100.0))
+            .size(13.0);
+
+        let pos_row = row![x_label, x_input, Space::new().width(12), y_label, y_input]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+
+        // -- Card assembly --
+        let card = column![
+            row![name_label, Space::new().width(12), desc_label].align_y(iced::Alignment::Center),
+            Space::new().height(8),
+            res_label,
+            res_picker,
+            Space::new().height(4),
+            scale_label,
+            scale_slider,
+            Space::new().height(4),
+            transform_label,
+            transform_picker,
+            Space::new().height(4),
+            pos_label,
+            pos_row,
+        ]
+        .spacing(4);
+
+        container(card)
+            .padding(16)
+            .width(Length::Fill)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(theme::SURFACE0)),
+                border: Border {
+                    radius: 12.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Read monitor info from Hyprland via `hyprctl monitors -j`.
+fn read_monitors() -> Vec<MonitorState> {
+    let output = match Command::new("hyprctl").args(["monitors", "-j"]).output() {
+        Ok(o) if o.status.success() => o.stdout,
         _ => return Vec::new(),
     };
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    let arr: serde_json::Value = match serde_json::from_str(&text) {
+    let hypr_monitors: Vec<HyprMonitor> = match serde_json::from_slice(&output) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
 
-    let Some(monitors) = arr.as_array() else {
-        return Vec::new();
-    };
+    hypr_monitors
+        .into_iter()
+        .map(|hm| {
+            let available_modes: Vec<Mode> = hm
+                .available_modes
+                .iter()
+                .filter_map(|s| parse_mode(s))
+                .collect();
 
-    monitors
-        .iter()
-        .filter_map(|m| {
-            let name = m.get("name")?.as_str()?.to_string();
-            let width = m.get("width")?.as_i64()?;
-            let height = m.get("height")?.as_i64()?;
-            let refresh_rate = m.get("refreshRate")?.as_f64()?;
-            let scale = m.get("scale")?.as_f64().unwrap_or(1.0);
-            let transform = m.get("transform")?.as_i64().unwrap_or(0);
-            let x = m.get("x")?.as_i64().unwrap_or(0);
-            let y = m.get("y")?.as_i64().unwrap_or(0);
-
-            let available_modes = m
-                .get("availableModes")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|entry| entry.as_str().and_then(parse_mode_string))
-                        .collect::<Vec<_>>()
+            // Find the mode matching the current resolution + refresh rate.
+            let current_mode = available_modes
+                .iter()
+                .find(|m| {
+                    m.width == hm.width
+                        && m.height == hm.height
+                        && (m.refresh - hm.refresh_rate).abs() < 1.0
                 })
-                .unwrap_or_default();
+                .cloned();
 
-            Some(MonitorConfig {
-                name,
-                width,
-                height,
-                refresh_rate,
-                scale,
-                transform,
-                x,
-                y,
+            MonitorState {
+                name: hm.name,
+                description: hm.description,
                 available_modes,
-            })
+                selected_mode: current_mode,
+                scale: hm.scale,
+                transform: Transform::from_hyprland(hm.transform),
+                x: hm.x,
+                y: hm.y,
+            }
         })
         .collect()
 }
 
-/// Capture a low-res screenshot of a monitor via grim, returning raw PNG bytes.
-fn capture_monitor_png(name: &str) -> Option<Vec<u8>> {
-    std::process::Command::new("grim")
-        .args(["-o", name, "-t", "png", "-s", "0.2", "-"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| o.stdout)
+/// Parse a mode string like "2560x1440@143.97Hz" or "2560x1440@143.97" into a Mode.
+fn parse_mode(s: &str) -> Option<Mode> {
+    let s = s.trim_end_matches("Hz");
+    let (res, rate_str) = s.split_once('@')?;
+    let (w, h) = res.split_once('x')?;
+    Some(Mode {
+        width: w.parse().ok()?,
+        height: h.parse().ok()?,
+        refresh: rate_str.parse().ok()?,
+    })
 }
 
-/// Convert PNG bytes to a cairo ImageSurface.
-fn png_to_surface(png_bytes: &[u8]) -> Option<gtk::cairo::ImageSurface> {
-    use std::io::Cursor;
-    gtk::cairo::ImageSurface::create_from_png(&mut Cursor::new(png_bytes)).ok()
-}
-
-/// Build the display settings page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
-
-    let monitors = query_monitors();
-    let shared_configs: Arc<Mutex<Vec<MonitorConfig>>> = Arc::new(Mutex::new(Vec::new()));
-    {
-        let mut configs = shared_configs.lock().unwrap();
-        for mon in &monitors {
-            configs.push(MonitorConfig {
-                name: mon.name.clone(),
-                width: mon.width,
-                height: mon.height,
-                refresh_rate: mon.refresh_rate,
-                scale: mon.scale,
-                transform: mon.transform,
-                x: mon.x,
-                y: mon.y,
-                available_modes: mon.available_modes.clone(),
-            });
-        }
-    }
-
-    let canvas = build_monitor_canvas(&shared_configs);
-    page.append(&canvas);
-    page.append(&build_monitors_section(&shared_configs, &monitors));
-    page.append(&build_tools_section());
-
-    super::page_wrapper(&page)
-}
-
-// ---------------------------------------------------------------------------
-// Monitor canvas
-// ---------------------------------------------------------------------------
-
-fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
-    cr.new_sub_path();
-    cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
-    cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
-    cr.arc(
-        x + r,
-        y + h - r,
-        r,
-        std::f64::consts::FRAC_PI_2,
-        std::f64::consts::PI,
-    );
-    cr.arc(
-        x + r,
-        y + r,
-        r,
-        std::f64::consts::PI,
-        3.0 * std::f64::consts::FRAC_PI_2,
-    );
-    cr.close_path();
-}
-
-fn build_monitor_canvas(configs: &Arc<Mutex<Vec<MonitorConfig>>>) -> gtk::DrawingArea {
-    let area = gtk::DrawingArea::builder()
-        .height_request(250)
-        .hexpand(true)
-        .build();
-
-    // Capture initial thumbnails for each monitor
-    let initial_thumbs: Vec<Option<gtk::cairo::ImageSurface>> = {
-        let cfgs = configs.lock().unwrap();
-        cfgs.iter()
-            .map(|cfg| capture_monitor_png(&cfg.name).and_then(|png| png_to_surface(&png)))
-            .collect()
+/// Write monitors.conf and reload Hyprland. Returns a status message.
+fn apply_monitors(monitors: &[MonitorState]) -> String {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return "Error: HOME not set".to_string(),
     };
-    let thumbnails: Arc<Mutex<Vec<Option<gtk::cairo::ImageSurface>>>> =
-        Arc::new(Mutex::new(initial_thumbs));
 
-    let configs_draw = Arc::clone(configs);
-    let thumbnails_draw = Arc::clone(&thumbnails);
-    area.set_draw_func(move |_area, cr, canvas_w, canvas_h| {
-        let cfgs = configs_draw.lock().unwrap();
-        if cfgs.is_empty() {
-            return;
-        }
+    let conf_dir = format!("{home}/.config/hypr");
+    if let Err(e) = fs::create_dir_all(&conf_dir) {
+        return format!("Error: could not create {conf_dir}: {e}");
+    }
 
-        let canvas_w = canvas_w as f64;
-        let canvas_h = canvas_h as f64;
+    let conf_path = format!("{conf_dir}/monitors.conf");
 
-        // Fill background with Catppuccin Base
-        cr.set_source_rgb(
-            0x1e as f64 / 255.0,
-            0x1e as f64 / 255.0,
-            0x2e as f64 / 255.0,
+    let mut lines = Vec::new();
+    for mon in monitors {
+        let mode = match &mon.selected_mode {
+            Some(m) => m.to_string(),
+            None => "preferred".to_string(),
+        };
+        let transform = mon.transform.to_hyprland();
+        // monitor=<name>,<mode>,<pos>,<scale>,transform,<val>
+        let mut line = format!(
+            "monitor={},{},{}x{},{:.2}",
+            mon.name, mode, mon.x, mon.y, mon.scale,
         );
-        cr.paint().ok();
-
-        // Calculate bounding box of all monitors
-        let mut min_x = i64::MAX;
-        let mut min_y = i64::MAX;
-        let mut max_x = i64::MIN;
-        let mut max_y = i64::MIN;
-        for cfg in cfgs.iter() {
-            min_x = min_x.min(cfg.x);
-            min_y = min_y.min(cfg.y);
-            max_x = max_x.max(cfg.x + cfg.width);
-            max_y = max_y.max(cfg.y + cfg.height);
+        if transform != 0 {
+            line.push_str(&format!(",transform,{transform}"));
         }
-
-        let total_w = (max_x - min_x) as f64;
-        let total_h = (max_y - min_y) as f64;
-        if total_w <= 0.0 || total_h <= 0.0 {
-            return;
-        }
-
-        let padding = 32.0;
-        let available_w = canvas_w - padding * 2.0;
-        let available_h = canvas_h - padding * 2.0;
-        let scale = (available_w / total_w).min(available_h / total_h);
-
-        // Center the layout in the canvas
-        let offset_x = padding + (available_w - total_w * scale) / 2.0;
-        let offset_y = padding + (available_h - total_h * scale) / 2.0;
-
-        let thumbs = thumbnails_draw.lock().unwrap();
-
-        for (i, cfg) in cfgs.iter().enumerate() {
-            let rx = offset_x + (cfg.x - min_x) as f64 * scale;
-            let ry = offset_y + (cfg.y - min_y) as f64 * scale;
-            let rw = cfg.width as f64 * scale;
-            let rh = cfg.height as f64 * scale;
-            let corner = 8.0;
-
-            // Fill with thumbnail if available, otherwise solid color
-            if let Some(Some(ref surface)) = thumbs.get(i) {
-                cr.save().ok();
-                rounded_rect(cr, rx, ry, rw, rh, corner);
-                cr.clip();
-                let sw = surface.width() as f64;
-                let sh = surface.height() as f64;
-                let sx = rw / sw;
-                let sy = rh / sh;
-                cr.translate(rx, ry);
-                cr.scale(sx, sy);
-                cr.set_source_surface(surface, 0.0, 0.0).ok();
-                cr.paint().ok();
-                cr.restore().ok();
-            } else {
-                // Fallback: Surface0 (#313244)
-                cr.set_source_rgb(
-                    0x31 as f64 / 255.0,
-                    0x32 as f64 / 255.0,
-                    0x44 as f64 / 255.0,
-                );
-                rounded_rect(cr, rx, ry, rw, rh, corner);
-                cr.fill().ok();
-            }
-
-            // Border: Blue (#89b4fa) for first monitor, Surface1 (#45475a) for others
-            if i == 0 {
-                cr.set_source_rgb(
-                    0x89 as f64 / 255.0,
-                    0xb4 as f64 / 255.0,
-                    0xfa as f64 / 255.0,
-                );
-            } else {
-                cr.set_source_rgb(
-                    0x45 as f64 / 255.0,
-                    0x47 as f64 / 255.0,
-                    0x5a as f64 / 255.0,
-                );
-            }
-            cr.set_line_width(2.0);
-            rounded_rect(cr, rx, ry, rw, rh, corner);
-            cr.stroke().ok();
-
-            // Monitor name — Text color (#cdd6f4)
-            cr.set_source_rgb(
-                0xcd as f64 / 255.0,
-                0xd6 as f64 / 255.0,
-                0xf4 as f64 / 255.0,
-            );
-            cr.select_font_face(
-                "sans-serif",
-                gtk::cairo::FontSlant::Normal,
-                gtk::cairo::FontWeight::Bold,
-            );
-            cr.set_font_size(14.0);
-            let name = &cfg.name;
-            if let Ok(extents) = cr.text_extents(name) {
-                let tx = rx + (rw - extents.width()) / 2.0;
-                let ty = ry + rh / 2.0 - 4.0;
-                cr.move_to(tx, ty);
-                cr.show_text(name).ok();
-            }
-
-            // Resolution text — Subtext color (#a6adc8)
-            cr.set_source_rgb(
-                0xa6 as f64 / 255.0,
-                0xad as f64 / 255.0,
-                0xc8 as f64 / 255.0,
-            );
-            cr.select_font_face(
-                "sans-serif",
-                gtk::cairo::FontSlant::Normal,
-                gtk::cairo::FontWeight::Normal,
-            );
-            cr.set_font_size(11.0);
-            let res_text = format!("{}x{}", cfg.width, cfg.height);
-            if let Ok(extents) = cr.text_extents(&res_text) {
-                let tx = rx + (rw - extents.width()) / 2.0;
-                let ty = ry + rh / 2.0 + 14.0;
-                cr.move_to(tx, ty);
-                cr.show_text(&res_text).ok();
-            }
-        }
-    });
-
-    // Set up periodic thumbnail refresh every 2 seconds
-    let canvas_weak = area.downgrade();
-    let thumbnails_timer = Arc::clone(&thumbnails);
-    let configs_timer = Arc::clone(configs);
-    glib::timeout_add_seconds_local(2, move || {
-        let Some(canvas) = canvas_weak.upgrade() else {
-            return glib::ControlFlow::Break;
-        };
-        let cfgs = configs_timer.lock().unwrap();
-        let mut thumbs = thumbnails_timer.lock().unwrap();
-        for (i, cfg) in cfgs.iter().enumerate() {
-            if let Some(png) = capture_monitor_png(&cfg.name) {
-                if let Some(surface) = png_to_surface(&png) {
-                    if i < thumbs.len() {
-                        thumbs[i] = Some(surface);
-                    }
-                }
-            }
-        }
-        drop(thumbs);
-        drop(cfgs);
-        canvas.queue_draw();
-        glib::ControlFlow::Continue
-    });
-
-    area
-}
-
-// ---------------------------------------------------------------------------
-// Monitors section
-// ---------------------------------------------------------------------------
-
-fn build_monitors_section(
-    shared_configs: &Arc<Mutex<Vec<MonitorConfig>>>,
-    monitors: &[MonitorConfig],
-) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Displays").build();
-
-    if monitors.is_empty() {
-        let empty_row = adw::ActionRow::builder()
-            .title("No monitors detected")
-            .subtitle("Hyprland may not be running")
-            .build();
-        group.add(&empty_row);
-        return group;
+        lines.push(line);
     }
 
-    let scale_options = ["1.0", "1.25", "1.5", "1.75", "2.0"];
-    let transform_options = [
-        "Normal",
-        "90\u{b0}",
-        "180\u{b0}",
-        "270\u{b0}",
-        "Flipped",
-        "Flipped 90\u{b0}",
-        "Flipped 180\u{b0}",
-        "Flipped 270\u{b0}",
-    ];
+    let content = lines.join("\n") + "\n";
 
-    for (idx, monitor) in monitors.iter().enumerate() {
-        let expander = adw::ExpanderRow::builder()
-            .title(&monitor.name)
-            .subtitle(&format!(
-                "{}x{} @ {:.0}Hz (scale {:.2})",
-                monitor.width, monitor.height, monitor.refresh_rate, monitor.scale
-            ))
-            .build();
-
-        // --- Resolution / mode combo ---
-        // Build the list of modes from the monitor's reported available modes.
-        // Each entry shows "WIDTHxHEIGHT @ RATEHz".
-        let modes: Vec<Mode> = if monitor.available_modes.is_empty() {
-            // Fallback: just the current mode
-            vec![Mode {
-                width: monitor.width,
-                height: monitor.height,
-                refresh_rate: monitor.refresh_rate,
-            }]
-        } else {
-            monitor.available_modes.clone()
-        };
-
-        let mode_labels: Vec<String> = modes.iter().map(|m| m.label()).collect();
-        let mode_label_refs: Vec<&str> = mode_labels.iter().map(|s| s.as_str()).collect();
-        let mode_model = gtk::StringList::new(&mode_label_refs);
-
-        // Find the index of the currently-active mode
-        let current_label = format!(
-            "{}x{} @ {:.0}Hz",
-            monitor.width, monitor.height, monitor.refresh_rate
-        );
-        let mut mode_idx: u32 = 0;
-        for (i, label) in mode_labels.iter().enumerate() {
-            if *label == current_label {
-                mode_idx = i as u32;
-                break;
-            }
-        }
-
-        let mode_combo = adw::ComboRow::builder()
-            .title("Resolution")
-            .model(&mode_model)
-            .selected(mode_idx)
-            .build();
-
-        {
-            let configs = Arc::clone(shared_configs);
-            let modes_clone = modes.clone();
-            mode_combo.connect_selected_notify(move |row| {
-                let sel = row.selected() as usize;
-                if let Some(mode) = modes_clone.get(sel) {
-                    let mut cfgs = configs.lock().unwrap();
-                    if let Some(cfg) = cfgs.get_mut(idx) {
-                        cfg.width = mode.width;
-                        cfg.height = mode.height;
-                        cfg.refresh_rate = mode.refresh_rate;
-                    }
-                }
-            });
-        }
-        expander.add_row(&mode_combo);
-
-        // --- Scale combo ---
-        let scale_model = gtk::StringList::new(&scale_options);
-        let current_scale_str = format!("{:.1}", monitor.scale);
-        let scale_display = if current_scale_str.contains('.') {
-            current_scale_str.clone()
-        } else {
-            format!("{}.0", current_scale_str)
-        };
-        let mut scale_idx: u32 = 0;
-        for (i, opt) in scale_options.iter().enumerate() {
-            if *opt == scale_display {
-                scale_idx = i as u32;
-            }
-        }
-
-        let scale_combo = adw::ComboRow::builder()
-            .title("Scale")
-            .model(&scale_model)
-            .selected(scale_idx)
-            .build();
-
-        {
-            let configs = Arc::clone(shared_configs);
-            let s_opts: Vec<String> = scale_options.iter().map(|s| s.to_string()).collect();
-            scale_combo.connect_selected_notify(move |row| {
-                let sel = row.selected() as usize;
-                if let Some(val_str) = s_opts.get(sel) {
-                    if let Ok(val) = val_str.parse::<f64>() {
-                        let mut cfgs = configs.lock().unwrap();
-                        if let Some(cfg) = cfgs.get_mut(idx) {
-                            cfg.scale = val;
-                        }
-                    }
-                }
-            });
-        }
-        expander.add_row(&scale_combo);
-
-        // --- Transform combo ---
-        let transform_model = gtk::StringList::new(&transform_options);
-        let transform_idx = (monitor.transform as u32).min(7);
-        let transform_combo = adw::ComboRow::builder()
-            .title("Rotation")
-            .model(&transform_model)
-            .selected(transform_idx)
-            .build();
-
-        {
-            let configs = Arc::clone(shared_configs);
-            transform_combo.connect_selected_notify(move |row| {
-                let sel = row.selected() as i64;
-                let mut cfgs = configs.lock().unwrap();
-                if let Some(cfg) = cfgs.get_mut(idx) {
-                    cfg.transform = sel;
-                }
-            });
-        }
-        expander.add_row(&transform_combo);
-
-        // --- Position X ---
-        let pos_x_row = adw::ActionRow::builder().title("Position X").build();
-        let pos_x_spin = gtk::SpinButton::builder()
-            .adjustment(&gtk::Adjustment::new(
-                monitor.x as f64,
-                -10000.0,
-                10000.0,
-                10.0,
-                100.0,
-                0.0,
-            ))
-            .valign(gtk::Align::Center)
-            .build();
-        {
-            let configs = Arc::clone(shared_configs);
-            pos_x_spin.connect_value_changed(move |spin| {
-                let mut cfgs = configs.lock().unwrap();
-                if let Some(cfg) = cfgs.get_mut(idx) {
-                    cfg.x = spin.value() as i64;
-                }
-            });
-        }
-        pos_x_row.add_suffix(&pos_x_spin);
-        expander.add_row(&pos_x_row);
-
-        // --- Position Y ---
-        let pos_y_row = adw::ActionRow::builder().title("Position Y").build();
-        let pos_y_spin = gtk::SpinButton::builder()
-            .adjustment(&gtk::Adjustment::new(
-                monitor.y as f64,
-                -10000.0,
-                10000.0,
-                10.0,
-                100.0,
-                0.0,
-            ))
-            .valign(gtk::Align::Center)
-            .build();
-        {
-            let configs = Arc::clone(shared_configs);
-            pos_y_spin.connect_value_changed(move |spin| {
-                let mut cfgs = configs.lock().unwrap();
-                if let Some(cfg) = cfgs.get_mut(idx) {
-                    cfg.y = spin.value() as i64;
-                }
-            });
-        }
-        pos_y_row.add_suffix(&pos_y_spin);
-        expander.add_row(&pos_y_row);
-
-        group.add(&expander);
+    if let Err(e) = fs::write(&conf_path, &content) {
+        return format!("Error: could not write {conf_path}: {e}");
     }
 
-    // --- Apply button ---
-    let apply_row = adw::ActionRow::builder()
-        .title("Apply Changes")
-        .subtitle("Write monitor config and reload Hyprland")
-        .build();
+    hyprctl::reload();
 
-    let apply_btn = gtk::Button::builder()
-        .label("Apply")
-        .valign(gtk::Align::Center)
-        .css_classes(["suggested-action"])
-        .build();
-
-    {
-        let configs = Arc::clone(shared_configs);
-        apply_btn.connect_clicked(move |_| {
-            let cfgs = configs.lock().unwrap();
-            let home = std::env::var("HOME").unwrap_or_default();
-            let conf_dir = format!("{}/.config/hypr", home);
-            if let Err(e) = std::fs::create_dir_all(&conf_dir) {
-                tracing::error!("Failed to create {}: {}", conf_dir, e);
-                return;
-            }
-            let path = format!("{}/monitors.conf", conf_dir);
-
-            let mut content =
-                String::from("# zOS Monitor Config \u{2014} managed by zos-settings\n");
-            for cfg in cfgs.iter() {
-                content.push_str(&format!(
-                    "monitor={},{}x{}@{:.2},{}x{},{:.2},transform,{}\n",
-                    cfg.name,
-                    cfg.width,
-                    cfg.height,
-                    cfg.refresh_rate,
-                    cfg.x,
-                    cfg.y,
-                    cfg.scale,
-                    cfg.transform
-                ));
-            }
-
-            match std::fs::write(&path, &content) {
-                Ok(()) => tracing::info!("Wrote monitor config to {}", path),
-                Err(e) => tracing::error!("Failed to write monitor config: {}", e),
-            }
-
-            crate::services::hyprctl::reload();
-            tracing::info!("Hyprland config reloaded");
-        });
-    }
-
-    apply_row.add_suffix(&apply_btn);
-    apply_row.set_activatable_widget(Some(&apply_btn));
-    group.add(&apply_row);
-
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Tools section
-// ---------------------------------------------------------------------------
-
-fn build_tools_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Tools").build();
-
-    let nwg_row = adw::ActionRow::builder()
-        .title("Open nwg-displays")
-        .subtitle("Drag-to-arrange monitor layout")
-        .build();
-
-    let nwg_btn = gtk::Button::builder()
-        .label("Open")
-        .valign(gtk::Align::Center)
-        .build();
-
-    nwg_btn.connect_clicked(
-        |_| match std::process::Command::new("nwg-displays").spawn() {
-            Ok(_) => tracing::info!("Launched nwg-displays"),
-            Err(e) => tracing::error!("Failed to launch nwg-displays: {}", e),
-        },
-    );
-
-    nwg_row.add_suffix(&nwg_btn);
-    nwg_row.set_activatable_widget(Some(&nwg_btn));
-    group.add(&nwg_row);
-
-    group
+    format!("Applied to {conf_path}")
 }

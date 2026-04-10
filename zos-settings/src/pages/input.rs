@@ -1,397 +1,415 @@
-// === pages/input.rs — Keyboard & Mouse/Touchpad settings page ===
+// === input.rs — Keyboard, mouse, and touchpad settings page ===
+//
+// Reads input settings from ~/.config/hypr/user-settings.conf, presents
+// sliders/pickers/togglers for each, and applies changes live via
+// `hyprctl keyword` while persisting them back to the config file.
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
-use std::sync::{Arc, Mutex};
+use std::fs;
+
+use iced::widget::{column, container, pick_list, row, scrollable, slider, text, toggler, Space};
+use iced::{Background, Border, Element, Length, Task};
 
 use crate::services::hyprctl;
+use crate::theme;
 
-/// Shared input settings state for persistence.
-struct InputState {
-    layout: String,
-    repeat_rate: i32,
-    repeat_delay: i32,
-    sensitivity: f64,
-    accel_flat: bool,
-    natural_scroll: bool,
-    tap_to_click: bool,
-    initializing: bool,
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const LAYOUTS: &[&str] = &["us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "kr"];
+
+const DEFAULT_KB_LAYOUT: &str = "us";
+const DEFAULT_REPEAT_RATE: u32 = 25;
+const DEFAULT_REPEAT_DELAY: u32 = 600;
+const DEFAULT_SENSITIVITY: f32 = 0.0;
+const DEFAULT_FLAT_ACCEL: bool = false;
+const DEFAULT_NATURAL_SCROLL: bool = true;
+const DEFAULT_TAP_TO_CLICK: bool = true;
+
+// ---------------------------------------------------------------------------
+// Message
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Keyboard layout changed.
+    SetLayout(String),
+    /// Repeat rate slider changed.
+    SetRepeatRate(u32),
+    /// Repeat delay slider changed.
+    SetRepeatDelay(u32),
+    /// Mouse sensitivity slider changed.
+    SetSensitivity(f32),
+    /// Flat acceleration toggler changed.
+    SetFlatAccel(bool),
+    /// Natural scroll toggler changed.
+    SetNaturalScroll(bool),
+    /// Tap-to-click toggler changed.
+    SetTapToClick(bool),
 }
 
-impl Default for InputState {
-    fn default() -> Self {
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub struct InputPage {
+    kb_layout: String,
+    repeat_rate: u32,
+    repeat_delay: u32,
+    sensitivity: f32,
+    flat_accel: bool,
+    natural_scroll: bool,
+    tap_to_click: bool,
+}
+
+impl InputPage {
+    pub fn new() -> Self {
+        let conf = read_config();
         Self {
-            layout: "us".to_string(),
-            repeat_rate: 25,
-            repeat_delay: 600,
-            sensitivity: 0.0,
-            accel_flat: false,
-            natural_scroll: true,
-            tap_to_click: true,
-            initializing: false,
+            kb_layout: conf.kb_layout,
+            repeat_rate: conf.repeat_rate,
+            repeat_delay: conf.repeat_delay,
+            sensitivity: conf.sensitivity,
+            flat_accel: conf.flat_accel,
+            natural_scroll: conf.natural_scroll,
+            tap_to_click: conf.tap_to_click,
         }
     }
-}
 
-impl InputState {
-    /// Load input settings from ~/.config/hypr/user-settings.conf.
-    /// Falls back to defaults for any missing or unparseable fields.
-    fn load_from_config() -> Self {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{}/.config/hypr/user-settings.conf", home);
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => return Self::default(),
-        };
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
 
-        let mut state = Self::default();
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some((key, value)) = trimmed.split_once('=') {
-                let key = key.trim();
-                let value = value.trim();
-                match key {
-                    "kb_layout" => state.layout = value.to_string(),
-                    "repeat_rate" => {
-                        if let Ok(v) = value.parse() {
-                            state.repeat_rate = v;
-                        }
-                    }
-                    "repeat_delay" => {
-                        if let Ok(v) = value.parse() {
-                            state.repeat_delay = v;
-                        }
-                    }
-                    "sensitivity" => {
-                        if let Ok(v) = value.parse() {
-                            state.sensitivity = v;
-                        }
-                    }
-                    "accel_profile" => state.accel_flat = value == "flat",
-                    "natural_scroll" => state.natural_scroll = value == "true",
-                    "tap-to-click" => state.tap_to_click = value == "true",
-                    _ => {}
-                }
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::SetLayout(layout) => {
+                self.kb_layout = layout;
+                hyprctl::keyword("input:kb_layout", &self.kb_layout);
+            }
+            Message::SetRepeatRate(rate) => {
+                self.repeat_rate = rate;
+                hyprctl::keyword("input:repeat_rate", &self.repeat_rate.to_string());
+            }
+            Message::SetRepeatDelay(delay) => {
+                self.repeat_delay = delay;
+                hyprctl::keyword("input:repeat_delay", &self.repeat_delay.to_string());
+            }
+            Message::SetSensitivity(sens) => {
+                // Round to nearest 0.05 step.
+                self.sensitivity = (sens * 20.0).round() / 20.0;
+                hyprctl::keyword("input:sensitivity", &format!("{:.2}", self.sensitivity));
+            }
+            Message::SetFlatAccel(flat) => {
+                self.flat_accel = flat;
+                let profile = if flat { "flat" } else { "adaptive" };
+                hyprctl::keyword("input:accel_profile", profile);
+            }
+            Message::SetNaturalScroll(enabled) => {
+                self.natural_scroll = enabled;
+                let val = if enabled { "true" } else { "false" };
+                hyprctl::keyword("input:touchpad:natural_scroll", val);
+            }
+            Message::SetTapToClick(enabled) => {
+                self.tap_to_click = enabled;
+                let val = if enabled { "true" } else { "false" };
+                hyprctl::keyword("input:touchpad:tap-to-click", val);
             }
         }
-        state
+        write_config(self);
+        Task::none()
+    }
+
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
+
+    pub fn view(&self) -> Element<'_, Message> {
+        let title = text("Input").size(28).color(theme::TEXT);
+        let subtitle = text("Keyboard, mouse, and touchpad settings")
+            .size(14)
+            .color(theme::SUBTEXT0);
+
+        let header = column![title, subtitle].spacing(4);
+
+        let keyboard_section = self.view_keyboard();
+        let mouse_section = self.view_mouse();
+        let touchpad_section = self.view_touchpad();
+
+        let content = column![header, keyboard_section, mouse_section, touchpad_section]
+            .spacing(24)
+            .padding(4)
+            .width(Length::Fill);
+
+        scrollable(content).height(Length::Fill).into()
+    }
+
+    fn view_keyboard(&self) -> Element<'_, Message> {
+        // Layout picker
+        let layout_label = text("Keyboard Layout").size(13).color(theme::SUBTEXT0);
+        let layout_options: Vec<String> = LAYOUTS.iter().map(|s| (*s).to_string()).collect();
+        let selected_layout = Some(self.kb_layout.clone());
+        let layout_picker = pick_list(layout_options, selected_layout, Message::SetLayout)
+            .width(Length::Fixed(200.0))
+            .text_size(13.0);
+
+        let layout_row = row![
+            layout_label,
+            Space::new().width(Length::Fill),
+            layout_picker
+        ]
+        .align_y(iced::Alignment::Center);
+
+        // Repeat rate slider
+        let rate_label = text(format!("Repeat Rate: {}", self.repeat_rate))
+            .size(13)
+            .color(theme::SUBTEXT0);
+        let rate_slider = slider(1..=100_u32, self.repeat_rate, Message::SetRepeatRate)
+            .step(1u32)
+            .width(Length::Fixed(280.0));
+
+        let rate_row = row![rate_label, Space::new().width(Length::Fill), rate_slider]
+            .align_y(iced::Alignment::Center);
+
+        // Repeat delay slider
+        let delay_label = text(format!("Repeat Delay: {} ms", self.repeat_delay))
+            .size(13)
+            .color(theme::SUBTEXT0);
+        let delay_slider = slider(100..=1000_u32, self.repeat_delay, Message::SetRepeatDelay)
+            .step(10u32)
+            .width(Length::Fixed(280.0));
+
+        let delay_row = row![delay_label, Space::new().width(Length::Fill), delay_slider]
+            .align_y(iced::Alignment::Center);
+
+        let section_content = column![layout_row, rate_row, delay_row].spacing(12);
+
+        let section = column![
+            text("Keyboard").size(16).color(theme::TEXT),
+            Space::new().height(4),
+            card(section_content),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+
+        section.into()
+    }
+
+    fn view_mouse(&self) -> Element<'_, Message> {
+        // Sensitivity slider
+        let sens_label = text(format!("Sensitivity: {:.2}", self.sensitivity))
+            .size(13)
+            .color(theme::SUBTEXT0);
+        let sens_slider = slider(-1.0..=1.0_f32, self.sensitivity, Message::SetSensitivity)
+            .step(0.05)
+            .width(Length::Fixed(280.0));
+
+        let sens_row = row![sens_label, Space::new().width(Length::Fill), sens_slider]
+            .align_y(iced::Alignment::Center);
+
+        // Flat acceleration toggler
+        let accel_label = text("Flat Acceleration").size(13).color(theme::SUBTEXT0);
+        let accel_toggle = toggler(self.flat_accel)
+            .on_toggle(Message::SetFlatAccel)
+            .size(20.0);
+
+        let accel_row = row![accel_label, Space::new().width(Length::Fill), accel_toggle]
+            .align_y(iced::Alignment::Center);
+
+        let section_content = column![sens_row, accel_row].spacing(12);
+
+        let section = column![
+            text("Mouse").size(16).color(theme::TEXT),
+            Space::new().height(4),
+            card(section_content),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+
+        section.into()
+    }
+
+    fn view_touchpad(&self) -> Element<'_, Message> {
+        // Natural scroll toggler
+        let natural_label = text("Natural Scroll").size(13).color(theme::SUBTEXT0);
+        let natural_toggle = toggler(self.natural_scroll)
+            .on_toggle(Message::SetNaturalScroll)
+            .size(20.0);
+
+        let natural_row = row![
+            natural_label,
+            Space::new().width(Length::Fill),
+            natural_toggle
+        ]
+        .align_y(iced::Alignment::Center);
+
+        // Tap-to-click toggler
+        let tap_label = text("Tap-to-Click").size(13).color(theme::SUBTEXT0);
+        let tap_toggle = toggler(self.tap_to_click)
+            .on_toggle(Message::SetTapToClick)
+            .size(20.0);
+
+        let tap_row = row![tap_label, Space::new().width(Length::Fill), tap_toggle]
+            .align_y(iced::Alignment::Center);
+
+        let section_content = column![natural_row, tap_row].spacing(12);
+
+        let section = column![
+            text("Touchpad").size(16).color(theme::TEXT),
+            Space::new().height(4),
+            card(section_content),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+
+        section.into()
     }
 }
 
-/// Write all input settings to ~/.config/hypr/user-settings.conf for persistence.
-fn persist_input_settings(
-    layout: &str,
-    repeat_rate: i32,
-    repeat_delay: i32,
-    sensitivity: f64,
-    accel_flat: bool,
+// ---------------------------------------------------------------------------
+// Reusable helpers
+// ---------------------------------------------------------------------------
+
+/// Wraps content in a styled card container (SURFACE0 background, rounded).
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Config read/write
+// ---------------------------------------------------------------------------
+
+/// Parsed input configuration values.
+struct InputConfig {
+    kb_layout: String,
+    repeat_rate: u32,
+    repeat_delay: u32,
+    sensitivity: f32,
+    flat_accel: bool,
     natural_scroll: bool,
     tap_to_click: bool,
-) {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let path = format!("{}/.config/hypr/user-settings.conf", home);
-    let accel_profile = if accel_flat { "flat" } else { "adaptive" };
-    let content = format!(
-        "# zOS Input Settings — managed by zos-settings\n\
-         input {{\n    \
-         kb_layout = {}\n    \
-         repeat_rate = {}\n    \
-         repeat_delay = {}\n    \
-         sensitivity = {:.1}\n    \
-         accel_profile = {}\n    \
-         touchpad {{\n        \
-         natural_scroll = {}\n        \
-         tap-to-click = {}\n    \
-         }}\n\
-         }}\n",
-        layout, repeat_rate, repeat_delay, sensitivity, accel_profile, natural_scroll, tap_to_click
-    );
-    let _ = std::fs::write(&path, content);
 }
 
-/// Helper to persist the current shared state (skips if initializing).
-fn persist_state(state: &Arc<Mutex<InputState>>) {
-    let s = state.lock().unwrap();
-    if s.initializing {
-        return;
-    }
-    persist_input_settings(
-        &s.layout,
-        s.repeat_rate,
-        s.repeat_delay,
-        s.sensitivity,
-        s.accel_flat,
-        s.natural_scroll,
-        s.tap_to_click,
-    );
+/// Returns the path to `~/.config/hypr/user-settings.conf`.
+fn config_path() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .map(|home| format!("{home}/.config/hypr/user-settings.conf"))
 }
 
-/// Build the input settings page widget.
-pub fn build() -> gtk::Box {
-    let mut initial = InputState::load_from_config();
-    initial.initializing = true;
-    let state = Arc::new(Mutex::new(initial));
+/// Read and parse `~/.config/hypr/user-settings.conf`, returning defaults
+/// for any missing keys.
+fn read_config() -> InputConfig {
+    let mut cfg = InputConfig {
+        kb_layout: DEFAULT_KB_LAYOUT.to_string(),
+        repeat_rate: DEFAULT_REPEAT_RATE,
+        repeat_delay: DEFAULT_REPEAT_DELAY,
+        sensitivity: DEFAULT_SENSITIVITY,
+        flat_accel: DEFAULT_FLAT_ACCEL,
+        natural_scroll: DEFAULT_NATURAL_SCROLL,
+        tap_to_click: DEFAULT_TAP_TO_CLICK,
+    };
 
-    let page = super::page_content();
+    let path = match config_path() {
+        Some(p) => p,
+        None => return cfg,
+    };
 
-    page.append(&build_keyboard_section(Arc::clone(&state)));
-    page.append(&build_mouse_section(Arc::clone(&state)));
-    page.append(&build_touchpad_section(Arc::clone(&state)));
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return cfg,
+    };
 
-    // Done initializing — future changes will persist
-    state.lock().unwrap().initializing = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
 
-    super::page_wrapper(&page)
-}
-
-// ---------------------------------------------------------------------------
-// Keyboard section
-// ---------------------------------------------------------------------------
-
-fn build_keyboard_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Keyboard").build();
-
-    let layout_options = ["us", "gb", "de", "fr", "es", "it", "pt", "ru", "jp", "kr"];
-    let layout_model = gtk::StringList::new(&layout_options);
-
-    // Find index of saved layout
-    let saved_layout = state.lock().unwrap().layout.clone();
-    let layout_idx = layout_options
-        .iter()
-        .position(|&l| l == saved_layout)
-        .unwrap_or(0) as u32;
-
-    let layout_combo = adw::ComboRow::builder()
-        .title("Layout")
-        .model(&layout_model)
-        .selected(layout_idx)
-        .build();
-
-    let layout_icon = gtk::Image::from_icon_name("input-keyboard-symbolic");
-    layout_icon.set_valign(gtk::Align::Center);
-    layout_combo.add_prefix(&layout_icon);
-
-    {
-        let state = Arc::clone(&state);
-        layout_combo.connect_selected_notify(move |row| {
-            let idx = row.selected() as usize;
-            if let Some(&layout) = layout_options.get(idx) {
-                hyprctl::keyword("input:kb_layout", layout);
-                state.lock().unwrap().layout = layout.to_string();
-                persist_state(&state);
+            match key {
+                "kb_layout" => {
+                    cfg.kb_layout = value.to_string();
+                }
+                "repeat_rate" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        cfg.repeat_rate = v.clamp(1, 100);
+                    }
+                }
+                "repeat_delay" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        cfg.repeat_delay = v.clamp(100, 1000);
+                    }
+                }
+                "sensitivity" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        cfg.sensitivity = v.clamp(-1.0, 1.0);
+                    }
+                }
+                "accel_profile" => {
+                    cfg.flat_accel = value == "flat";
+                }
+                "natural_scroll" => {
+                    cfg.natural_scroll = value == "true";
+                }
+                "tap-to-click" => {
+                    cfg.tap_to_click = value == "true";
+                }
+                _ => {}
             }
-        });
-    }
-    group.add(&layout_combo);
-
-    // --- Repeat rate ---
-    let rate_row = adw::ActionRow::builder()
-        .title("Repeat Rate")
-        .subtitle("Characters per second")
-        .build();
-
-    let rate_icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
-    rate_icon.set_valign(gtk::Align::Center);
-    rate_row.add_prefix(&rate_icon);
-
-    let saved_rate = state.lock().unwrap().repeat_rate;
-    let rate_adj = gtk::Adjustment::new(saved_rate as f64, 10.0, 50.0, 1.0, 5.0, 0.0);
-    let rate_spin = gtk::SpinButton::builder()
-        .adjustment(&rate_adj)
-        .valign(gtk::Align::Center)
-        .build();
-
-    {
-        let state = Arc::clone(&state);
-        rate_spin.connect_value_changed(move |spin| {
-            let val = spin.value() as i32;
-            hyprctl::keyword("input:repeat_rate", &val.to_string());
-            state.lock().unwrap().repeat_rate = val;
-            persist_state(&state);
-        });
+        }
     }
 
-    rate_row.add_suffix(&rate_spin);
-    group.add(&rate_row);
-
-    // --- Repeat delay ---
-    let delay_row = adw::ActionRow::builder()
-        .title("Repeat Delay")
-        .subtitle("Milliseconds before repeat starts")
-        .build();
-
-    let delay_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
-    delay_icon.set_valign(gtk::Align::Center);
-    delay_row.add_prefix(&delay_icon);
-
-    let saved_delay = state.lock().unwrap().repeat_delay;
-    let delay_adj = gtk::Adjustment::new(saved_delay as f64, 100.0, 1000.0, 50.0, 100.0, 0.0);
-    let delay_spin = gtk::SpinButton::builder()
-        .adjustment(&delay_adj)
-        .valign(gtk::Align::Center)
-        .build();
-
-    {
-        let state = Arc::clone(&state);
-        delay_spin.connect_value_changed(move |spin| {
-            let val = spin.value() as i32;
-            hyprctl::keyword("input:repeat_delay", &val.to_string());
-            state.lock().unwrap().repeat_delay = val;
-            persist_state(&state);
-        });
-    }
-
-    delay_row.add_suffix(&delay_spin);
-    group.add(&delay_row);
-
-    group
+    cfg
 }
 
-// ---------------------------------------------------------------------------
-// Mouse section
-// ---------------------------------------------------------------------------
+/// Write the full `input { ... }` block to `~/.config/hypr/user-settings.conf`,
+/// overwriting the file entirely.
+fn write_config(page: &InputPage) {
+    let path = match config_path() {
+        Some(p) => p,
+        None => return,
+    };
 
-fn build_mouse_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Mouse").build();
-
-    // --- Sensitivity slider ---
-    let sensitivity_row = adw::ActionRow::builder().title("Sensitivity").build();
-
-    let sens_icon = gtk::Image::from_icon_name("input-mouse-symbolic");
-    sens_icon.set_valign(gtk::Align::Center);
-    sensitivity_row.add_prefix(&sens_icon);
-
-    let saved_sens = state.lock().unwrap().sensitivity;
-    let sens_adj = gtk::Adjustment::new(saved_sens, -1.0, 1.0, 0.1, 0.5, 0.0);
-    let sens_scale = gtk::Scale::builder()
-        .adjustment(&sens_adj)
-        .orientation(gtk::Orientation::Horizontal)
-        .draw_value(true)
-        .digits(1)
-        .hexpand(true)
-        .width_request(200)
-        .valign(gtk::Align::Center)
-        .build();
-    sens_scale.add_mark(-1.0, gtk::PositionType::Bottom, Some("Slow"));
-    sens_scale.add_mark(0.0, gtk::PositionType::Bottom, Some("Default"));
-    sens_scale.add_mark(1.0, gtk::PositionType::Bottom, Some("Fast"));
-
-    {
-        let state = Arc::clone(&state);
-        sens_scale.connect_value_changed(move |scale| {
-            let val = scale.value();
-            hyprctl::keyword("input:sensitivity", &format!("{:.1}", val));
-            state.lock().unwrap().sensitivity = val;
-            persist_state(&state);
-        });
+    // Ensure the directory exists.
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = fs::create_dir_all(dir);
     }
 
-    sensitivity_row.add_suffix(&sens_scale);
-    group.add(&sensitivity_row);
+    let accel_profile = if page.flat_accel { "flat" } else { "adaptive" };
+    let natural_scroll = if page.natural_scroll { "true" } else { "false" };
+    let tap_to_click = if page.tap_to_click { "true" } else { "false" };
 
-    // --- Acceleration profile ---
-    let accel_row = adw::ActionRow::builder()
-        .title("Flat Acceleration")
-        .subtitle("Off = adaptive (accelerated), On = flat (raw)")
-        .build();
+    let content = format!(
+        "\
+input {{
+    kb_layout = {kb_layout}
+    repeat_rate = {repeat_rate}
+    repeat_delay = {repeat_delay}
+    sensitivity = {sensitivity:.2}
+    accel_profile = {accel_profile}
+    touchpad {{
+        natural_scroll = {natural_scroll}
+        tap-to-click = {tap_to_click}
+    }}
+}}
+",
+        kb_layout = page.kb_layout,
+        repeat_rate = page.repeat_rate,
+        repeat_delay = page.repeat_delay,
+        sensitivity = page.sensitivity,
+        accel_profile = accel_profile,
+        natural_scroll = natural_scroll,
+        tap_to_click = tap_to_click,
+    );
 
-    let accel_icon = gtk::Image::from_icon_name("media-seek-forward-symbolic");
-    accel_icon.set_valign(gtk::Align::Center);
-    accel_row.add_prefix(&accel_icon);
-
-    let saved_accel = state.lock().unwrap().accel_flat;
-    let accel_switch = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .active(saved_accel)
-        .build();
-
-    {
-        let state = Arc::clone(&state);
-        accel_switch.connect_active_notify(move |sw| {
-            let is_flat = sw.is_active();
-            let profile = if is_flat { "flat" } else { "adaptive" };
-            hyprctl::keyword("input:accel_profile", profile);
-            state.lock().unwrap().accel_flat = is_flat;
-            persist_state(&state);
-        });
-    }
-
-    accel_row.add_suffix(&accel_switch);
-    accel_row.set_activatable_widget(Some(&accel_switch));
-    group.add(&accel_row);
-
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Touchpad section
-// ---------------------------------------------------------------------------
-
-fn build_touchpad_section(state: Arc<Mutex<InputState>>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Touchpad").build();
-
-    // --- Natural scroll ---
-    let natural_row = adw::ActionRow::builder()
-        .title("Natural Scroll")
-        .subtitle("Scroll direction follows content")
-        .build();
-
-    let natural_icon = gtk::Image::from_icon_name("object-flip-vertical-symbolic");
-    natural_icon.set_valign(gtk::Align::Center);
-    natural_row.add_prefix(&natural_icon);
-
-    let saved_natural = state.lock().unwrap().natural_scroll;
-    let natural_switch = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .active(saved_natural)
-        .build();
-
-    {
-        let state = Arc::clone(&state);
-        natural_switch.connect_active_notify(move |sw| {
-            let active = sw.is_active();
-            let val = if active { "true" } else { "false" };
-            hyprctl::keyword("input:touchpad:natural_scroll", val);
-            state.lock().unwrap().natural_scroll = active;
-            persist_state(&state);
-        });
-    }
-
-    natural_row.add_suffix(&natural_switch);
-    natural_row.set_activatable_widget(Some(&natural_switch));
-    group.add(&natural_row);
-
-    // --- Tap to click ---
-    let tap_row = adw::ActionRow::builder()
-        .title("Tap to Click")
-        .subtitle("Tap on the touchpad to click")
-        .build();
-
-    let tap_icon = gtk::Image::from_icon_name("input-touchpad-symbolic");
-    tap_icon.set_valign(gtk::Align::Center);
-    tap_row.add_prefix(&tap_icon);
-
-    let saved_tap = state.lock().unwrap().tap_to_click;
-    let tap_switch = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .active(saved_tap)
-        .build();
-
-    {
-        let state = Arc::clone(&state);
-        tap_switch.connect_active_notify(move |sw| {
-            let active = sw.is_active();
-            let val = if active { "true" } else { "false" };
-            hyprctl::keyword("input:touchpad:tap-to-click", val);
-            state.lock().unwrap().tap_to_click = active;
-            persist_state(&state);
-        });
-    }
-
-    tap_row.add_suffix(&tap_switch);
-    tap_row.set_activatable_widget(Some(&tap_switch));
-    group.add(&tap_row);
-
-    group
+    let _ = fs::write(&path, content);
 }

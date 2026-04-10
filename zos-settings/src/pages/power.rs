@@ -1,118 +1,227 @@
-// === pages/power.rs — Power management page ===
+// === pages/power.rs — Power actions (suspend, reboot, shutdown) ===
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
+use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::{Background, Border, Element, Length, Task};
 
-/// Show a confirmation dialog before executing a power action.
-fn confirm_power_action(btn: &gtk::Button, title: &str, body: &str, action: fn()) {
-    let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+use crate::services::power;
+use crate::theme;
 
-    let dialog = adw::AlertDialog::builder()
-        .heading(title)
-        .body(body)
-        .build();
+// ---------------------------------------------------------------------------
+// Power action enum
+// ---------------------------------------------------------------------------
 
-    dialog.add_responses(&[("cancel", "Cancel"), ("confirm", "Confirm")]);
-    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
-    dialog.set_default_response(Some("cancel"));
-    dialog.set_close_response("cancel");
-
-    dialog.connect_response(None, move |_, response| {
-        if response == "confirm" {
-            action();
-        }
-    });
-
-    if let Some(ref w) = window {
-        dialog.present(Some(w));
-    } else {
-        dialog.present(None::<&gtk::Window>);
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PowerAction {
+    Suspend,
+    Reboot,
+    Shutdown,
 }
 
-/// Build the power management page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
 
-    let power_group = adw::PreferencesGroup::builder()
-        .title("Power")
-        .description("System power actions")
-        .build();
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// User clicked an action button — enter confirmation state.
+    RequestConfirm(PowerAction),
+    /// User confirmed the action.
+    Confirm,
+    /// User cancelled the confirmation.
+    Cancel,
+}
 
-    // --- Suspend ---
-    let suspend_row = adw::ActionRow::builder()
-        .title("Suspend")
-        .subtitle("Put the system to sleep")
-        .build();
-    let suspend_icon = gtk::Image::from_icon_name("media-playback-pause-symbolic");
-    suspend_icon.set_valign(gtk::Align::Center);
-    suspend_row.add_prefix(&suspend_icon);
-    let suspend_btn = gtk::Button::builder()
-        .label("Suspend")
-        .valign(gtk::Align::Center)
-        .build();
-    suspend_btn.connect_clicked(|btn| {
-        confirm_power_action(
-            btn,
-            "Suspend?",
-            "The system will be put to sleep.",
-            crate::services::power::suspend,
-        );
-    });
-    suspend_row.add_suffix(&suspend_btn);
-    suspend_row.set_activatable_widget(Some(&suspend_btn));
-    power_group.add(&suspend_row);
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-    // --- Reboot ---
-    let reboot_row = adw::ActionRow::builder()
-        .title("Reboot")
-        .subtitle("Restart the system")
-        .build();
-    let reboot_icon = gtk::Image::from_icon_name("view-refresh-symbolic");
-    reboot_icon.set_valign(gtk::Align::Center);
-    reboot_row.add_prefix(&reboot_icon);
-    let reboot_btn = gtk::Button::builder()
-        .label("Reboot")
-        .valign(gtk::Align::Center)
-        .build();
-    reboot_btn.connect_clicked(|btn| {
-        confirm_power_action(
-            btn,
-            "Reboot?",
-            "The system will restart. All unsaved work will be lost.",
-            crate::services::power::reboot,
-        );
-    });
-    reboot_row.add_suffix(&reboot_btn);
-    reboot_row.set_activatable_widget(Some(&reboot_btn));
-    power_group.add(&reboot_row);
+pub struct PowerPage {
+    confirming: Option<PowerAction>,
+}
 
-    // --- Shut Down ---
-    let shutdown_row = adw::ActionRow::builder()
-        .title("Shut Down")
-        .subtitle("Power off the system")
-        .build();
-    let shutdown_icon = gtk::Image::from_icon_name("system-shutdown-symbolic");
-    shutdown_icon.set_valign(gtk::Align::Center);
-    shutdown_row.add_prefix(&shutdown_icon);
-    let shutdown_btn = gtk::Button::builder()
-        .label("Shut Down")
-        .valign(gtk::Align::Center)
-        .css_classes(["destructive-action"])
-        .build();
-    shutdown_btn.connect_clicked(|btn| {
-        confirm_power_action(
-            btn,
-            "Shut Down?",
-            "All unsaved work will be lost.",
-            crate::services::power::shutdown,
-        );
-    });
-    shutdown_row.add_suffix(&shutdown_btn);
-    shutdown_row.set_activatable_widget(Some(&shutdown_btn));
-    power_group.add(&shutdown_row);
+impl PowerPage {
+    pub fn new() -> Self {
+        Self { confirming: None }
+    }
 
-    page.append(&power_group);
-    super::page_wrapper(&page)
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::RequestConfirm(action) => {
+                self.confirming = Some(action);
+                Task::none()
+            }
+            Message::Cancel => {
+                self.confirming = None;
+                Task::none()
+            }
+            Message::Confirm => {
+                if let Some(action) = self.confirming.take() {
+                    match action {
+                        PowerAction::Suspend => power::suspend(),
+                        PowerAction::Reboot => power::reboot(),
+                        PowerAction::Shutdown => power::shutdown(),
+                    }
+                }
+                Task::none()
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
+
+    pub fn view(&self) -> Element<'_, Message> {
+        let title = text("Power").size(28).color(theme::TEXT);
+
+        let cards = column![
+            self.view_action_card(
+                PowerAction::Suspend,
+                "Suspend",
+                "Suspends your system to RAM",
+                "Suspend",
+                theme::BLUE,
+            ),
+            self.view_action_card(
+                PowerAction::Reboot,
+                "Reboot",
+                "Restarts your system",
+                "Reboot",
+                theme::YELLOW,
+            ),
+            self.view_action_card(
+                PowerAction::Shutdown,
+                "Shut Down",
+                "Powers off your system",
+                "Shut Down",
+                theme::RED,
+            ),
+        ]
+        .spacing(16);
+
+        let content = column![title, cards].spacing(24).width(Length::Fill);
+
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Shrink),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // View helpers
+    // -----------------------------------------------------------------------
+
+    fn view_action_card<'a>(
+        &'a self,
+        action: PowerAction,
+        title: &'a str,
+        description: &'a str,
+        button_label: &'a str,
+        accent: iced::Color,
+    ) -> Element<'a, Message> {
+        let title_text = text(title).size(18).color(theme::TEXT);
+        let desc_text = text(description).size(13).color(theme::SUBTEXT0);
+
+        let is_confirming = self.confirming == Some(action);
+
+        let action_area: Element<'_, Message> = if is_confirming {
+            let prompt = text("Are you sure?").size(13).color(theme::YELLOW);
+
+            let confirm_btn = button(text("Confirm").size(13).color(theme::BASE))
+                .on_press(Message::Confirm)
+                .padding([8, 16])
+                .style(move |_theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered => iced::Color { a: 0.85, ..accent },
+                        button::Status::Pressed => iced::Color { a: 0.70, ..accent },
+                        _ => accent,
+                    };
+                    button::Style {
+                        background: Some(Background::Color(bg)),
+                        text_color: theme::BASE,
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+
+            let cancel_btn = button(text("Cancel").size(13).color(theme::TEXT))
+                .on_press(Message::Cancel)
+                .padding([8, 16])
+                .style(|_theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered => theme::SURFACE2,
+                        button::Status::Pressed => theme::OVERLAY0,
+                        _ => theme::SURFACE1,
+                    };
+                    button::Style {
+                        background: Some(Background::Color(bg)),
+                        text_color: theme::TEXT,
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+
+            row![prompt, Space::new().width(12), confirm_btn, cancel_btn]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into()
+        } else {
+            let btn = button(text(button_label).size(13).color(theme::BASE))
+                .on_press(Message::RequestConfirm(action))
+                .padding([8, 16])
+                .style(move |_theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered => iced::Color { a: 0.85, ..accent },
+                        button::Status::Pressed => iced::Color { a: 0.70, ..accent },
+                        _ => accent,
+                    };
+                    button::Style {
+                        background: Some(Background::Color(bg)),
+                        text_color: theme::BASE,
+                        border: Border {
+                            radius: 8.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                });
+
+            btn.into()
+        };
+
+        let info = column![title_text, desc_text]
+            .spacing(4)
+            .width(Length::Fill);
+
+        let card_content = row![info, action_area]
+            .spacing(16)
+            .align_y(iced::Alignment::Center);
+
+        container(card_content)
+            .padding(16)
+            .width(Length::Fill)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(theme::SURFACE0)),
+                border: Border {
+                    radius: 12.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
 }

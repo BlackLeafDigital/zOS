@@ -1,190 +1,357 @@
 // === pages/dock.rs — Dock configuration page ===
-
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
+//
+// Reads and writes ~/.config/zos/dock.json to configure the zos-dock:
+// auto-hide, position, icon size, magnification, and pinned apps.
 
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
-/// Read dock config from disk.
-fn read_dock_config() -> serde_json::Value {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let path = Path::new(&home).join(".config/zos/dock.json");
-    if let Ok(content) = fs::read_to_string(&path) {
-        serde_json::from_str(&content).unwrap_or_else(|_| default_config())
-    } else {
-        default_config()
-    }
+use iced::widget::{
+    button, column, container, pick_list, row, scrollable, slider, text, toggler, Space,
+};
+use iced::{Background, Border, Element, Length, Task};
+
+use crate::theme;
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Toggle auto-hide on/off.
+    ToggleAutoHide(bool),
+    /// User selected a dock position.
+    SetPosition(String),
+    /// User changed the icon size slider.
+    SetIconSize(u32),
+    /// User changed the magnification slider.
+    SetMagnification(f32),
+    /// Write current settings to dock.json.
+    Apply,
 }
 
-fn default_config() -> serde_json::Value {
-    serde_json::json!({
-        "pinned": ["org.wezfurlong.wezterm", "org.mozilla.firefox", "org.kde.dolphin"],
-        "icon_size": 48,
-        "magnification": 1.6,
-        "auto_hide": false,
-        "position": "bottom"
-    })
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub struct DockPage {
+    auto_hide: bool,
+    position: String,
+    icon_size: u32,
+    magnification: f32,
+    pinned: Vec<String>,
+    config_path: PathBuf,
+    status: Option<String>,
 }
 
-fn save_dock_config(config: &serde_json::Value) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let path = Path::new(&home).join(".config/zos/dock.json");
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+const POSITIONS: [&str; 4] = ["bottom", "top", "left", "right"];
+
+impl DockPage {
+    pub fn new() -> Self {
+        let config_path = config_path();
+        let (auto_hide, position, icon_size, magnification, pinned) = read_config(&config_path);
+
+        Self {
+            auto_hide,
+            position,
+            icon_size,
+            magnification,
+            pinned,
+            config_path,
+            status: None,
+        }
     }
-    if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = fs::write(&path, json);
-    }
-}
 
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
 
-    let config = read_dock_config();
-
-    // --- Behavior ---
-    let behavior_group = adw::PreferencesGroup::builder().title("Behavior").build();
-
-    let auto_hide = config
-        .get("auto_hide")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let auto_hide_row = adw::SwitchRow::builder()
-        .title("Auto-hide")
-        .subtitle("Hide the dock when not in use")
-        .active(auto_hide)
-        .build();
-    let auto_hide_icon = gtk::Image::from_icon_name("view-restore-symbolic");
-    auto_hide_icon.set_valign(gtk::Align::Center);
-    auto_hide_row.add_prefix(&auto_hide_icon);
-    behavior_group.add(&auto_hide_row);
-
-    // Position selector
-    let position_values = ["bottom", "top", "left", "right"];
-    let position_labels = ["Bottom", "Top", "Left", "Right"];
-    let current_position = config
-        .get("position")
-        .and_then(|v| v.as_str())
-        .unwrap_or("bottom");
-    let position_idx = position_values
-        .iter()
-        .position(|&v| v == current_position)
-        .unwrap_or(0) as u32;
-    let position_model = gtk::StringList::new(&position_labels);
-    let position_combo = adw::ComboRow::builder()
-        .title("Position")
-        .subtitle("Which screen edge the dock attaches to")
-        .model(&position_model)
-        .selected(position_idx)
-        .build();
-    behavior_group.add(&position_combo);
-
-    page.append(&behavior_group);
-
-    // --- Appearance ---
-    let appearance_group = adw::PreferencesGroup::builder().title("Appearance").build();
-
-    let icon_size = config
-        .get("icon_size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(48) as f64;
-    let icon_size_row = adw::ActionRow::builder()
-        .title("Icon Size")
-        .subtitle("Base icon size in pixels")
-        .build();
-    let icon_size_icon = gtk::Image::from_icon_name("zoom-in-symbolic");
-    icon_size_icon.set_valign(gtk::Align::Center);
-    icon_size_row.add_prefix(&icon_size_icon);
-    let icon_size_spin = gtk::SpinButton::with_range(32.0, 64.0, 4.0);
-    icon_size_spin.set_value(icon_size);
-    icon_size_spin.set_valign(gtk::Align::Center);
-    icon_size_row.add_suffix(&icon_size_spin);
-    appearance_group.add(&icon_size_row);
-
-    let magnification = config
-        .get("magnification")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1.6);
-    let mag_row = adw::ActionRow::builder()
-        .title("Magnification")
-        .subtitle("Hover magnification factor (1.0 = none)")
-        .build();
-    let mag_icon = gtk::Image::from_icon_name("zoom-fit-best-symbolic");
-    mag_icon.set_valign(gtk::Align::Center);
-    mag_row.add_prefix(&mag_icon);
-    let mag_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 2.0, 0.1);
-    mag_scale.set_value(magnification);
-    mag_scale.set_width_request(200);
-    mag_scale.set_valign(gtk::Align::Center);
-    mag_scale.set_draw_value(true);
-    mag_row.add_suffix(&mag_scale);
-    appearance_group.add(&mag_row);
-
-    page.append(&appearance_group);
-
-    // --- Pinned Apps (read-only display) ---
-    let pinned_group = adw::PreferencesGroup::builder()
-        .title("Pinned Apps")
-        .description("Right-click items in the dock to pin/unpin")
-        .build();
-
-    if let Some(pinned) = config.get("pinned").and_then(|v| v.as_array()) {
-        for app_id in pinned {
-            if let Some(id) = app_id.as_str() {
-                let display_name = id.rsplit('.').next().unwrap_or(id);
-                let mut chars = display_name.chars();
-                let name = match chars.next() {
-                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                    None => id.to_string(),
-                };
-                let row = adw::ActionRow::builder().title(&name).subtitle(id).build();
-                let app_icon = gtk::Image::from_icon_name("application-x-executable-symbolic");
-                app_icon.set_valign(gtk::Align::Center);
-                row.add_prefix(&app_icon);
-                pinned_group.add(&row);
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::ToggleAutoHide(val) => {
+                self.auto_hide = val;
+                Task::none()
+            }
+            Message::SetPosition(pos) => {
+                self.position = pos;
+                Task::none()
+            }
+            Message::SetIconSize(size) => {
+                self.icon_size = size;
+                Task::none()
+            }
+            Message::SetMagnification(mag) => {
+                // Round to nearest 0.1 increment.
+                self.magnification = (mag * 10.0).round() / 10.0;
+                Task::none()
+            }
+            Message::Apply => {
+                let result = write_config(
+                    &self.config_path,
+                    self.auto_hide,
+                    &self.position,
+                    self.icon_size,
+                    self.magnification,
+                    &self.pinned,
+                );
+                self.status = Some(result);
+                Task::none()
             }
         }
     }
 
-    page.append(&pinned_group);
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
 
-    // --- Apply Button ---
-    let apply_btn = gtk::Button::builder()
-        .label("Apply")
-        .halign(gtk::Align::Center)
-        .css_classes(["suggested-action", "pill"])
-        .build();
+    pub fn view(&self) -> Element<'_, Message> {
+        let title = text("Dock").size(28).color(theme::TEXT);
 
-    let auto_hide_row_clone = auto_hide_row.clone();
-    let icon_size_spin_clone = icon_size_spin.clone();
-    let mag_scale_clone = mag_scale.clone();
-    let position_combo_clone = position_combo.clone();
-    let position_values_owned: Vec<String> =
-        position_values.iter().map(|s| s.to_string()).collect();
+        let behavior = self.view_behavior();
+        let appearance = self.view_appearance();
+        let pinned = self.view_pinned();
+        let bottom = self.view_bottom();
 
-    apply_btn.connect_clicked(move |btn| {
-        let mut config = read_dock_config();
-        config["auto_hide"] = serde_json::Value::Bool(auto_hide_row_clone.is_active());
-        config["icon_size"] = serde_json::Value::Number(serde_json::Number::from(
-            icon_size_spin_clone.value() as u64,
-        ));
-        // Round magnification to 1 decimal place
-        let mag_val = (mag_scale_clone.value() * 10.0).round() / 10.0;
-        config["magnification"] = serde_json::Value::from(mag_val);
-        // Position
-        let pos_idx = position_combo_clone.selected() as usize;
-        let pos_val = position_values_owned
-            .get(pos_idx)
-            .cloned()
-            .unwrap_or_else(|| "bottom".to_string());
-        config["position"] = serde_json::Value::String(pos_val);
-        save_dock_config(&config);
-        btn.set_label("Applied");
+        let content = column![title, behavior, appearance, pinned, bottom]
+            .spacing(16)
+            .padding(4)
+            .width(Length::Fill);
+
+        scrollable(content).height(Length::Fill).into()
+    }
+
+    // -- Behavior card -------------------------------------------------------
+
+    fn view_behavior(&self) -> Element<'_, Message> {
+        let heading = text("Behavior").size(18).color(theme::TEXT);
+
+        // Auto-hide toggler
+        let hide_label = text("Auto-hide").size(13).color(theme::SUBTEXT0);
+        let hide_toggle = toggler(self.auto_hide)
+            .on_toggle(Message::ToggleAutoHide)
+            .size(20.0);
+        let hide_row = row![hide_label, Space::new().width(Length::Fill), hide_toggle]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        // Position pick list
+        let pos_label = text("Position").size(13).color(theme::SUBTEXT0);
+        let position_options: Vec<String> = POSITIONS.iter().map(|s| s.to_string()).collect();
+        let pos_picker = pick_list(
+            position_options,
+            Some(self.position.clone()),
+            Message::SetPosition,
+        )
+        .width(Length::Fixed(200.0))
+        .text_size(13.0);
+        let pos_row = row![pos_label, Space::new().width(Length::Fill), pos_picker]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        card(column![heading, hide_row, pos_row].spacing(10))
+    }
+
+    // -- Appearance card -----------------------------------------------------
+
+    fn view_appearance(&self) -> Element<'_, Message> {
+        let heading = text("Appearance").size(18).color(theme::TEXT);
+
+        // Icon size slider
+        let size_label = text(format!("Icon size: {}px", self.icon_size))
+            .size(13)
+            .color(theme::SUBTEXT0);
+        let size_slider = slider(32..=64_u32, self.icon_size, Message::SetIconSize)
+            .step(1_u32)
+            .width(Length::Fixed(280.0));
+        let size_row = row![size_label, Space::new().width(Length::Fill), size_slider]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        // Magnification slider
+        let mag_label = text(format!("Magnification: {:.1}x", self.magnification))
+            .size(13)
+            .color(theme::SUBTEXT0);
+        let mag_slider = slider(1.0..=2.0_f32, self.magnification, Message::SetMagnification)
+            .step(0.1_f32)
+            .width(Length::Fixed(280.0));
+        let mag_row = row![mag_label, Space::new().width(Length::Fill), mag_slider]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        card(column![heading, size_row, mag_row].spacing(10))
+    }
+
+    // -- Pinned Apps card ----------------------------------------------------
+
+    fn view_pinned(&self) -> Element<'_, Message> {
+        let heading = text("Pinned Apps").size(18).color(theme::TEXT);
+
+        if self.pinned.is_empty() {
+            let empty = text("No pinned apps configured")
+                .size(13)
+                .color(theme::OVERLAY0);
+            return card(column![heading, empty].spacing(8));
+        }
+
+        let mut items = column![].spacing(4);
+        for entry in &self.pinned {
+            let label = text(entry).size(13).color(theme::TEXT);
+            items = items.push(label);
+        }
+
+        card(column![heading, items].spacing(8))
+    }
+
+    // -- Bottom row (Apply + status) -----------------------------------------
+
+    fn view_bottom(&self) -> Element<'_, Message> {
+        let apply_btn = button(text("Apply").size(15).color(theme::BASE))
+            .on_press(Message::Apply)
+            .padding([10, 32])
+            .style(|_theme, status| {
+                let bg = match status {
+                    button::Status::Hovered => theme::GREEN,
+                    _ => theme::BLUE,
+                };
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: theme::BASE,
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+
+        let status_el: Element<'_, Message> = match &self.status {
+            Some(msg) => {
+                let color = if msg.starts_with("Error") {
+                    theme::RED
+                } else {
+                    theme::GREEN
+                };
+                text(msg).size(13).color(color).into()
+            }
+            None => Space::new().into(),
+        };
+
+        row![apply_btn, Space::new().width(12), status_el]
+            .align_y(iced::Alignment::Center)
+            .into()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve the dock config path: ~/.config/zos/dock.json
+fn config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".config/zos/dock.json")
+}
+
+/// Read dock settings from JSON. Returns sensible defaults when the file is
+/// missing or malformed.
+fn read_config(path: &PathBuf) -> (bool, String, u32, f32, Vec<String>) {
+    let defaults = (true, "bottom".to_string(), 48, 1.5, Vec::new());
+
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return defaults,
+    };
+
+    let val: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return defaults,
+    };
+
+    let auto_hide = val
+        .get("auto_hide")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let position = val
+        .get("position")
+        .and_then(|v| v.as_str())
+        .unwrap_or("bottom")
+        .to_string();
+
+    let icon_size = val
+        .get("icon_size")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.clamp(32, 64) as u32)
+        .unwrap_or(48);
+
+    let magnification = val
+        .get("magnification")
+        .and_then(|v| v.as_f64())
+        .map(|v| v.clamp(1.0, 2.0) as f32)
+        .unwrap_or(1.5);
+
+    let pinned = val
+        .get("pinned")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    (auto_hide, position, icon_size, magnification, pinned)
+}
+
+/// Serialize the current settings to JSON and write them to disk.
+/// Returns a human-readable status message.
+fn write_config(
+    path: &PathBuf,
+    auto_hide: bool,
+    position: &str,
+    icon_size: u32,
+    magnification: f32,
+    pinned: &[String],
+) -> String {
+    // Ensure parent directory exists.
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            return format!("Error: could not create config directory: {e}");
+        }
+    }
+
+    let obj = serde_json::json!({
+        "auto_hide": auto_hide,
+        "position": position,
+        "icon_size": icon_size,
+        "magnification": magnification,
+        "pinned": pinned,
     });
 
-    page.append(&apply_btn);
+    let content = match serde_json::to_string_pretty(&obj) {
+        Ok(c) => c,
+        Err(e) => return format!("Error: could not serialize config: {e}"),
+    };
 
-    super::page_wrapper(&page)
+    match fs::write(path, &content) {
+        Ok(()) => format!("Saved to {}", path.display()),
+        Err(e) => format!("Error: could not write {}: {e}", path.display()),
+    }
+}
+
+/// A Catppuccin-styled card container.
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }

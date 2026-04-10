@@ -13,6 +13,11 @@ fi
 
 if [ -d "$HOME/Android/Sdk" ]; then
     export ANDROID_HOME="$HOME/Android/Sdk"
+elif [ -d /usr/lib/android-sdk ]; then
+    export ANDROID_HOME=/usr/lib/android-sdk
+fi
+
+if [ -n "${ANDROID_HOME:-}" ]; then
     export ANDROID_SDK_ROOT="$ANDROID_HOME"
     PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin"
 fi

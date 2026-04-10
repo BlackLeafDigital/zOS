@@ -1,353 +1,455 @@
-// === pages/overview.rs — Dashboard overview page ===
+// === pages/overview.rs — Dashboard page for zOS Settings ===
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
+use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::{Background, Border, Element, Length, Task};
 
-use zos_core::commands::doctor::{self, CheckStatus};
-use zos_core::commands::migrate;
-use zos_core::commands::setup;
-use zos_core::commands::status;
-use zos_core::commands::update;
+use zos_core::commands::{doctor, setup, status, update};
 use zos_core::config;
 
-/// Build the overview dashboard page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
+use crate::theme;
 
-    // Gather data upfront
-    let info = status::get_system_info();
-    let checks = doctor::run_doctor_checks();
-    let (pass, fail, warn) = doctor::summarize(&checks);
-    let setup_steps = setup::get_setup_steps();
-    let update_status = update::check_for_updates();
-    let config_areas = status::get_config_status();
-    let migrations = migrate::plan_migrations();
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
 
-    // --- 1. Welcome Header ---
-    let header = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(4)
-        .margin_bottom(8)
-        .build();
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Doctor checks completed (pass, fail, warn).
+    HealthLoaded(usize, usize, usize),
+    /// Update check completed.
+    UpdateLoaded(bool, Option<String>),
+    /// User pressed "Run Health Check".
+    RunHealthCheck,
+    /// User pressed "Check for Updates".
+    CheckUpdates,
+    /// Update apply finished; bool = success.
+    UpdateApplied(bool, String),
+    /// User pressed "Apply Update".
+    ApplyUpdate,
+}
 
-    let greeting = gtk::Label::builder()
-        .label("Welcome to zOS")
-        .halign(gtk::Align::Start)
-        .build();
-    greeting.add_css_class("dashboard-greeting");
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-    let subtitle_text = format!(
-        "{} {} (Fedora {})",
-        info.image_name, info.os_version, info.fedora_version
-    );
-    let subtitle = gtk::Label::builder()
-        .label(&subtitle_text)
-        .halign(gtk::Align::Start)
-        .build();
-    subtitle.add_css_class("dashboard-subtitle");
+pub struct OverviewPage {
+    info: status::SystemInfo,
+    health_pass: usize,
+    health_fail: usize,
+    health_warn: usize,
+    setup_installed: usize,
+    setup_total: usize,
+    update_pending: bool,
+    update_details: Option<String>,
+    loading_health: bool,
+    loading_update: bool,
+    applying_update: bool,
+    update_result: Option<String>,
+}
 
-    header.append(&greeting);
-    header.append(&subtitle);
-    page.append(&header);
+impl OverviewPage {
+    pub fn new() -> Self {
+        let info = status::get_system_info();
 
-    // --- 2. Status Summary Cards ---
-    let cards_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(16)
-        .homogeneous(true)
-        .build();
+        let checks = doctor::run_doctor_checks();
+        let (pass, fail, warn) = doctor::summarize(&checks);
 
-    // Card 1: Health
-    let health_value = pass.to_string();
-    cards_box.append(&crate::widgets::stat_card(
-        &health_value,
-        "dashboard-stat-value-green",
-        "checks passed",
-    ));
+        let steps = setup::get_setup_steps();
+        let setup_installed = steps.iter().filter(|s| s.installed).count();
+        let setup_total = steps.len();
 
-    // Card 2: Setup
-    let installed_count = setup_steps.iter().filter(|s| s.installed).count();
-    let total_count = setup_steps.len();
-    let setup_value = format!("{}/{}", installed_count, total_count);
-    cards_box.append(&crate::widgets::stat_card(
-        &setup_value,
-        "dashboard-stat-value",
-        "tools ready",
-    ));
+        let (update_pending, update_details) = match update::check_for_updates() {
+            Ok(us) => (us.pending, us.pending_details),
+            Err(_) => (false, None),
+        };
 
-    // Card 3: Updates
-    match &update_status {
-        Ok(us) if us.pending => {
-            cards_box.append(&crate::widgets::stat_card(
-                "1",
-                "dashboard-stat-value-purple",
-                "update available",
-            ));
-        }
-        Ok(_) => {
-            cards_box.append(&crate::widgets::stat_card(
-                "\u{2713}",
-                "dashboard-stat-value-green",
-                "up to date",
-            ));
-        }
-        Err(_) => {
-            cards_box.append(&crate::widgets::stat_card(
-                "?",
-                "dashboard-stat-value-yellow",
-                "unknown",
-            ));
+        Self {
+            info,
+            health_pass: pass,
+            health_fail: fail,
+            health_warn: warn,
+            setup_installed,
+            setup_total,
+            update_pending,
+            update_details,
+            loading_health: false,
+            loading_update: false,
+            applying_update: false,
+            update_result: None,
         }
     }
 
-    // Card 4: Config
-    let configs_up_to_date = config_areas.iter().filter(|c| c.up_to_date).count();
-    let configs_total = config_areas.len();
-    let config_value = format!("{}/{}", configs_up_to_date, configs_total);
-    let config_class = if configs_up_to_date == configs_total {
-        "dashboard-stat-value-green"
-    } else {
-        "dashboard-stat-value-yellow"
-    };
-    cards_box.append(&crate::widgets::stat_card(
-        &config_value,
-        config_class,
-        "configs current",
-    ));
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
 
-    page.append(&cards_box);
-
-    // --- 3. System Information ---
-    let info_group = adw::PreferencesGroup::builder()
-        .title("System Information")
-        .build();
-
-    let os_row = adw::ActionRow::builder()
-        .title("OS Version")
-        .subtitle(&info.os_version)
-        .build();
-    os_row.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
-    info_group.add(&os_row);
-
-    let image_row = adw::ActionRow::builder()
-        .title("Image")
-        .subtitle(&info.image_name)
-        .build();
-    image_row.add_prefix(&gtk::Image::from_icon_name("drive-harddisk-symbolic"));
-    info_group.add(&image_row);
-
-    let fedora_row = adw::ActionRow::builder()
-        .title("Fedora Version")
-        .subtitle(&info.fedora_version)
-        .build();
-    fedora_row.add_prefix(&gtk::Image::from_icon_name(
-        "system-software-install-symbolic",
-    ));
-    info_group.add(&fedora_row);
-
-    let update_row = adw::ActionRow::builder()
-        .title("Last Update")
-        .subtitle(&info.last_update)
-        .build();
-    update_row.add_prefix(&gtk::Image::from_icon_name("appointment-soon-symbolic"));
-    info_group.add(&update_row);
-
-    page.append(&info_group);
-
-    // --- 4. Updates Section ---
-    let updates_group = adw::PreferencesGroup::builder().title("Updates").build();
-
-    match &update_status {
-        Ok(us) => {
-            // Current image row
-            let current_row = adw::ActionRow::builder()
-                .title("Current Image")
-                .subtitle(&us.current_image)
-                .build();
-            updates_group.add(&current_row);
-
-            if us.pending {
-                let status_row = adw::ActionRow::builder().title("Update available").build();
-
-                let status_label = gtk::Label::builder()
-                    .label("Update available")
-                    .valign(gtk::Align::Center)
-                    .build();
-                status_label.add_css_class("dashboard-stat-value-purple");
-
-                let apply_btn = gtk::Button::builder()
-                    .label("Apply Update")
-                    .valign(gtk::Align::Center)
-                    .build();
-                apply_btn.add_css_class("suggested-action");
-
-                apply_btn.connect_clicked(move |btn| {
-                    btn.set_sensitive(false);
-                    btn.set_label("Applying...");
-                    std::thread::spawn(|| {
-                        let _ = update::apply_update();
-                    });
-                });
-
-                status_row.add_suffix(&apply_btn);
-                updates_group.add(&status_row);
-            } else {
-                let status_row = adw::ActionRow::builder()
-                    .title("System is up to date")
-                    .build();
-
-                let check_icon = gtk::Image::from_icon_name("emblem-default-symbolic");
-                check_icon.add_css_class("health-pass");
-                status_row.add_suffix(&check_icon);
-
-                updates_group.add(&status_row);
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::HealthLoaded(pass, fail, warn) => {
+                self.health_pass = pass;
+                self.health_fail = fail;
+                self.health_warn = warn;
+                self.loading_health = false;
+                Task::none()
+            }
+            Message::UpdateLoaded(pending, details) => {
+                self.update_pending = pending;
+                self.update_details = details;
+                self.loading_update = false;
+                Task::none()
+            }
+            Message::RunHealthCheck => {
+                self.loading_health = true;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| {
+                            let checks = doctor::run_doctor_checks();
+                            doctor::summarize(&checks)
+                        })
+                        .await
+                        .unwrap_or((0, 0, 0))
+                    },
+                    |(pass, fail, warn)| Message::HealthLoaded(pass, fail, warn),
+                )
+            }
+            Message::CheckUpdates => {
+                self.loading_update = true;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| match update::check_for_updates() {
+                            Ok(us) => (us.pending, us.pending_details),
+                            Err(_) => (false, None),
+                        })
+                        .await
+                        .unwrap_or((false, None))
+                    },
+                    |(pending, details)| Message::UpdateLoaded(pending, details),
+                )
+            }
+            Message::ApplyUpdate => {
+                self.applying_update = true;
+                self.update_result = None;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| match update::apply_update() {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    (true, update::reboot_message().to_string())
+                                } else {
+                                    let stderr =
+                                        String::from_utf8_lossy(&output.stderr).to_string();
+                                    (false, format!("Update failed: {}", stderr))
+                                }
+                            }
+                            Err(e) => (false, format!("Update error: {}", e)),
+                        })
+                        .await
+                        .unwrap_or((false, "Internal error running update".to_string()))
+                    },
+                    |(ok, msg)| Message::UpdateApplied(ok, msg),
+                )
+            }
+            Message::UpdateApplied(ok, msg) => {
+                self.applying_update = false;
+                self.update_result = Some(msg);
+                if ok {
+                    self.update_pending = false;
+                }
+                Task::none()
             }
         }
-        Err(e) => {
-            let error_row = adw::ActionRow::builder()
-                .title("Could not check for updates")
-                .subtitle(&e.to_string())
-                .build();
-
-            let warn_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
-            warn_icon.add_css_class("health-warn");
-            error_row.add_prefix(&warn_icon);
-
-            updates_group.add(&error_row);
-        }
     }
 
-    page.append(&updates_group);
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
 
-    // --- 5. Setup Progress (only if setup is not done) ---
-    if !config::is_setup_done() {
-        let setup_group = adw::PreferencesGroup::builder()
-            .title("Setup")
-            .description("Developer tools")
-            .build();
+    pub fn view(&self) -> Element<'_, Message> {
+        let welcome = self.view_welcome();
+        let status_cards = self.view_status_cards();
+        let sys_info = self.view_system_info();
+        let actions = self.view_quick_actions();
 
-        for step in &setup_steps {
-            let row = adw::ActionRow::builder()
-                .title(&step.name)
-                .subtitle(&step.description)
-                .build();
+        let content = column![welcome, status_cards, sys_info, actions,]
+            .spacing(24)
+            .width(Length::Fill);
 
-            if step.installed {
-                let check_icon = gtk::Image::from_icon_name("emblem-default-symbolic");
-                check_icon.add_css_class("health-pass");
-                row.add_suffix(&check_icon);
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Shrink),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // View helpers
+    // -----------------------------------------------------------------------
+
+    fn view_welcome(&self) -> Element<'_, Message> {
+        let title = text("Welcome to zOS").size(28).color(theme::TEXT);
+        let subtitle = text(format!(
+            "Version {} on Fedora {}",
+            self.info.os_version, self.info.fedora_version
+        ))
+        .size(14)
+        .color(theme::SUBTEXT0);
+
+        column![title, subtitle].spacing(4).into()
+    }
+
+    fn view_status_cards(&self) -> Element<'_, Message> {
+        let health_card = self.view_health_card();
+        let update_card = self.view_update_card();
+        let setup_card = self.view_setup_card();
+
+        row![health_card, update_card, setup_card]
+            .spacing(16)
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn view_health_card(&self) -> Element<'_, Message> {
+        let total = self.health_pass + self.health_fail + self.health_warn;
+        let (indicator_color, label) = if self.loading_health {
+            (theme::OVERLAY0, "Checking...".to_string())
+        } else if self.health_fail > 0 {
+            (
+                theme::RED,
+                format!("{}/{} checks passed", self.health_pass, total),
+            )
+        } else if self.health_warn > 0 {
+            (
+                theme::YELLOW,
+                format!("{}/{} checks passed", self.health_pass, total),
+            )
+        } else {
+            (theme::GREEN, format!("All {} checks passed", total))
+        };
+
+        let dot = text("\u{25CF} ").size(16).color(indicator_color);
+        let status_text = text(label).size(14).color(theme::TEXT);
+        let status_row = row![dot, status_text].align_y(iced::Alignment::Center);
+
+        let card_content = column![
+            text("Health").size(12).color(theme::SUBTEXT0),
+            Space::new().height(4),
+            status_row,
+        ]
+        .width(Length::Fill);
+
+        card(card_content).into()
+    }
+
+    fn view_update_card(&self) -> Element<'_, Message> {
+        let (indicator_color, label) = if self.loading_update {
+            (theme::OVERLAY0, "Checking...".to_string())
+        } else if self.update_pending {
+            (theme::PEACH, "Update available".to_string())
+        } else {
+            (theme::GREEN, "Up to date".to_string())
+        };
+
+        let dot = text("\u{25CF} ").size(16).color(indicator_color);
+        let status_text = text(label).size(14).color(theme::TEXT);
+        let status_row = row![dot, status_text].align_y(iced::Alignment::Center);
+
+        let card_content = column![
+            text("System").size(12).color(theme::SUBTEXT0),
+            Space::new().height(4),
+            status_row,
+        ]
+        .width(Length::Fill);
+
+        card(card_content).into()
+    }
+
+    fn view_setup_card(&self) -> Element<'_, Message> {
+        let all_done = self.setup_installed == self.setup_total && config::is_setup_done();
+
+        let (indicator_color, label) = if all_done {
+            (theme::GREEN, "All set".to_string())
+        } else {
+            (
+                theme::YELLOW,
+                format!("{}/{} tools ready", self.setup_installed, self.setup_total),
+            )
+        };
+
+        let dot = text("\u{25CF} ").size(16).color(indicator_color);
+        let status_text = text(label).size(14).color(theme::TEXT);
+        let status_row = row![dot, status_text].align_y(iced::Alignment::Center);
+
+        let card_content = column![
+            text("Setup").size(12).color(theme::SUBTEXT0),
+            Space::new().height(4),
+            status_row,
+        ]
+        .width(Length::Fill);
+
+        card(card_content).into()
+    }
+
+    fn view_system_info(&self) -> Element<'_, Message> {
+        let rows = [
+            ("OS Version", self.info.os_version.as_str()),
+            ("Image", self.info.image_name.as_str()),
+            ("Fedora Version", self.info.fedora_version.as_str()),
+            ("Last Update", self.info.last_update.as_str()),
+        ];
+
+        let mut info_col = column![].spacing(8);
+
+        for (label, value) in rows {
+            let kv_row = row![
+                text(label)
+                    .size(13)
+                    .color(theme::SUBTEXT0)
+                    .width(Length::Fixed(140.0)),
+                text(value).size(13).color(theme::TEXT),
+            ]
+            .align_y(iced::Alignment::Center);
+            info_col = info_col.push(kv_row);
+        }
+
+        let section = column![
+            text("System Information").size(16).color(theme::TEXT),
+            Space::new().height(4),
+            card(info_col),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+
+        section.into()
+    }
+
+    fn view_quick_actions(&self) -> Element<'_, Message> {
+        let health_btn = action_button(
+            if self.loading_health {
+                "Checking..."
             } else {
-                let install_cmd = step.install_cmd.clone();
-                let install_btn = gtk::Button::builder()
-                    .label("Install")
-                    .valign(gtk::Align::Center)
-                    .build();
-                install_btn.add_css_class("suggested-action");
+                "Run Health Check"
+            },
+            if self.loading_health {
+                None
+            } else {
+                Some(Message::RunHealthCheck)
+            },
+            theme::BLUE,
+        );
 
-                install_btn.connect_clicked(move |btn| {
-                    btn.set_sensitive(false);
-                    btn.set_label("Installing...");
-                    let cmd = install_cmd.clone();
-                    std::thread::spawn(move || {
-                        if !cmd.is_empty() {
-                            let (program, args) = cmd.split_first().unwrap();
-                            let _ = std::process::Command::new(program).args(args).status();
-                        }
-                    });
-                });
+        let update_btn = if self.update_pending {
+            action_button(
+                if self.applying_update {
+                    "Applying..."
+                } else {
+                    "Apply Update"
+                },
+                if self.applying_update {
+                    None
+                } else {
+                    Some(Message::ApplyUpdate)
+                },
+                theme::PEACH,
+            )
+        } else {
+            action_button(
+                if self.loading_update {
+                    "Checking..."
+                } else {
+                    "Check for Updates"
+                },
+                if self.loading_update {
+                    None
+                } else {
+                    Some(Message::CheckUpdates)
+                },
+                theme::BLUE,
+            )
+        };
 
-                row.add_suffix(&install_btn);
-            }
+        let mut actions_row = row![health_btn, update_btn].spacing(12);
 
-            setup_group.add(&row);
+        // Show update result message if present.
+        if let Some(ref msg) = self.update_result {
+            let msg_color = if msg.starts_with("Update failed") || msg.starts_with("Update error") {
+                theme::RED
+            } else {
+                theme::GREEN
+            };
+            actions_row = actions_row.push(
+                container(text(msg.as_str()).size(13).color(msg_color))
+                    .align_y(iced::alignment::Vertical::Center),
+            );
         }
 
-        page.append(&setup_group);
+        let section = column![
+            text("Quick Actions").size(16).color(theme::TEXT),
+            Space::new().height(4),
+            actions_row,
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+
+        section.into()
     }
+}
 
-    // --- 6. Pending Migrations (only if non-empty) ---
-    if !migrations.is_empty() {
-        let migrate_group = adw::PreferencesGroup::builder()
-            .title("Config Updates Available")
-            .build();
+// ---------------------------------------------------------------------------
+// Reusable helpers
+// ---------------------------------------------------------------------------
 
-        for action in &migrations {
-            let row = adw::ActionRow::builder()
-                .title(&action.area)
-                .subtitle(&action.description)
-                .build();
-            migrate_group.add(&row);
-        }
+/// Wraps content in a styled card container (SURFACE0 background, rounded).
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
 
-        // "Apply All" button row
-        let apply_all_btn = gtk::Button::builder()
-            .label("Apply All")
-            .halign(gtk::Align::Center)
-            .margin_top(8)
-            .build();
-        apply_all_btn.add_css_class("suggested-action");
-
-        let migrations_clone = migrations.clone();
-        apply_all_btn.connect_clicked(move |btn| {
-            btn.set_sensitive(false);
-            btn.set_label("Applying...");
-            let mut actions = migrations_clone.clone();
-            std::thread::spawn(move || {
-                let _ = migrate::apply_migrations(&mut actions);
-            });
+/// A styled action button with accent color.
+fn action_button(
+    label: &str,
+    on_press: Option<Message>,
+    accent: iced::Color,
+) -> Element<'_, Message> {
+    let btn_label = text(label).size(13).color(theme::BASE);
+    let mut btn = button(btn_label)
+        .padding([8, 16])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color { a: 0.85, ..accent },
+                button::Status::Pressed => iced::Color { a: 0.70, ..accent },
+                button::Status::Disabled => theme::SURFACE1,
+                _ => accent,
+            };
+            let text_color = match status {
+                button::Status::Disabled => theme::OVERLAY0,
+                _ => theme::BASE,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color,
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
         });
 
-        // Wrap button in a box since PreferencesGroup only accepts ListBoxRow-like children
-        let btn_row = adw::ActionRow::builder().build();
-        btn_row.add_suffix(&apply_all_btn);
-        migrate_group.add(&btn_row);
-
-        page.append(&migrate_group);
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg);
     }
 
-    // --- 7. Health Checks ---
-    let health_group = adw::PreferencesGroup::builder()
-        .title("Health Checks")
-        .description(format!(
-            "{} passed, {} warnings, {} failed",
-            pass, warn, fail
-        ))
-        .build();
-
-    for check in &checks {
-        let row = adw::ActionRow::builder()
-            .title(&check.name)
-            .subtitle(&check.message)
-            .build();
-
-        // Prefix icon
-        let (icon_name, icon_class) = match check.status {
-            CheckStatus::Pass => ("emblem-default-symbolic", "health-pass"),
-            CheckStatus::Warn => ("dialog-warning-symbolic", "health-warn"),
-            CheckStatus::Fail => ("process-stop-symbolic", "health-fail"),
-        };
-        let prefix_icon = gtk::Image::from_icon_name(icon_name);
-        prefix_icon.add_css_class(icon_class);
-        row.add_prefix(&prefix_icon);
-
-        // Suffix status label
-        let status_label = gtk::Label::builder()
-            .label(&check.status.to_string())
-            .valign(gtk::Align::Center)
-            .build();
-        let css_class = match check.status {
-            CheckStatus::Pass => "health-pass",
-            CheckStatus::Warn => "health-warn",
-            CheckStatus::Fail => "health-fail",
-        };
-        status_label.add_css_class(css_class);
-        row.add_suffix(&status_label);
-
-        health_group.add(&row);
-    }
-
-    page.append(&health_group);
-
-    super::page_wrapper(&page)
+    btn.into()
 }

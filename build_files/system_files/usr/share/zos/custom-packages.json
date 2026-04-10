@@ -29,5 +29,24 @@
       "MESA_LOADER_DRIVER_OVERRIDE": "zink",
       "GBM_BACKEND": "dri"
     }
+  },
+  {
+    "name": "Android Studio",
+    "description": "Official Android IDE by Google (Flathub)",
+    "search_terms": ["android", "android-studio", "androidstudio", "studio", "ide", "mobile", "kotlin"],
+    "install_type": "flathub",
+    "flathub_app_id": "com.google.AndroidStudio",
+    "flatpak_overrides": {
+      "app_id": "com.google.AndroidStudio",
+      "filesystems": ["host"],
+      "sockets": ["ssh-auth"]
+    }
+  },
+  {
+    "name": "Slack",
+    "description": "Team chat client (Flathub)",
+    "search_terms": ["slack", "chat", "team", "messaging"],
+    "install_type": "flathub",
+    "flathub_app_id": "com.slack.Slack"
   }
 ]

@@ -13,17 +13,8 @@ const DEVICE_BLOCKLIST: &[&str] = &["speech-dispatcher", "dummy"];
 pub struct AudioDevice {
     pub id: u32,
     pub name: String,
-    pub device_type: DeviceType,
-    pub is_default: bool,
     pub volume: Option<f32>,
     pub muted: bool,
-}
-
-/// Whether a device is a sink (output) or source (input).
-#[derive(Debug, Clone, PartialEq)]
-pub enum DeviceType {
-    Sink,
-    Source,
 }
 
 // ---------------------------------------------------------------------------
@@ -47,17 +38,13 @@ fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
 ///  *   46. HyperX QuadCast S Analog Stereo      [vol: 0.50]
 ///      47. USB Audio Speakers                     [vol: 1.00 MUTED]
 /// ```
-fn parse_device_section(status: &str, section: &str, device_type: DeviceType) -> Vec<AudioDevice> {
+fn parse_device_section(status: &str, section: &str) -> Vec<AudioDevice> {
     let mut devices = Vec::new();
     let mut in_section = false;
 
     for line in status.lines() {
         // Strip tree-drawing characters first so all checks work uniformly.
-        let cleaned: String = line
-            .replace('│', " ")
-            .replace('├', " ")
-            .replace('└', " ")
-            .replace('─', " ");
+        let cleaned: String = line.replace(['│', '├', '└', '─'], " ");
         let cleaned = cleaned.trim();
 
         if cleaned.is_empty() {
@@ -80,8 +67,7 @@ fn parse_device_section(status: &str, section: &str, device_type: DeviceType) ->
             continue;
         }
 
-        // Detect default marker
-        let is_default = cleaned.starts_with('*');
+        // Strip optional default marker (leading '*')
         let cleaned = cleaned.trim_start_matches('*').trim();
 
         // Expect: <id>. <name> [vol: <vol>]  or  <id>. <name> [vol: <vol> MUTED]
@@ -119,8 +105,6 @@ fn parse_device_section(status: &str, section: &str, device_type: DeviceType) ->
         devices.push(AudioDevice {
             id,
             name,
-            device_type: device_type.clone(),
-            is_default,
             volume,
             muted,
         });
@@ -141,35 +125,8 @@ fn wpctl_status() -> Option<String> {
 /// List all audio sinks (outputs).
 pub fn list_sinks() -> Vec<AudioDevice> {
     wpctl_status()
-        .map(|s| parse_device_section(&s, "Sinks:", DeviceType::Sink))
+        .map(|s| parse_device_section(&s, "Sinks:"))
         .unwrap_or_default()
-}
-
-/// List all audio sources (inputs).
-pub fn list_sources() -> Vec<AudioDevice> {
-    wpctl_status()
-        .map(|s| parse_device_section(&s, "Sources:", DeviceType::Source))
-        .unwrap_or_default()
-}
-
-/// Get volume of the default audio sink (0.0 – 1.5+).
-///
-/// Parses the output of `wpctl get-volume @DEFAULT_AUDIO_SINK@`
-/// which looks like: `Volume: 0.50` or `Volume: 0.50 [MUTED]`.
-pub fn get_default_volume() -> Option<f32> {
-    let output = run_cmd("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?;
-    // "Volume: 0.50" or "Volume: 0.50 [MUTED]"
-    output
-        .split_whitespace()
-        .nth(1)
-        .and_then(|v| v.parse::<f32>().ok())
-}
-
-/// Check whether the default audio sink is muted.
-pub fn is_default_muted() -> bool {
-    run_cmd("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])
-        .map(|s| s.contains("[MUTED]"))
-        .unwrap_or(false)
 }
 
 /// Set absolute volume for a device (0.0 – 1.5).
@@ -192,102 +149,6 @@ pub fn set_default(device_id: u32) {
     let _ = Command::new("wpctl")
         .args(["set-default", &device_id.to_string()])
         .status();
-}
-
-/// An active audio playback stream (application currently producing audio).
-#[derive(Debug, Clone)]
-pub struct AudioStream {
-    pub id: u32,
-    pub name: String,
-}
-
-/// List currently-active playback streams by parsing the `Streams:` section of
-/// `wpctl status`.  Each stream line looks like:
-///
-/// ```text
-///  └─ Streams:
-///         71. Floorp
-///             46. → HyperX QuadCast Analog Stereo
-/// ```
-///
-/// We capture the top-level numbered entries (the app) and ignore the
-/// indented sub-entries (the sink they are connected to).
-pub fn list_streams() -> Vec<AudioStream> {
-    let status = match wpctl_status() {
-        Some(s) => s,
-        None => return Vec::new(),
-    };
-
-    let mut streams = Vec::new();
-    let mut in_streams = false;
-
-    for line in status.lines() {
-        let cleaned: String = line
-            .replace('\u{2502}', " ") // │
-            .replace('\u{251c}', " ") // ├
-            .replace('\u{2514}', " ") // └
-            .replace('\u{2500}', " "); // ─
-        let trimmed = cleaned.trim();
-
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        // Detect section headers
-        if trimmed.ends_with(':') {
-            if trimmed == "Streams:" {
-                in_streams = true;
-                continue;
-            } else if in_streams {
-                break;
-            }
-            continue;
-        }
-
-        if !in_streams {
-            continue;
-        }
-
-        // Skip sub-entries that start with an arrow (→) after the id — these
-        // are the target sink, not the app itself.
-        if trimmed.contains("\u{2192}") {
-            continue;
-        }
-
-        // Strip default marker
-        let cleaned_line = trimmed.trim_start_matches('*').trim();
-
-        let dot_pos = match cleaned_line.find('.') {
-            Some(p) => p,
-            None => continue,
-        };
-
-        let id: u32 = match cleaned_line[..dot_pos].trim().parse() {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-
-        let rest = cleaned_line[dot_pos + 1..].trim();
-        // Strip any trailing bracket info like [vol: 0.50]
-        let name = if let Some(bracket) = rest.rfind('[') {
-            rest[..bracket].trim().to_string()
-        } else {
-            rest.to_string()
-        };
-
-        if name.is_empty() {
-            continue;
-        }
-
-        let name_lower = name.to_lowercase();
-        if DEVICE_BLOCKLIST.iter().any(|b| name_lower.contains(b)) {
-            continue;
-        }
-
-        streams.push(AudioStream { id, name });
-    }
-
-    streams
 }
 
 /// Route a stream to a virtual sink by disconnecting its current output links

@@ -1,566 +1,485 @@
-// === pages/appearance.rs — Full appearance settings with nwg-look parity ===
+// === pages/appearance.rs — Appearance / Theme settings page ===
+//
+// Allows the user to configure GTK themes, icon themes, cursor themes,
+// color scheme, font rendering, and export GTK config files. All live
+// changes go through gsettings; Hyprland cursor env is updated via hyprctl.
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
-use relm4::gtk::gio;
-use relm4::gtk::pango;
+use iced::widget::{button, column, container, pick_list, row, scrollable, slider, text, Space};
+use iced::{Background, Border, Element, Length, Task};
 
 use crate::services::appearance;
 use crate::services::hyprctl;
+use crate::theme;
 
 // ---------------------------------------------------------------------------
-// Hyprpaper helpers (wallpaper config is hyprpaper-specific, not gsettings)
+// Messages
 // ---------------------------------------------------------------------------
 
-/// Read the current wallpaper path from hyprpaper.conf.
-fn read_wallpaper_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home".to_string());
-    let config_path = format!("{}/.config/hypr/hyprpaper.conf", home);
+#[derive(Debug, Clone)]
+pub enum Message {
+    // Theme section
+    SetColorScheme(String),
+    SetGtkTheme(String),
+    SetIconTheme(String),
 
-    let content = match std::fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return String::from("Not configured"),
-    };
+    // Cursor section
+    SetCursorTheme(String),
+    SetCursorSize(f64),
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("wallpaper") {
-            if let Some(val) = trimmed.split('=').nth(1) {
-                let val = val.trim();
-                if let Some(path) = val.split(',').nth(1) {
-                    return path.trim().to_string();
-                }
+    // Font section
+    SetTextScaling(f64),
+    SetFontHinting(String),
+    SetFontAntialiasing(String),
+    SetFontRgbaOrder(String),
+
+    // Config export section
+    ExportGtk3,
+    ExportGtk4,
+    ExportGtk4Symlinks,
+    ClearGtk4Symlinks,
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub struct AppearancePage {
+    settings: appearance::ThemeSettings,
+    gtk_themes: Vec<String>,
+    icon_themes: Vec<String>,
+    cursor_themes: Vec<String>,
+    status: Option<String>,
+}
+
+impl AppearancePage {
+    pub fn new() -> Self {
+        Self {
+            settings: appearance::read_current_settings(),
+            gtk_themes: appearance::list_gtk_themes(),
+            icon_themes: appearance::list_icon_themes(),
+            cursor_themes: appearance::list_cursor_themes(),
+            status: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        const SCHEMA: &str = "org.gnome.desktop.interface";
+
+        match message {
+            // -- Theme --
+            Message::SetColorScheme(val) => {
+                appearance::gsettings_set(SCHEMA, "color-scheme", &val);
+                self.settings.color_scheme = val;
+            }
+            Message::SetGtkTheme(val) => {
+                appearance::gsettings_set(SCHEMA, "gtk-theme", &val);
+                self.settings.gtk_theme = val;
+            }
+            Message::SetIconTheme(val) => {
+                appearance::gsettings_set(SCHEMA, "icon-theme", &val);
+                self.settings.icon_theme = val;
+            }
+
+            // -- Cursor --
+            Message::SetCursorTheme(val) => {
+                appearance::gsettings_set(SCHEMA, "cursor-theme", &val);
+                hyprctl::keyword("env", &format!("XCURSOR_THEME,{val}"));
+                appearance::export_cursor_index(&val);
+                self.settings.cursor_theme = val;
+            }
+            Message::SetCursorSize(val) => {
+                let size = val.round() as u32;
+                appearance::gsettings_set(SCHEMA, "cursor-size", &size.to_string());
+                hyprctl::keyword("env", &format!("XCURSOR_SIZE,{size}"));
+                self.settings.cursor_size = size;
+            }
+
+            // -- Font --
+            Message::SetTextScaling(val) => {
+                // Round to nearest 0.05 for cleaner values.
+                let rounded = (val * 20.0).round() / 20.0;
+                appearance::gsettings_set(SCHEMA, "text-scaling-factor", &format!("{rounded:.2}"));
+                self.settings.text_scaling_factor = rounded;
+            }
+            Message::SetFontHinting(val) => {
+                appearance::gsettings_set(SCHEMA, "font-hinting", &val);
+                self.settings.font_hinting = val;
+            }
+            Message::SetFontAntialiasing(val) => {
+                appearance::gsettings_set(SCHEMA, "font-antialiasing", &val);
+                self.settings.font_antialiasing = val;
+            }
+            Message::SetFontRgbaOrder(val) => {
+                appearance::gsettings_set(SCHEMA, "font-rgba-order", &val);
+                self.settings.font_rgba_order = val;
+            }
+
+            // -- Config export --
+            Message::ExportGtk3 => {
+                appearance::export_gtk3_settings(&self.settings);
+                self.status = Some("Exported GTK3 settings.ini".into());
+            }
+            Message::ExportGtk4 => {
+                appearance::export_gtk4_settings(&self.settings);
+                self.status = Some("Exported GTK4 settings.ini".into());
+            }
+            Message::ExportGtk4Symlinks => {
+                appearance::export_gtk4_symlinks(&self.settings.gtk_theme);
+                self.status = Some(format!(
+                    "Symlinked GTK4 assets for '{}'",
+                    self.settings.gtk_theme
+                ));
+            }
+            Message::ClearGtk4Symlinks => {
+                appearance::clear_gtk4_symlinks();
+                self.status = Some("Cleared GTK4 symlinks".into());
             }
         }
+        Task::none()
     }
 
-    String::from("Not configured")
-}
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
 
-/// Update hyprpaper.conf with a new wallpaper path.
-fn write_wallpaper_config(path: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home".to_string());
-    let config_path = format!("{}/.config/hypr/hyprpaper.conf", home);
+    pub fn view(&self) -> Element<'_, Message> {
+        let title = text("Appearance").size(28).color(theme::TEXT);
 
-    let content = format!(
-        "preload = {}\nwallpaper = ,{}\nsplash = false\n",
-        path, path
-    );
+        let theme_section = self.view_theme_section();
+        let cursor_section = self.view_cursor_section();
+        let font_section = self.view_font_section();
+        let export_section = self.view_export_section();
 
-    if let Err(e) = std::fs::write(&config_path, &content) {
-        tracing::error!("Failed to write hyprpaper.conf: {}", e);
-        return;
+        let content = column![
+            title,
+            theme_section,
+            cursor_section,
+            font_section,
+            export_section,
+        ]
+        .spacing(24)
+        .width(Length::Fill);
+
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Shrink),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    // Restart hyprpaper to apply
-    let _ = std::process::Command::new("pkill")
-        .arg("hyprpaper")
-        .status();
-    let _ = std::process::Command::new("hyprpaper").spawn();
-    tracing::info!("Updated wallpaper to {}", path);
-}
+    // -----------------------------------------------------------------------
+    // Section: Theme
+    // -----------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+    fn view_theme_section(&self) -> Element<'_, Message> {
+        let heading = text("Theme").size(16).color(theme::TEXT);
 
-/// Find the index of `needle` in `options`, returning 0 if not found.
-fn find_index(options: &[&str], needle: &str) -> u32 {
-    options.iter().position(|&o| o == needle).unwrap_or(0) as u32
-}
-
-/// Find the index of `needle` in a Vec<String>, returning 0 if not found.
-fn find_string_index(options: &[String], needle: &str) -> u32 {
-    options.iter().position(|o| o == needle).unwrap_or(0) as u32
-}
-
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
-
-/// Build the appearance settings page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
-
-    page.append(&build_theme_section());
-    page.append(&build_cursor_section());
-    page.append(&build_font_section());
-    page.append(&build_wallpaper_section());
-    page.append(&build_export_section());
-    page.append(&build_sound_section());
-
-    super::page_wrapper(&page)
-}
-
-// ---------------------------------------------------------------------------
-// Section 1: Theme
-// ---------------------------------------------------------------------------
-
-fn build_theme_section() -> adw::PreferencesGroup {
-    let settings = appearance::read_current_settings();
-    let group = adw::PreferencesGroup::builder().title("Theme").build();
-
-    // --- Color Scheme ---
-    let scheme_labels = ["System Default", "Prefer Dark", "Prefer Light"];
-    let scheme_values = ["default", "prefer-dark", "prefer-light"];
-    let scheme_model = gtk::StringList::new(&scheme_labels);
-
-    let scheme_combo = adw::ComboRow::builder()
-        .title("Color Scheme")
-        .model(&scheme_model)
-        .selected(find_index(&scheme_values, &settings.color_scheme))
-        .build();
-
-    let scheme_icon = gtk::Image::from_icon_name("weather-clear-night-symbolic");
-    scheme_icon.set_valign(gtk::Align::Center);
-    scheme_combo.add_prefix(&scheme_icon);
-
-    scheme_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(&val) = scheme_values.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "color-scheme", val);
-        }
-    });
-    group.add(&scheme_combo);
-
-    // --- GTK Theme ---
-    let gtk_themes = appearance::list_gtk_themes();
-    let gtk_theme_strs: Vec<&str> = gtk_themes.iter().map(|s| s.as_str()).collect();
-    let gtk_model = gtk::StringList::new(&gtk_theme_strs);
-
-    let gtk_combo = adw::ComboRow::builder()
-        .title("GTK Theme")
-        .model(&gtk_model)
-        .selected(find_string_index(&gtk_themes, &settings.gtk_theme))
-        .build();
-
-    let gtk_icon = gtk::Image::from_icon_name("applications-graphics-symbolic");
-    gtk_icon.set_valign(gtk::Align::Center);
-    gtk_combo.add_prefix(&gtk_icon);
-
-    gtk_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(theme) = gtk_themes.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "gtk-theme", theme);
-        }
-    });
-    group.add(&gtk_combo);
-
-    // --- Icon Theme ---
-    let icon_themes = appearance::list_icon_themes();
-    let icon_theme_strs: Vec<&str> = icon_themes.iter().map(|s| s.as_str()).collect();
-    let icon_model = gtk::StringList::new(&icon_theme_strs);
-
-    let icon_combo = adw::ComboRow::builder()
-        .title("Icon Theme")
-        .model(&icon_model)
-        .selected(find_string_index(&icon_themes, &settings.icon_theme))
-        .build();
-
-    let icon_icon = gtk::Image::from_icon_name("folder-symbolic");
-    icon_icon.set_valign(gtk::Align::Center);
-    icon_combo.add_prefix(&icon_icon);
-
-    icon_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(theme) = icon_themes.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "icon-theme", theme);
-        }
-    });
-    group.add(&icon_combo);
-
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Section 2: Cursor
-// ---------------------------------------------------------------------------
-
-fn build_cursor_section() -> adw::PreferencesGroup {
-    let settings = appearance::read_current_settings();
-    let group = adw::PreferencesGroup::builder().title("Cursor").build();
-
-    // --- Cursor Theme ---
-    let cursor_themes = appearance::list_cursor_themes();
-    let cursor_theme_strs: Vec<&str> = cursor_themes.iter().map(|s| s.as_str()).collect();
-    let cursor_model = gtk::StringList::new(&cursor_theme_strs);
-
-    let cursor_combo = adw::ComboRow::builder()
-        .title("Cursor Theme")
-        .model(&cursor_model)
-        .selected(find_string_index(&cursor_themes, &settings.cursor_theme))
-        .build();
-
-    let cursor_icon = gtk::Image::from_icon_name("input-mouse-symbolic");
-    cursor_icon.set_valign(gtk::Align::Center);
-    cursor_combo.add_prefix(&cursor_icon);
-
-    cursor_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(theme) = cursor_themes.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "cursor-theme", theme);
-            hyprctl::keyword("env", &format!("XCURSOR_THEME,{}", theme));
-            appearance::export_cursor_index(theme);
-        }
-    });
-    group.add(&cursor_combo);
-
-    // --- Cursor Size ---
-    let adjustment = gtk::Adjustment::new(settings.cursor_size as f64, 16.0, 96.0, 8.0, 8.0, 0.0);
-
-    let size_row = adw::SpinRow::new(Some(&adjustment), 1.0, 0);
-    size_row.set_title("Cursor Size");
-
-    let size_icon = gtk::Image::from_icon_name("zoom-in-symbolic");
-    size_icon.set_valign(gtk::Align::Center);
-    size_row.add_prefix(&size_icon);
-
-    size_row.connect_value_notify(move |spin| {
-        let size = spin.value() as u32;
-        let size_str = size.to_string();
-        appearance::gsettings_set("org.gnome.desktop.interface", "cursor-size", &size_str);
-        hyprctl::keyword("env", &format!("XCURSOR_SIZE,{}", size));
-        hyprctl::keyword("env", &format!("HYPRCURSOR_SIZE,{}", size));
-    });
-    group.add(&size_row);
-
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Section 3: Fonts
-// ---------------------------------------------------------------------------
-
-fn build_font_section() -> adw::PreferencesGroup {
-    let settings = appearance::read_current_settings();
-    let group = adw::PreferencesGroup::builder().title("Fonts").build();
-
-    // --- Interface Font ---
-    let font_row = adw::ActionRow::builder().title("Interface Font").build();
-
-    let font_icon = gtk::Image::from_icon_name("font-x-generic-symbolic");
-    font_icon.set_valign(gtk::Align::Center);
-    font_row.add_prefix(&font_icon);
-
-    let font_dialog = gtk::FontDialog::new();
-    let font_btn = gtk::FontDialogButton::new(Some(font_dialog));
-    let desc = pango::FontDescription::from_string(&settings.font_name);
-    font_btn.set_font_desc(&desc);
-    font_btn.set_valign(gtk::Align::Center);
-
-    font_btn.connect_font_desc_notify(|btn| {
-        if let Some(desc) = btn.font_desc() {
-            let font_str = desc.to_string();
-            appearance::gsettings_set("org.gnome.desktop.interface", "font-name", &font_str);
-        }
-    });
-
-    font_row.add_suffix(&font_btn);
-    group.add(&font_row);
-
-    // --- Text Scaling Factor ---
-    let scale_adjustment =
-        gtk::Adjustment::new(settings.text_scaling_factor, 0.5, 3.0, 0.05, 0.1, 0.0);
-
-    let scale_row = adw::SpinRow::new(Some(&scale_adjustment), 0.05, 2);
-    scale_row.set_title("Text Scaling Factor");
-
-    scale_row.connect_value_notify(move |spin| {
-        let val = spin.value();
-        appearance::gsettings_set(
-            "org.gnome.desktop.interface",
-            "text-scaling-factor",
-            &format!("{:.2}", val),
+        // Color scheme
+        let color_schemes = vec![
+            "prefer-dark".to_string(),
+            "prefer-light".to_string(),
+            "default".to_string(),
+        ];
+        let color_row = setting_row(
+            "Color Scheme",
+            pick_list(
+                color_schemes,
+                Some(self.settings.color_scheme.clone()),
+                Message::SetColorScheme,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
         );
-    });
-    group.add(&scale_row);
 
-    // --- Font Hinting ---
-    let hinting_labels = ["None", "Slight", "Medium", "Full"];
-    let hinting_values = ["none", "slight", "medium", "full"];
-    let hinting_model = gtk::StringList::new(&hinting_labels);
+        // GTK theme
+        let gtk_row = setting_row(
+            "GTK Theme",
+            pick_list(
+                self.gtk_themes.clone(),
+                Some(self.settings.gtk_theme.clone()),
+                Message::SetGtkTheme,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
+        );
 
-    let hinting_combo = adw::ComboRow::builder()
-        .title("Font Hinting")
-        .model(&hinting_model)
-        .selected(find_index(&hinting_values, &settings.font_hinting))
-        .build();
+        // Icon theme
+        let icon_row = setting_row(
+            "Icon Theme",
+            pick_list(
+                self.icon_themes.clone(),
+                Some(self.settings.icon_theme.clone()),
+                Message::SetIconTheme,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
+        );
 
-    let hinting_icon = gtk::Image::from_icon_name("format-text-direction-symbolic");
-    hinting_icon.set_valign(gtk::Align::Center);
-    hinting_combo.add_prefix(&hinting_icon);
+        let card_content = column![color_row, gtk_row, icon_row].spacing(12);
 
-    hinting_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(&val) = hinting_values.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "font-hinting", val);
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Section: Cursor
+    // -----------------------------------------------------------------------
+
+    fn view_cursor_section(&self) -> Element<'_, Message> {
+        let heading = text("Cursor").size(16).color(theme::TEXT);
+
+        // Cursor theme
+        let cursor_row = setting_row(
+            "Cursor Theme",
+            pick_list(
+                self.cursor_themes.clone(),
+                Some(self.settings.cursor_theme.clone()),
+                Message::SetCursorTheme,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
+        );
+
+        // Cursor size slider (16-48)
+        let size = self.settings.cursor_size;
+        let size_label = text(format!("Cursor Size: {size}"))
+            .size(13)
+            .color(theme::SUBTEXT0)
+            .width(Length::Fixed(160.0));
+
+        let size_slider = slider(16.0..=48.0, size as f64, Message::SetCursorSize)
+            .step(2.0)
+            .width(Length::Fixed(280.0));
+
+        let size_row = row![size_label, size_slider]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        let card_content = column![cursor_row, size_row].spacing(12);
+
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Section: Font
+    // -----------------------------------------------------------------------
+
+    fn view_font_section(&self) -> Element<'_, Message> {
+        let heading = text("Fonts").size(16).color(theme::TEXT);
+
+        // Current font (display only)
+        let font_row = setting_row(
+            "Font",
+            text(&self.settings.font_name)
+                .size(13)
+                .color(theme::TEXT)
+                .into(),
+        );
+
+        // Text scaling slider (0.5 - 2.0)
+        let scale = self.settings.text_scaling_factor;
+        let scale_label = text(format!("Text Scaling: {scale:.2}"))
+            .size(13)
+            .color(theme::SUBTEXT0)
+            .width(Length::Fixed(160.0));
+
+        let scale_slider = slider(0.5..=2.0, scale, Message::SetTextScaling)
+            .step(0.05)
+            .width(Length::Fixed(280.0));
+
+        let scale_row = row![scale_label, scale_slider]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+
+        // Hinting
+        let hinting_options = vec![
+            "none".to_string(),
+            "slight".to_string(),
+            "medium".to_string(),
+            "full".to_string(),
+        ];
+        let hinting_row = setting_row(
+            "Hinting",
+            pick_list(
+                hinting_options,
+                Some(self.settings.font_hinting.clone()),
+                Message::SetFontHinting,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
+        );
+
+        // Antialiasing
+        let aa_options = vec![
+            "none".to_string(),
+            "grayscale".to_string(),
+            "subpixel".to_string(),
+        ];
+        let aa_row = setting_row(
+            "Antialiasing",
+            pick_list(
+                aa_options,
+                Some(self.settings.font_antialiasing.clone()),
+                Message::SetFontAntialiasing,
+            )
+            .width(Length::Fixed(280.0))
+            .text_size(13.0)
+            .into(),
+        );
+
+        // Subpixel order -- only shown when antialiasing = "subpixel"
+        let mut card_content = column![font_row, scale_row, hinting_row, aa_row].spacing(12);
+
+        if self.settings.font_antialiasing == "subpixel" {
+            let rgba_options = vec![
+                "rgb".to_string(),
+                "bgr".to_string(),
+                "vrgb".to_string(),
+                "vbgr".to_string(),
+            ];
+            let rgba_row = setting_row(
+                "Subpixel Order",
+                pick_list(
+                    rgba_options,
+                    Some(self.settings.font_rgba_order.clone()),
+                    Message::SetFontRgbaOrder,
+                )
+                .width(Length::Fixed(280.0))
+                .text_size(13.0)
+                .into(),
+            );
+            card_content = card_content.push(rgba_row);
         }
-    });
-    group.add(&hinting_combo);
 
-    // --- Subpixel Order (created before antialiasing so we can reference it) ---
-    let subpixel_labels = ["RGB", "BGR", "VRGB", "VBGR"];
-    let subpixel_values = ["rgb", "bgr", "vrgb", "vbgr"];
-    let subpixel_model = gtk::StringList::new(&subpixel_labels);
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
 
-    let subpixel_combo = adw::ComboRow::builder()
-        .title("Subpixel Order")
-        .model(&subpixel_model)
-        .selected(find_index(&subpixel_values, &settings.font_rgba_order))
-        .sensitive(settings.font_antialiasing == "rgba")
-        .build();
+    // -----------------------------------------------------------------------
+    // Section: Config Export
+    // -----------------------------------------------------------------------
 
-    subpixel_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(&val) = subpixel_values.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "font-rgba-order", val);
+    fn view_export_section(&self) -> Element<'_, Message> {
+        let heading = text("Config Export").size(16).color(theme::TEXT);
+
+        let gtk3_btn = action_button(
+            "Export GTK3 Settings",
+            Some(Message::ExportGtk3),
+            theme::BLUE,
+        );
+        let gtk4_btn = action_button(
+            "Export GTK4 Settings",
+            Some(Message::ExportGtk4),
+            theme::BLUE,
+        );
+        let sym_btn = action_button(
+            "Export GTK4 Symlinks",
+            Some(Message::ExportGtk4Symlinks),
+            theme::BLUE,
+        );
+        let clear_btn = action_button(
+            "Clear GTK4 Symlinks",
+            Some(Message::ClearGtk4Symlinks),
+            theme::RED,
+        );
+
+        let btn_row = row![gtk3_btn, gtk4_btn, sym_btn, clear_btn].spacing(12);
+
+        let mut card_content = column![btn_row].spacing(12);
+
+        if let Some(ref msg) = self.status {
+            card_content = card_content.push(text(msg.as_str()).size(13).color(theme::GREEN));
         }
-    });
 
-    // --- Font Antialiasing ---
-    let aa_labels = ["None", "Grayscale", "Subpixel (RGBA)"];
-    let aa_values = ["none", "grayscale", "rgba"];
-    let aa_model = gtk::StringList::new(&aa_labels);
-
-    let aa_combo = adw::ComboRow::builder()
-        .title("Font Antialiasing")
-        .model(&aa_model)
-        .selected(find_index(&aa_values, &settings.font_antialiasing))
-        .build();
-
-    let subpixel_combo_ref = subpixel_combo.clone();
-    aa_combo.connect_selected_notify(move |row| {
-        let idx = row.selected() as usize;
-        if let Some(&val) = aa_values.get(idx) {
-            appearance::gsettings_set("org.gnome.desktop.interface", "font-antialiasing", val);
-            subpixel_combo_ref.set_sensitive(val == "rgba");
-        }
-    });
-    group.add(&aa_combo);
-
-    group.add(&subpixel_combo);
-
-    group
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Section 4: Wallpaper
+// Reusable helpers
 // ---------------------------------------------------------------------------
 
-fn build_wallpaper_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Wallpaper").build();
+/// A labelled row: left-aligned label (fixed width) + right-hand widget.
+fn setting_row<'a>(label: &'a str, widget: Element<'a, Message>) -> Element<'a, Message> {
+    row![
+        text(label)
+            .size(13)
+            .color(theme::SUBTEXT0)
+            .width(Length::Fixed(160.0)),
+        widget,
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
 
-    let current_wp = read_wallpaper_path();
+/// Wraps content in a styled card container (SURFACE0 background, rounded).
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
 
-    let wp_row = adw::ActionRow::builder()
-        .title("Current Wallpaper")
-        .subtitle(&current_wp)
-        .build();
-
-    let wp_icon = gtk::Image::from_icon_name("preferences-desktop-wallpaper-symbolic");
-    wp_icon.set_valign(gtk::Align::Center);
-    wp_row.add_prefix(&wp_icon);
-
-    group.add(&wp_row);
-
-    // --- Change wallpaper button ---
-    let change_row = adw::ActionRow::builder()
-        .title("Change Wallpaper")
-        .subtitle("Select a new wallpaper image")
-        .build();
-
-    let change_icon = gtk::Image::from_icon_name("folder-pictures-symbolic");
-    change_icon.set_valign(gtk::Align::Center);
-    change_row.add_prefix(&change_icon);
-
-    let change_btn = gtk::Button::builder()
-        .label("Browse")
-        .valign(gtk::Align::Center)
-        .build();
-
-    let wp_row_clone = wp_row.clone();
-    change_btn.connect_clicked(move |btn| {
-        let filter = gtk::FileFilter::new();
-        filter.add_mime_type("image/png");
-        filter.add_mime_type("image/jpeg");
-        filter.add_mime_type("image/webp");
-        filter.set_name(Some("Images"));
-
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&filter);
-
-        let dialog = gtk::FileDialog::builder()
-            .title("Select Wallpaper")
-            .filters(&filters)
-            .build();
-
-        let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        let wp_ref = wp_row_clone.clone();
-        dialog.open(window.as_ref(), None::<&gio::Cancellable>, move |result| {
-            if let Ok(file) = result {
-                if let Some(path) = file.path() {
-                    let path_str = path.to_string_lossy().to_string();
-                    write_wallpaper_config(&path_str);
-                    wp_ref.set_subtitle(&path_str);
-                }
+/// A styled action button with accent color.
+fn action_button(
+    label: &str,
+    on_press: Option<Message>,
+    accent: iced::Color,
+) -> Element<'_, Message> {
+    let btn_label = text(label).size(13).color(theme::BASE);
+    let mut btn = button(btn_label)
+        .padding([8, 16])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color { a: 0.85, ..accent },
+                button::Status::Pressed => iced::Color { a: 0.70, ..accent },
+                button::Status::Disabled => theme::SURFACE1,
+                _ => accent,
+            };
+            let text_color = match status {
+                button::Status::Disabled => theme::OVERLAY0,
+                _ => theme::BASE,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color,
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
             }
         });
-    });
 
-    change_row.add_suffix(&change_btn);
-    change_row.set_activatable_widget(Some(&change_btn));
-    group.add(&change_row);
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg);
+    }
 
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Section 5: Config Export
-// ---------------------------------------------------------------------------
-
-fn build_export_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder()
-        .title("Config Export")
-        .description("Export settings to config files for GTK applications")
-        .build();
-
-    // --- GTK3 switch ---
-    let gtk3_switch = adw::SwitchRow::builder()
-        .title("Export GTK3 settings.ini")
-        .subtitle("~/.config/gtk-3.0/settings.ini")
-        .active(true)
-        .build();
-    group.add(&gtk3_switch);
-
-    // --- GTK4 switch ---
-    let gtk4_switch = adw::SwitchRow::builder()
-        .title("Export GTK4 settings.ini")
-        .subtitle("~/.config/gtk-4.0/settings.ini")
-        .active(true)
-        .build();
-    group.add(&gtk4_switch);
-
-    // --- GTK4 Symlinks switch ---
-    let symlinks_switch = adw::SwitchRow::builder()
-        .title("GTK4 Theme Symlinks")
-        .subtitle("Link theme CSS to ~/.config/gtk-4.0/")
-        .build();
-    group.add(&symlinks_switch);
-
-    // --- Cursor index.theme switch ---
-    let cursor_switch = adw::SwitchRow::builder()
-        .title("Export Cursor index.theme")
-        .subtitle("~/.icons/default/index.theme")
-        .active(true)
-        .build();
-    group.add(&cursor_switch);
-
-    // --- Apply button ---
-    let apply_row = adw::ActionRow::builder()
-        .title("Apply Exports")
-        .subtitle("Write selected config files now")
-        .build();
-
-    let apply_btn = gtk::Button::builder()
-        .label("Apply")
-        .valign(gtk::Align::Center)
-        .css_classes(["suggested-action"])
-        .build();
-
-    let gtk3_ref = gtk3_switch.clone();
-    let gtk4_ref = gtk4_switch.clone();
-    let symlinks_ref = symlinks_switch.clone();
-    let cursor_ref = cursor_switch.clone();
-
-    apply_btn.connect_clicked(move |_| {
-        let settings = appearance::read_current_settings();
-
-        if gtk3_ref.is_active() {
-            appearance::export_gtk3_settings(&settings);
-        }
-        if gtk4_ref.is_active() {
-            appearance::export_gtk4_settings(&settings);
-        }
-        if symlinks_ref.is_active() {
-            appearance::export_gtk4_symlinks(&settings.gtk_theme);
-        }
-        if cursor_ref.is_active() {
-            appearance::export_cursor_index(&settings.cursor_theme);
-        }
-
-        tracing::info!("Config export applied");
-    });
-
-    apply_row.add_suffix(&apply_btn);
-    apply_row.set_activatable_widget(Some(&apply_btn));
-    group.add(&apply_row);
-
-    // --- Clear GTK4 Symlinks ---
-    let clear_row = adw::ActionRow::builder()
-        .title("Clear GTK4 Symlinks")
-        .subtitle("Remove symlinked theme CSS from ~/.config/gtk-4.0/")
-        .build();
-
-    let clear_btn = gtk::Button::builder()
-        .label("Clear")
-        .valign(gtk::Align::Center)
-        .build();
-
-    clear_btn.connect_clicked(move |_| {
-        appearance::clear_gtk4_symlinks();
-        tracing::info!("GTK4 symlinks cleared");
-    });
-
-    clear_row.add_suffix(&clear_btn);
-    clear_row.set_activatable_widget(Some(&clear_btn));
-    group.add(&clear_row);
-
-    group
-}
-
-// ---------------------------------------------------------------------------
-// Section 6: Sound
-// ---------------------------------------------------------------------------
-
-fn build_sound_section() -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Sound").build();
-
-    // --- Event Sounds ---
-    let event_current =
-        appearance::gsettings_get("org.gnome.desktop.sound", "event-sounds") == "true";
-
-    let event_row = adw::SwitchRow::builder()
-        .title("Event Sounds")
-        .subtitle("Play sounds for desktop events")
-        .active(event_current)
-        .build();
-
-    let event_icon = gtk::Image::from_icon_name("audio-speakers-symbolic");
-    event_icon.set_valign(gtk::Align::Center);
-    event_row.add_prefix(&event_icon);
-
-    event_row.connect_active_notify(|row| {
-        let val = if row.is_active() { "true" } else { "false" };
-        appearance::gsettings_set("org.gnome.desktop.sound", "event-sounds", val);
-    });
-    group.add(&event_row);
-
-    // --- Input Feedback Sounds ---
-    let feedback_current =
-        appearance::gsettings_get("org.gnome.desktop.sound", "input-feedback-sounds") == "true";
-
-    let feedback_row = adw::SwitchRow::builder()
-        .title("Input Feedback Sounds")
-        .subtitle("Play sounds for input events")
-        .active(feedback_current)
-        .build();
-
-    feedback_row.connect_active_notify(|row| {
-        let val = if row.is_active() { "true" } else { "false" };
-        appearance::gsettings_set("org.gnome.desktop.sound", "input-feedback-sounds", val);
-    });
-    group.add(&feedback_row);
-
-    group
+    btn.into()
 }

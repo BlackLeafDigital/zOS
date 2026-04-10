@@ -1,191 +1,354 @@
-// === pages/boot.rs — Boot/GRUB configuration page ===
+// === pages/boot.rs — Boot / GRUB configuration page ===
+//
+// Displays GRUB timeout settings, Windows dual-boot status, and
+// provides controls for managing boot entries and rebooting to Windows.
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
+use iced::widget::{button, column, container, row, scrollable, slider, text, Space};
+use iced::{Background, Border, Element, Length, Task};
 
-use zos_core::commands::grub;
+use zos_core::commands::grub::{self, GrubStatus};
 
-/// Build the boot configuration page widget.
-pub fn build() -> gtk::Box {
-    let page = super::page_content();
+use crate::services::power;
+use crate::theme;
 
-    let status = grub::get_grub_status();
-    let is_root = grub::is_root();
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
 
-    // --- Warning Banner ---
-    if !is_root {
-        let warning_group = adw::PreferencesGroup::builder().build();
-        let warning_row = adw::ActionRow::builder()
-            .title("Some changes require administrator privileges. Run with sudo for full access.")
-            .build();
-        let warning_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
-        warning_icon.set_valign(gtk::Align::Center);
-        warning_row.add_prefix(&warning_icon);
-        warning_group.add(&warning_row);
-        page.append(&warning_group);
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// User moved the timeout slider.
+    SetTimeout(u32),
+    /// User pressed "Apply Timeout".
+    ApplyTimeout,
+    /// Async result of applying timeout (success, status message).
+    TimeoutApplied(bool, String),
+    /// User pressed "Create Windows Boot Entry".
+    CreateWindowsBls,
+    /// Async result of creating BLS entry (success, status message).
+    BlsCreated(bool, String),
+    /// User pressed "Reboot to Windows" (first click).
+    RebootToWindows,
+    /// User confirmed reboot to Windows.
+    ConfirmReboot,
+    /// User cancelled reboot confirmation.
+    CancelReboot,
+    /// Refresh GRUB status from disk.
+    Refresh,
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+pub struct BootPage {
+    is_root: bool,
+    grub_status: GrubStatus,
+    timeout_value: u32,
+    status_message: Option<String>,
+    confirming_reboot: bool,
+}
+
+impl BootPage {
+    pub fn new() -> Self {
+        let grub_status = grub::get_grub_status();
+        let timeout_value = grub_status.current_timeout.unwrap_or(5);
+
+        Self {
+            is_root: grub::is_root(),
+            grub_status,
+            timeout_value,
+            status_message: None,
+            confirming_reboot: false,
+        }
     }
 
-    // --- GRUB Settings ---
-    let boot_group = adw::PreferencesGroup::builder().title("Boot").build();
+    // -----------------------------------------------------------------------
+    // Update
+    // -----------------------------------------------------------------------
 
-    let timeout_val = status.current_timeout.unwrap_or(0) as f64;
-    let timeout_row = adw::ActionRow::builder()
-        .title("GRUB Timeout (seconds)")
-        .subtitle("Time to wait at boot menu before auto-selecting default")
-        .build();
-    let timeout_icon = gtk::Image::from_icon_name("appointment-soon-symbolic");
-    timeout_icon.set_valign(gtk::Align::Center);
-    timeout_row.add_prefix(&timeout_icon);
-    let timeout_spin = gtk::SpinButton::with_range(0.0, 30.0, 1.0);
-    timeout_spin.set_value(timeout_val);
-    timeout_spin.set_valign(gtk::Align::Center);
-    timeout_row.add_suffix(&timeout_spin);
-    boot_group.add(&timeout_row);
-
-    let apply_row = adw::ActionRow::builder()
-        .title("Apply Timeout")
-        .subtitle("Write timeout value to GRUB configuration")
-        .build();
-    let apply_btn = gtk::Button::builder()
-        .label("Apply")
-        .valign(gtk::Align::Center)
-        .css_classes(["suggested-action"])
-        .build();
-
-    let timeout_spin_clone = timeout_spin.clone();
-    apply_btn.connect_clicked(move |btn| {
-        let val = timeout_spin_clone.value() as u32;
-        match grub::apply_grub_timeout(val) {
-            Ok(()) => {
-                tracing::info!("GRUB timeout set to {}", val);
-                btn.set_label("Applied");
-                btn.set_sensitive(false);
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::SetTimeout(val) => {
+                self.timeout_value = val;
+                Task::none()
             }
-            Err(e) => {
-                tracing::error!("Failed to apply GRUB timeout: {}", e);
-                btn.set_label("Error");
+            Message::ApplyTimeout => {
+                let seconds = self.timeout_value;
+                self.status_message = None;
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            match grub::apply_grub_timeout(seconds) {
+                                Ok(()) => (true, format!("Timeout set to {}s", seconds)),
+                                Err(e) => (false, format!("Failed: {}", e)),
+                            }
+                        })
+                        .await
+                        .unwrap_or((false, "Internal error".to_string()))
+                    },
+                    |(ok, msg)| Message::TimeoutApplied(ok, msg),
+                )
+            }
+            Message::TimeoutApplied(ok, msg) => {
+                self.status_message = Some(msg);
+                if ok {
+                    self.grub_status.current_timeout = Some(self.timeout_value);
+                }
+                Task::none()
+            }
+            Message::CreateWindowsBls => {
+                self.status_message = None;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| match grub::create_windows_bls() {
+                            Ok(()) => (true, "Windows boot entry created".to_string()),
+                            Err(e) => (false, format!("Failed: {}", e)),
+                        })
+                        .await
+                        .unwrap_or((false, "Internal error".to_string()))
+                    },
+                    |(ok, msg)| Message::BlsCreated(ok, msg),
+                )
+            }
+            Message::BlsCreated(ok, msg) => {
+                self.status_message = Some(msg);
+                if ok {
+                    self.grub_status.bls_entry_exists = true;
+                }
+                Task::none()
+            }
+            Message::RebootToWindows => {
+                self.confirming_reboot = true;
+                Task::none()
+            }
+            Message::ConfirmReboot => {
+                self.confirming_reboot = false;
+                power::reboot_to_windows();
+                Task::none()
+            }
+            Message::CancelReboot => {
+                self.confirming_reboot = false;
+                Task::none()
+            }
+            Message::Refresh => {
+                self.grub_status = grub::get_grub_status();
+                self.timeout_value = self.grub_status.current_timeout.unwrap_or(5);
+                self.status_message = None;
+                self.confirming_reboot = false;
+                Task::none()
             }
         }
-    });
-    apply_row.add_suffix(&apply_btn);
-    apply_row.set_activatable_widget(Some(&apply_btn));
-    boot_group.add(&apply_row);
-
-    let root_row = adw::ActionRow::builder()
-        .title("Running as root")
-        .subtitle(if is_root { "Yes" } else { "No" })
-        .build();
-    let root_prefix_icon = gtk::Image::from_icon_name("security-high-symbolic");
-    root_prefix_icon.set_valign(gtk::Align::Center);
-    root_row.add_prefix(&root_prefix_icon);
-    let root_icon = gtk::Image::from_icon_name(if is_root {
-        "emblem-default-symbolic"
-    } else {
-        "dialog-warning-symbolic"
-    });
-    root_icon.set_valign(gtk::Align::Center);
-    root_row.add_suffix(&root_icon);
-    boot_group.add(&root_row);
-
-    page.append(&boot_group);
-
-    // --- Dual Boot / Windows ---
-    let windows_group = adw::PreferencesGroup::builder().title("Windows").build();
-
-    let detected_row = adw::ActionRow::builder()
-        .title("Windows Detected")
-        .subtitle(if status.windows_detected {
-            status.windows_path.as_deref().unwrap_or("Yes")
-        } else {
-            "No"
-        })
-        .build();
-    let detected_icon = gtk::Image::from_icon_name("computer-symbolic");
-    detected_icon.set_valign(gtk::Align::Center);
-    detected_row.add_prefix(&detected_icon);
-    windows_group.add(&detected_row);
-
-    let bls_row = adw::ActionRow::builder()
-        .title("Boot Loader Entry")
-        .subtitle(if status.bls_entry_exists {
-            "Present"
-        } else {
-            "Not configured"
-        })
-        .build();
-    let bls_icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
-    bls_icon.set_valign(gtk::Align::Center);
-    bls_row.add_prefix(&bls_icon);
-    windows_group.add(&bls_row);
-
-    if status.windows_detected && !status.bls_entry_exists {
-        let create_row = adw::ActionRow::builder()
-            .title("Create Windows Boot Entry")
-            .subtitle("Add a BLS entry for Windows dual-boot")
-            .build();
-        let create_btn = gtk::Button::builder()
-            .label("Create")
-            .valign(gtk::Align::Center)
-            .css_classes(["suggested-action"])
-            .build();
-        create_btn.connect_clicked(move |btn| match grub::create_windows_bls() {
-            Ok(()) => {
-                tracing::info!("Windows BLS entry created");
-                btn.set_label("Created");
-                btn.set_sensitive(false);
-            }
-            Err(e) => {
-                tracing::error!("Failed to create Windows BLS entry: {}", e);
-                btn.set_label("Error");
-            }
-        });
-        create_row.add_suffix(&create_btn);
-        create_row.set_activatable_widget(Some(&create_btn));
-        windows_group.add(&create_row);
     }
 
-    if status.windows_detected {
-        let reboot_row = adw::ActionRow::builder()
-            .title("Reboot to Windows")
-            .subtitle("Set Windows as next boot target and restart")
-            .build();
-        let reboot_win_icon = gtk::Image::from_icon_name("computer-symbolic");
-        reboot_win_icon.set_valign(gtk::Align::Center);
-        reboot_row.add_prefix(&reboot_win_icon);
-        let reboot_btn = gtk::Button::builder()
-            .label("Reboot to Windows")
-            .valign(gtk::Align::Center)
-            .css_classes(["destructive-action"])
-            .build();
-        reboot_btn.connect_clicked(|btn| {
-            // Use the confirm_power_action pattern
-            let window = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-            let dialog = adw::AlertDialog::builder()
-                .heading("Reboot to Windows?")
-                .body("The system will restart into Windows. All unsaved work will be lost.")
-                .build();
-            dialog.add_responses(&[("cancel", "Cancel"), ("confirm", "Reboot to Windows")]);
-            dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
-            dialog.set_default_response(Some("cancel"));
-            dialog.set_close_response("cancel");
-            dialog.connect_response(None, move |_, response| {
-                if response == "confirm" {
-                    crate::services::power::reboot_to_windows();
-                }
-            });
-            if let Some(ref w) = window {
-                dialog.present(Some(w));
+    // -----------------------------------------------------------------------
+    // View
+    // -----------------------------------------------------------------------
+
+    pub fn view(&self) -> Element<'_, Message> {
+        let title = text("Boot").size(28).color(theme::TEXT);
+
+        let mut content = column![title].spacing(16).width(Length::Fill);
+
+        // Root warning banner
+        if !self.is_root {
+            content = content.push(self.view_root_warning());
+        }
+
+        // GRUB Timeout section
+        content = content.push(self.view_timeout_section());
+
+        // Windows Boot section (only if Windows detected)
+        if self.grub_status.windows_detected {
+            content = content.push(self.view_windows_section());
+        }
+
+        // Status message
+        if let Some(ref msg) = self.status_message {
+            let color = if msg.starts_with("Failed") {
+                theme::RED
             } else {
-                dialog.present(None::<&gtk::Window>);
-            }
-        });
-        reboot_row.add_suffix(&reboot_btn);
-        reboot_row.set_activatable_widget(Some(&reboot_btn));
-        windows_group.add(&reboot_row);
+                theme::GREEN
+            };
+            content = content.push(text(msg.as_str()).size(13).color(color));
+        }
+
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Shrink),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
-    page.append(&windows_group);
+    // -----------------------------------------------------------------------
+    // View helpers
+    // -----------------------------------------------------------------------
 
-    super::page_wrapper(&page)
+    fn view_root_warning(&self) -> Element<'_, Message> {
+        let warning_text = text("Some boot settings require root privileges")
+            .size(13)
+            .color(theme::BASE);
+
+        container(warning_text)
+            .padding([10, 16])
+            .width(Length::Fill)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(theme::YELLOW)),
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_timeout_section(&self) -> Element<'_, Message> {
+        let heading = text("GRUB Timeout").size(18).color(theme::TEXT);
+
+        // Current timeout display
+        let current_label = match self.grub_status.current_timeout {
+            Some(t) => format!("Current timeout: {}s", t),
+            None => "Current timeout: not set".to_string(),
+        };
+        let current_text = text(current_label).size(13).color(theme::SUBTEXT0);
+
+        // Timeout slider
+        let slider_label = text(format!("New timeout: {}s", self.timeout_value))
+            .size(13)
+            .color(theme::SUBTEXT0);
+
+        let timeout_slider = slider(0..=30_u32, self.timeout_value, Message::SetTimeout)
+            .step(1_u32)
+            .width(Length::Fixed(280.0));
+
+        let slider_row = row![
+            slider_label,
+            Space::new().width(Length::Fill),
+            timeout_slider
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+
+        // Apply button
+        let apply_btn = action_button("Apply Timeout", Some(Message::ApplyTimeout), theme::BLUE);
+
+        let card_content = column![current_text, slider_row, apply_btn].spacing(10);
+
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
+
+    fn view_windows_section(&self) -> Element<'_, Message> {
+        let heading = text("Windows Boot").size(18).color(theme::TEXT);
+
+        let mut card_content = column![].spacing(10);
+
+        // Windows path display
+        if let Some(ref path) = self.grub_status.windows_path {
+            let path_text = text(format!("Windows detected at: {}", path))
+                .size(13)
+                .color(theme::SUBTEXT0);
+            card_content = card_content.push(path_text);
+        }
+
+        // BLS entry status
+        if self.grub_status.bls_entry_exists {
+            let dot = text("\u{25CF} ").size(14).color(theme::GREEN);
+            let label = text("Boot entry configured").size(13).color(theme::TEXT);
+            let status_row = row![dot, label].align_y(iced::Alignment::Center);
+            card_content = card_content.push(status_row);
+        } else {
+            let create_btn = action_button(
+                "Create Windows Boot Entry",
+                Some(Message::CreateWindowsBls),
+                theme::BLUE,
+            );
+            card_content = card_content.push(create_btn);
+        }
+
+        // Reboot to Windows button with confirmation
+        let reboot_el: Element<'_, Message> = if self.confirming_reboot {
+            let prompt = text("Are you sure?").size(13).color(theme::TEXT);
+            let confirm_btn = action_button("Confirm", Some(Message::ConfirmReboot), theme::RED);
+            let cancel_btn = action_button("Cancel", Some(Message::CancelReboot), theme::OVERLAY0);
+            row![prompt, Space::new().width(8), confirm_btn, cancel_btn]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into()
+        } else {
+            action_button(
+                "Reboot to Windows",
+                Some(Message::RebootToWindows),
+                theme::PEACH,
+            )
+        };
+
+        card_content = card_content.push(reboot_el);
+
+        column![heading, Space::new().height(4), card(card_content)]
+            .spacing(8)
+            .into()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reusable helpers
+// ---------------------------------------------------------------------------
+
+/// Wraps content in a styled card container (SURFACE0 background, rounded).
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+    container(content)
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(theme::SURFACE0)),
+            border: Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
+
+/// A styled action button with accent color.
+fn action_button(
+    label: &str,
+    on_press: Option<Message>,
+    accent: iced::Color,
+) -> Element<'_, Message> {
+    let btn_label = text(label).size(13).color(theme::BASE);
+    let mut btn = button(btn_label)
+        .padding([8, 16])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color { a: 0.85, ..accent },
+                button::Status::Pressed => iced::Color { a: 0.70, ..accent },
+                button::Status::Disabled => theme::SURFACE1,
+                _ => accent,
+            };
+            let text_color = match status {
+                button::Status::Disabled => theme::OVERLAY0,
+                _ => theme::BASE,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color,
+                border: Border {
+                    radius: 8.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        });
+
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg);
+    }
+
+    btn.into()
 }

@@ -93,9 +93,14 @@ if command -v direnv &> /dev/null; then
     eval "$(direnv hook zsh)"
 fi
 
-# --- Android SDK (set after Android Studio installs SDK) ---
+# --- Android SDK (prefer user override under $HOME, else system) ---
 if [ -d "$HOME/Android/Sdk" ]; then
     export ANDROID_HOME="$HOME/Android/Sdk"
+elif [ -d /usr/lib/android-sdk ]; then
+    export ANDROID_HOME=/usr/lib/android-sdk
+fi
+
+if [ -n "${ANDROID_HOME:-}" ]; then
     export ANDROID_SDK_ROOT="$ANDROID_HOME"
     export PATH="$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin"
 fi

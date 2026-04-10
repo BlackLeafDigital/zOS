@@ -93,6 +93,27 @@ dnf5 install -y \
     android-tools \
     java-21-openjdk-devel
 
+# --- Android SDK (system-wide cmdline-tools + minimum platforms) ---
+# Lives under /usr/lib so it's read-only and shared across users. Users
+# who want a writable per-user SDK can drop one at ~/Android/Sdk —
+# zos-env.sh prefers $HOME over /usr/lib. Only baking one platform +
+# build-tools combo to keep the image lean; gradle auto-downloads extras
+# to ~/.android on first build.
+mkdir -p /usr/lib/android-sdk/cmdline-tools
+gh_curl -o /tmp/cmdline-tools.zip \
+    https://dl.google.com/android/repository/commandlinetools-linux-14742923_latest.zip
+unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
+mv /tmp/cmdline-tools-extract/cmdline-tools /usr/lib/android-sdk/cmdline-tools/latest
+rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
+
+yes | /usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+    --sdk_root=/usr/lib/android-sdk --licenses >/dev/null
+/usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+    --sdk_root=/usr/lib/android-sdk \
+    "platform-tools" \
+    "platforms;android-34" \
+    "build-tools;34.0.0"
+
 # --- Container + system tools ---
 # Note: buildah, skopeo, distrobox already in Bazzite
 dnf5 install -y \

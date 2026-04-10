@@ -34,7 +34,12 @@ impl std::fmt::Display for Source {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct FlatpakOverrides {
     pub app_id: String,
+    #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub filesystems: Vec<String>,
+    #[serde(default)]
+    pub sockets: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -43,8 +48,12 @@ pub struct CustomPackage {
     pub description: String,
     pub search_terms: Vec<String>,
     pub install_type: String,
-    pub github_repo: String,
-    pub asset_pattern: String,
+    #[serde(default)]
+    pub github_repo: Option<String>,
+    #[serde(default)]
+    pub asset_pattern: Option<String>,
+    #[serde(default)]
+    pub flathub_app_id: Option<String>,
     pub flatpak_overrides: Option<FlatpakOverrides>,
     pub env: Option<std::collections::HashMap<String, String>>,
 }
@@ -70,7 +79,7 @@ fn search_custom(query: &str, packages: &[CustomPackage]) -> Vec<PackageResult> 
             source: Source::Custom,
             name: p.name.clone(),
             description: p.description.clone(),
-            install_cmd: format!("__custom__{}", p.github_repo),
+            install_cmd: format!("__custom__{}", p.name),
         })
         .collect()
 }
@@ -181,13 +190,66 @@ pub fn slugify(name: &str) -> String {
         .join("-")
 }
 
-/// Install a custom package from GitHub releases.
-pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
-    let (tag, url) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern)?;
-    println!("Found {} {} — downloading...", pkg.name, tag);
+/// Apply sensible XDG filesystem overrides so flatpak apps can open/save files
+/// in the user's standard directories (Downloads, Documents, etc.) without
+/// needing `--filesystem=home`. Called after every flatpak install.
+pub(crate) fn apply_xdg_overrides(app_id: &str) {
+    for arg in &[
+        "--filesystem=xdg-download",
+        "--filesystem=xdg-documents",
+        "--filesystem=xdg-pictures",
+        "--filesystem=xdg-videos",
+        "--filesystem=xdg-music",
+    ] {
+        let _ = Command::new("flatpak")
+            .args(["override", "--user", arg, app_id])
+            .status();
+    }
+}
 
+/// Apply the env/filesystem/socket overrides declared in a CustomPackage.
+pub(crate) fn apply_flatpak_overrides(overrides: &FlatpakOverrides) {
+    for fs in &overrides.filesystems {
+        let _ = Command::new("flatpak")
+            .args([
+                "override",
+                "--user",
+                &format!("--filesystem={}", fs),
+                &overrides.app_id,
+            ])
+            .status();
+    }
+    for sock in &overrides.sockets {
+        let _ = Command::new("flatpak")
+            .args([
+                "override",
+                "--user",
+                &format!("--socket={}", sock),
+                &overrides.app_id,
+            ])
+            .status();
+    }
+    for (key, value) in &overrides.env {
+        let env_arg = format!("--env={}={}", key, value);
+        let _ = Command::new("flatpak")
+            .args(["override", "--user", &env_arg, &overrides.app_id])
+            .status();
+    }
+}
+
+/// Install a custom package from the registered source.
+pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
     match pkg.install_type.as_str() {
         "github-flatpak" => {
+            let repo = pkg.github_repo.as_deref().ok_or_else(|| {
+                color_eyre::eyre::eyre!("github-flatpak install_type requires github_repo")
+            })?;
+            let pattern = pkg.asset_pattern.as_deref().ok_or_else(|| {
+                color_eyre::eyre::eyre!("github-flatpak install_type requires asset_pattern")
+            })?;
+            let (tag, url) = resolve_github_release(repo, pattern)?;
+            println!("Found {} {} — downloading...", pkg.name, tag);
+
             let tmp = "/tmp/zos-custom-install.flatpak";
             let dl_status = Command::new("curl")
                 .args(["-fsSL", "-o", tmp, &url])
@@ -203,17 +265,22 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
             if !install_status.success() {
                 return Err(color_eyre::eyre::eyre!("flatpak install failed"));
             }
-            // Apply flatpak environment overrides if configured
             if let Some(overrides) = &pkg.flatpak_overrides {
-                for (key, value) in &overrides.env {
-                    let env_arg = format!("--env={}={}", key, value);
-                    let _ = Command::new("flatpak")
-                        .args(["override", "--user", &env_arg, &overrides.app_id])
-                        .status();
-                }
+                apply_xdg_overrides(&overrides.app_id);
+                apply_flatpak_overrides(overrides);
             }
+            println!("{} {} installed.", pkg.name, tag);
         }
         "github-appimage" => {
+            let repo = pkg.github_repo.as_deref().ok_or_else(|| {
+                color_eyre::eyre::eyre!("github-appimage install_type requires github_repo")
+            })?;
+            let pattern = pkg.asset_pattern.as_deref().ok_or_else(|| {
+                color_eyre::eyre::eyre!("github-appimage install_type requires asset_pattern")
+            })?;
+            let (tag, url) = resolve_github_release(repo, pattern)?;
+            println!("Found {} {} — downloading...", pkg.name, tag);
+
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
             let slug = slugify(&pkg.name);
             let bin_dir = format!("{home}/.local/bin");
@@ -247,13 +314,35 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
                 pkg.name, exec_line, pkg.description
             );
             let _ = std::fs::write(format!("{desktop_dir}/{slug}.desktop"), desktop_content);
+            println!("{} {} installed.", pkg.name, tag);
+        }
+        "flathub" => {
+            let app_id = pkg.flathub_app_id.as_deref().ok_or_else(|| {
+                color_eyre::eyre::eyre!("flathub install_type requires flathub_app_id")
+            })?;
+            println!("Installing {} from Flathub ({})...", pkg.name, app_id);
+
+            let install_status = Command::new("flatpak")
+                .args(["install", "--user", "-y", "flathub", app_id])
+                .status()?;
+            if !install_status.success() {
+                return Err(color_eyre::eyre::eyre!("flatpak install failed"));
+            }
+
+            apply_xdg_overrides(app_id);
+            if let Some(overrides) = &pkg.flatpak_overrides {
+                apply_flatpak_overrides(overrides);
+            }
+            println!(
+                "\x1b[32m✓\x1b[0m {} installed with XDG filesystem overrides applied.",
+                pkg.name
+            );
         }
         other => {
             return Err(color_eyre::eyre::eyre!("Unknown install type: {other}"));
         }
     }
 
-    println!("{} {} installed.", pkg.name, tag);
     Ok(())
 }
 
@@ -463,16 +552,47 @@ pub fn search_and_install(query: &str) -> Result<()> {
         &by_source[choice - 1]
     };
 
-    // Handle custom packages separately (they need GitHub resolution + download)
+    // Handle custom packages separately (they have their own install flow)
     if chosen.source == Source::Custom {
         let custom_packages = load_custom_packages();
-        if let Some(pkg) = custom_packages
-            .iter()
-            .find(|p| chosen.install_cmd.contains(&p.github_repo))
-        {
+        if let Some(pkg) = custom_packages.iter().find(|p| p.name == chosen.name) {
             return install_custom_package(pkg);
         }
         println!("Custom package not found in registry.");
+        return Ok(());
+    }
+
+    // Flatpak source: use --user -y and apply sensible XDG overrides so
+    // downloads, file pickers, and drag-and-drop work without the user
+    // needing to know flatpak permissions exist.
+    if chosen.source == Source::Flatpak {
+        let app_id = chosen
+            .install_cmd
+            .split_whitespace()
+            .last()
+            .unwrap_or("")
+            .to_string();
+        if app_id.is_empty() {
+            return Err(color_eyre::eyre::eyre!(
+                "Could not parse flatpak app id from install_cmd"
+            ));
+        }
+        println!(
+            "\x1b[1mInstalling via Flatpak:\x1b[0m flatpak install --user -y flathub {}",
+            app_id
+        );
+        println!();
+        let status = Command::new("flatpak")
+            .args(["install", "--user", "-y", "flathub", &app_id])
+            .status()?;
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
+        }
+        apply_xdg_overrides(&app_id);
+        println!(
+            "\x1b[32m✓\x1b[0m {} installed with XDG filesystem overrides applied.",
+            app_id
+        );
         return Ok(());
     }
 
@@ -482,7 +602,7 @@ pub fn search_and_install(query: &str) -> Result<()> {
     );
     println!();
 
-    // Execute the install command
+    // Execute the install command (brew, mise)
     let parts: Vec<&str> = chosen.install_cmd.split_whitespace().collect();
     if parts.is_empty() {
         return Ok(());

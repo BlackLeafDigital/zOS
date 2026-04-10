@@ -147,7 +147,13 @@ pub fn check_custom_updates() -> Result<Vec<String>> {
             continue;
         }
 
-        if let Ok((tag, _url)) = resolve_github_release(&pkg.github_repo, &pkg.asset_pattern) {
+        let Some(repo) = pkg.github_repo.as_deref() else {
+            continue;
+        };
+        let Some(pattern) = pkg.asset_pattern.as_deref() else {
+            continue;
+        };
+        if let Ok((tag, _url)) = resolve_github_release(repo, pattern) {
             updatable.push(format!("{} ({})", pkg.name, tag));
         }
     }
@@ -184,7 +190,9 @@ pub fn apply_custom_updates() -> Result<String> {
 /// Ensure flatpak/appimage overrides from custom-packages.json are applied
 /// to already-installed packages. Idempotent — safe to call on every update.
 pub fn ensure_custom_overrides() -> Result<()> {
-    use super::install::{load_custom_packages, slugify};
+    use super::install::{
+        apply_flatpak_overrides, apply_xdg_overrides, load_custom_packages, slugify,
+    };
 
     let packages = load_custom_packages();
     let installed_flatpaks = Command::new("flatpak")
@@ -203,11 +211,17 @@ pub fn ensure_custom_overrides() -> Result<()> {
                         .lines()
                         .any(|l| l.trim() == overrides.app_id)
                     {
-                        for (key, value) in &overrides.env {
-                            let env_arg = format!("--env={}={}", key, value);
-                            let _ = Command::new("flatpak")
-                                .args(["override", "--user", &env_arg, &overrides.app_id])
-                                .status();
+                        apply_xdg_overrides(&overrides.app_id);
+                        apply_flatpak_overrides(overrides);
+                    }
+                }
+            }
+            "flathub" => {
+                if let Some(app_id) = pkg.flathub_app_id.as_deref() {
+                    if installed_flatpaks.lines().any(|l| l.trim() == app_id) {
+                        apply_xdg_overrides(app_id);
+                        if let Some(overrides) = &pkg.flatpak_overrides {
+                            apply_flatpak_overrides(overrides);
                         }
                     }
                 }

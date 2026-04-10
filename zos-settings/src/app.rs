@@ -1,15 +1,12 @@
-// === app.rs — Root application component with sidebar navigation ===
+// === zos-settings — main application shell ===
 
-use relm4::adw;
-use relm4::adw::prelude::*;
-use relm4::gtk;
-use relm4::{ComponentParts, ComponentSender, SimpleComponent};
+use iced::widget::{button, column, container, row, text, Space};
+use iced::{Background, Element, Length, Subscription, Task, Theme};
 
 use crate::pages;
+use crate::theme;
 
-// --- Page enum ---
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
     Overview,
     Display,
@@ -23,7 +20,19 @@ pub enum Page {
 }
 
 impl Page {
-    fn label(self) -> &'static str {
+    pub const ALL: [Page; 9] = [
+        Page::Overview,
+        Page::Display,
+        Page::Audio,
+        Page::Appearance,
+        Page::Input,
+        Page::Network,
+        Page::Dock,
+        Page::Power,
+        Page::Boot,
+    ];
+
+    pub fn label(self) -> &'static str {
         match self {
             Page::Overview => "Overview",
             Page::Display => "Display",
@@ -36,218 +45,150 @@ impl Page {
             Page::Boot => "Boot",
         }
     }
-
-    fn icon(self) -> &'static str {
-        match self {
-            Page::Overview => "user-home-symbolic",
-            Page::Display => "video-display-symbolic",
-            Page::Audio => "audio-volume-high-symbolic",
-            Page::Appearance => "applications-graphics-symbolic",
-            Page::Input => "input-keyboard-symbolic",
-            Page::Network => "network-wireless-signal-excellent-symbolic",
-            Page::Dock => "go-down-symbolic",
-            Page::Power => "system-shutdown-symbolic",
-            Page::Boot => "drive-harddisk-symbolic",
-        }
-    }
-
-    fn stack_name(self) -> &'static str {
-        match self {
-            Page::Overview => "overview",
-            Page::Display => "display",
-            Page::Audio => "audio",
-            Page::Appearance => "appearance",
-            Page::Input => "input",
-            Page::Network => "network",
-            Page::Dock => "dock",
-            Page::Power => "power",
-            Page::Boot => "boot",
-        }
-    }
 }
 
-const ALL_PAGES: &[Page] = &[
-    Page::Overview,
-    Page::Display,
-    Page::Audio,
-    Page::Appearance,
-    Page::Input,
-    Page::Network,
-    Page::Dock,
-    Page::Power,
-    Page::Boot,
-];
-
-// --- App model ---
+#[derive(Debug, Clone)]
+pub enum Message {
+    SelectPage(Page),
+    Audio(pages::audio::Message),
+    Overview(pages::overview::Message),
+    Display(pages::display::Message),
+    Appearance(pages::appearance::Message),
+    Input(pages::input::Message),
+    Network(pages::network::Message),
+    Dock(pages::dock::Message),
+    Power(pages::power::Message),
+    Boot(pages::boot::Message),
+}
 
 pub struct App {
-    current_page: Page,
+    current: Page,
+    audio: pages::audio::AudioPage,
+    overview: pages::overview::OverviewPage,
+    display: pages::display::DisplayPage,
+    appearance: pages::appearance::AppearancePage,
+    input: pages::input::InputPage,
+    network: pages::network::NetworkPage,
+    dock: pages::dock::DockPage,
+    power: pages::power::PowerPage,
+    boot: pages::boot::BootPage,
 }
 
-#[derive(Debug)]
-pub enum AppMsg {
-    SelectPage(Page),
-}
-
-pub struct AppWidgets {
-    stack: gtk::Stack,
-}
-
-impl SimpleComponent for App {
-    type Init = ();
-    type Input = AppMsg;
-    type Output = ();
-    type Root = adw::ApplicationWindow;
-    type Widgets = AppWidgets;
-
-    fn init_root() -> Self::Root {
-        adw::ApplicationWindow::builder()
-            .title("zOS Settings")
-            .default_width(1100)
-            .default_height(600)
-            .build()
+impl App {
+    pub fn boot() -> Self {
+        Self {
+            current: Page::Overview,
+            audio: pages::audio::AudioPage::new(),
+            overview: pages::overview::OverviewPage::new(),
+            display: pages::display::DisplayPage::new(),
+            appearance: pages::appearance::AppearancePage::new(),
+            input: pages::input::InputPage::new(),
+            network: pages::network::NetworkPage::new(),
+            dock: pages::dock::DockPage::new(),
+            power: pages::power::PowerPage::new(),
+            boot: pages::boot::BootPage::new(),
+        }
     }
 
-    fn init(
-        _init: Self::Init,
-        root: Self::Root,
-        sender: ComponentSender<Self>,
-    ) -> ComponentParts<Self> {
-        // Force dark color scheme
-        let style_manager = adw::StyleManager::default();
-        style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+    pub fn title(&self) -> String {
+        format!("zOS Settings — {}", self.current.label())
+    }
 
-        let model = App {
-            current_page: Page::Overview,
+    pub fn theme(&self) -> Theme {
+        theme::zos_theme()
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::SelectPage(p) => {
+                self.current = p;
+                Task::none()
+            }
+            Message::Audio(m) => self.audio.update(m).map(Message::Audio),
+            Message::Overview(m) => self.overview.update(m).map(Message::Overview),
+            Message::Display(m) => self.display.update(m).map(Message::Display),
+            Message::Appearance(m) => self.appearance.update(m).map(Message::Appearance),
+            Message::Input(m) => self.input.update(m).map(Message::Input),
+            Message::Network(m) => self.network.update(m).map(Message::Network),
+            Message::Dock(m) => self.dock.update(m).map(Message::Dock),
+            Message::Power(m) => self.power.update(m).map(Message::Power),
+            Message::Boot(m) => self.boot.update(m).map(Message::Boot),
+        }
+    }
+
+    pub fn view(&self) -> Element<'_, Message> {
+        let content: Element<Message> = match self.current {
+            Page::Overview => self.overview.view().map(Message::Overview),
+            Page::Display => self.display.view().map(Message::Display),
+            Page::Audio => self.audio.view().map(Message::Audio),
+            Page::Appearance => self.appearance.view().map(Message::Appearance),
+            Page::Input => self.input.view().map(Message::Input),
+            Page::Network => self.network.view().map(Message::Network),
+            Page::Dock => self.dock.view().map(Message::Dock),
+            Page::Power => self.power.view().map(Message::Power),
+            Page::Boot => self.boot.view().map(Message::Boot),
         };
 
-        // --- Build sidebar ---
-        let sidebar_list = gtk::ListBox::builder()
-            .selection_mode(gtk::SelectionMode::Single)
-            .build();
-        sidebar_list.add_css_class("navigation-sidebar");
+        let sidebar = sidebar(self.current);
 
-        for page in ALL_PAGES {
-            let row_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(12)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(12)
-                .margin_end(12)
-                .build();
-
-            let icon = gtk::Image::from_icon_name(page.icon());
-            icon.set_pixel_size(24);
-            let label = gtk::Label::new(Some(page.label()));
-            row_box.append(&icon);
-            row_box.append(&label);
-
-            let list_row = gtk::ListBoxRow::builder().child(&row_box).build();
-            sidebar_list.append(&list_row);
-        }
-
-        // Select the first row
-        if let Some(first_row) = sidebar_list.row_at_index(0) {
-            sidebar_list.select_row(Some(&first_row));
-        }
-
-        let sidebar_scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .width_request(220)
-            .child(&sidebar_list)
-            .build();
-
-        // --- Build content stack ---
-        let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::SlideLeftRight)
-            .transition_duration(200)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
-
-        let overview_page = pages::overview::build();
-        stack.add_named(&overview_page, Some(Page::Overview.stack_name()));
-
-        let display_page = pages::display::build();
-        stack.add_named(&display_page, Some(Page::Display.stack_name()));
-
-        let audio_page = pages::audio::build();
-        stack.add_named(&audio_page, Some(Page::Audio.stack_name()));
-
-        let appearance_page = pages::appearance::build();
-        stack.add_named(&appearance_page, Some(Page::Appearance.stack_name()));
-
-        let input_page = pages::input::build();
-        stack.add_named(&input_page, Some(Page::Input.stack_name()));
-
-        let network_page = pages::network::build();
-        stack.add_named(&network_page, Some(Page::Network.stack_name()));
-
-        let dock_page = pages::dock::build();
-        stack.add_named(&dock_page, Some(Page::Dock.stack_name()));
-
-        let power_page = pages::power::build();
-        stack.add_named(&power_page, Some(Page::Power.stack_name()));
-
-        let boot_page = pages::boot::build();
-        stack.add_named(&boot_page, Some(Page::Boot.stack_name()));
-
-        stack.set_visible_child_name(Page::Overview.stack_name());
-
-        // --- Connect sidebar selection ---
-        let sender_clone = sender.clone();
-        sidebar_list.connect_row_selected(move |_, row| {
-            if let Some(row) = row {
-                let idx = row.index() as usize;
-                if let Some(&page) = ALL_PAGES.get(idx) {
-                    sender_clone.input(AppMsg::SelectPage(page));
-                }
-            }
-        });
-
-        // --- Layout ---
-        let content_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .build();
-
-        // Add separator between sidebar and content
-        let separator = gtk::Separator::new(gtk::Orientation::Vertical);
-
-        content_box.append(&sidebar_scroll);
-        content_box.append(&separator);
-        content_box.append(&stack);
-
-        // Wrap in a vertical box with header bar
-        let main_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .build();
-
-        let header = adw::HeaderBar::new();
-        main_box.append(&header);
-        main_box.append(&content_box);
-
-        root.set_content(Some(&main_box));
-
-        let widgets = AppWidgets {
-            stack: stack.clone(),
-        };
-
-        ComponentParts { model, widgets }
+        row![
+            sidebar,
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(24),
+        ]
+        .height(Length::Fill)
+        .into()
     }
+}
 
-    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
-        match msg {
-            AppMsg::SelectPage(page) => {
-                self.current_page = page;
-            }
-        }
+fn sidebar(current: Page) -> Element<'static, Message> {
+    let mut col = column![].spacing(4).padding(16).width(Length::Fixed(200.0));
+    col = col.push(text("zOS Settings").size(18).color(theme::TEXT));
+    col = col.push(Space::new().height(12));
+    for page in Page::ALL {
+        let is_active = page == current;
+        let label =
+            text(page.label())
+                .size(14)
+                .color(if is_active { theme::BASE } else { theme::TEXT });
+        let btn = button(label)
+            .on_press(Message::SelectPage(page))
+            .width(Length::Fill)
+            .style(move |_theme, status| sidebar_button_style(is_active, status));
+        col = col.push(btn);
     }
+    container(col)
+        .width(Length::Fixed(220.0))
+        .height(Length::Fill)
+        .style(|_theme| container::Style {
+            background: Some(theme::MANTLE.into()),
+            ..container::Style::default()
+        })
+        .into()
+}
 
-    fn update_view(&self, widgets: &mut Self::Widgets, _sender: ComponentSender<Self>) {
-        widgets
-            .stack
-            .set_visible_child_name(self.current_page.stack_name());
+fn sidebar_button_style(is_active: bool, status: button::Status) -> button::Style {
+    let base = if is_active {
+        Some(Background::Color(theme::BLUE))
+    } else {
+        match status {
+            button::Status::Hovered => Some(Background::Color(theme::SURFACE0)),
+            _ => None,
+        }
+    };
+    button::Style {
+        background: base,
+        text_color: if is_active { theme::BASE } else { theme::TEXT },
+        border: iced::Border {
+            radius: 8.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
