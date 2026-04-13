@@ -106,8 +106,8 @@ unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
 mv /tmp/cmdline-tools-extract/cmdline-tools /usr/lib/android-sdk/cmdline-tools/latest
 rm -rf /tmp/cmdline-tools.zip /tmp/cmdline-tools-extract
 
-yes | /usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager \
-    --sdk_root=/usr/lib/android-sdk --licenses >/dev/null
+yes 2>/dev/null | /usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager \
+    --sdk_root=/usr/lib/android-sdk --licenses >/dev/null || true
 /usr/lib/android-sdk/cmdline-tools/latest/bin/sdkmanager \
     --sdk_root=/usr/lib/android-sdk \
     "platform-tools" \

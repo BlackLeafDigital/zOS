@@ -3,17 +3,15 @@
     "name": "Snapmaker Orca",
     "description": "3D printing slicer by Snapmaker",
     "search_terms": ["orca", "orcaslicer", "snapmaker", "slicer", "3d"],
-    "install_type": "github-flatpak",
+    "install_type": "github-appimage",
     "github_repo": "Snapmaker/OrcaSlicer",
-    "asset_pattern": "flatpak*x86_64*.flatpak",
-    "flatpak_overrides": {
-      "app_id": "io.github.Snapmaker.Snapmaker_Orca",
-      "env": {
-        "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
-        "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
-        "MESA_LOADER_DRIVER_OVERRIDE": "zink",
-        "GBM_BACKEND": "dri"
-      }
+    "asset_pattern": "*Linux_AppImage_Ubuntu2404*.AppImage",
+    "env": {
+      "ZINK_DISABLE_OVERRIDE": "1",
+      "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
+      "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
+      "GDK_BACKEND": "x11",
+      "__GL_THREADED_OPTIMIZATIONS": "0"
     }
   },
   {
@@ -24,10 +22,11 @@
     "github_repo": "ratdoux/OrcaSlicer-FullSpectrum",
     "asset_pattern": "*AppImage*Ubuntu2404*.AppImage",
     "env": {
+      "ZINK_DISABLE_OVERRIDE": "1",
       "WEBKIT_DISABLE_COMPOSITING_MODE": "1",
       "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
-      "MESA_LOADER_DRIVER_OVERRIDE": "zink",
-      "GBM_BACKEND": "dri"
+      "GDK_BACKEND": "x11",
+      "__GL_THREADED_OPTIMIZATIONS": "0"
     }
   },
   {
