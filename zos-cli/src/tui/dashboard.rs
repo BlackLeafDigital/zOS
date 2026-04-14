@@ -116,8 +116,6 @@ fn render_keybinds(frame: &mut Frame, area: Rect) {
         Span::styled(" Migrate  ", theme::subtext_style()),
         Span::styled("[d]", theme::keybind_style()),
         Span::styled(" Doctor  ", theme::subtext_style()),
-        Span::styled("[u]", theme::keybind_style()),
-        Span::styled(" Update  ", theme::subtext_style()),
         Span::styled("[g]", theme::keybind_style()),
         Span::styled(" Grub  ", theme::subtext_style()),
         Span::styled("[s]", theme::keybind_style()),

@@ -1,7 +1,9 @@
 // === commands/install.rs — Search and install packages across sources ===
 
 use color_eyre::eyre::Result;
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, Clone)]
@@ -65,6 +67,64 @@ pub fn load_custom_packages() -> Vec<CustomPackage> {
     } else {
         Vec::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Installed-package manifest
+//
+// Tracks which custom packages (AppImage / github-flatpak / flathub) have been
+// installed via `zos install`, along with the release tag for github sources.
+// Consumed by `zos update` to decide what needs a refresh.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstalledEntry {
+    pub name: String,
+    pub install_type: String,
+    pub tag: Option<String>,
+    pub installed_at: String,
+}
+
+pub fn manifest_path() -> PathBuf {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+            format!("{home}/.local/share")
+        });
+    let dir = PathBuf::from(base).join("zos");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("custom-installed.json")
+}
+
+pub fn load_manifest() -> HashMap<String, InstalledEntry> {
+    let path = manifest_path();
+    match std::fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+fn save_manifest(map: &HashMap<String, InstalledEntry>) {
+    let path = manifest_path();
+    if let Ok(data) = serde_json::to_string_pretty(map) {
+        let _ = std::fs::write(path, data);
+    }
+}
+
+pub(crate) fn record_install(pkg: &CustomPackage, tag: Option<&str>) {
+    let mut map = load_manifest();
+    map.insert(
+        slugify(&pkg.name),
+        InstalledEntry {
+            name: pkg.name.clone(),
+            install_type: pkg.install_type.clone(),
+            tag: tag.map(|s| s.to_string()),
+            installed_at: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+    save_manifest(&map);
 }
 
 fn search_custom(query: &str, packages: &[CustomPackage]) -> Vec<PackageResult> {
@@ -269,6 +329,7 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
                 apply_xdg_overrides(&overrides.app_id);
                 apply_flatpak_overrides(overrides);
             }
+            record_install(pkg, Some(&tag));
             println!("{} {} installed.", pkg.name, tag);
         }
         "github-appimage" => {
@@ -314,6 +375,7 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
                 pkg.name, exec_line, pkg.description
             );
             let _ = std::fs::write(format!("{desktop_dir}/{slug}.desktop"), desktop_content);
+            record_install(pkg, Some(&tag));
             println!("{} {} installed.", pkg.name, tag);
         }
         "flathub" => {
@@ -333,6 +395,7 @@ pub fn install_custom_package(pkg: &CustomPackage) -> Result<()> {
             if let Some(overrides) = &pkg.flatpak_overrides {
                 apply_flatpak_overrides(overrides);
             }
+            record_install(pkg, None);
             println!(
                 "\x1b[32m✓\x1b[0m {} installed with XDG filesystem overrides applied.",
                 pkg.name
@@ -617,7 +680,7 @@ pub fn search_and_install(query: &str) -> Result<()> {
     Ok(())
 }
 
-fn find_brew() -> Option<String> {
+pub(crate) fn find_brew() -> Option<String> {
     let paths = [
         format!(
             "{}/.linuxbrew/bin/brew",
@@ -628,7 +691,7 @@ fn find_brew() -> Option<String> {
     paths.into_iter().find(|p| std::path::Path::new(p).exists())
 }
 
-fn find_mise() -> Option<String> {
+pub(crate) fn find_mise() -> Option<String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let paths = [
         format!("{}/.local/bin/mise", home),

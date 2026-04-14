@@ -35,8 +35,15 @@ enum Commands {
     Grub,
     /// Run first-login setup steps
     Setup,
-    /// Check and apply OS updates
-    Update,
+    /// Check and apply updates across OS, Flatpak, custom packages, Brew, and mise
+    Update {
+        /// Only check for available updates; don't apply
+        #[arg(long)]
+        check: bool,
+        /// Restrict to one source: os | flatpak | custom | brew | mise
+        #[arg(long, value_name = "SOURCE")]
+        only: Option<String>,
+    },
     /// Search for packages across Flatpak, Brew, and mise
     Search {
         /// Package name to search for
@@ -99,7 +106,10 @@ fn main() -> Result<()> {
             }
             tui::run(tui::View::Setup)
         }
-        Some(Commands::Update) => tui::run(tui::View::Update),
+        Some(Commands::Update { check, only }) => match only {
+            Some(s) => zos_core::commands::update::run_one(&s, check),
+            None => zos_core::commands::update::run_all(check),
+        },
         Some(Commands::Search { name }) => zos_core::commands::install::search_and_print(&name),
         Some(Commands::Install { name }) => zos_core::commands::install::search_and_install(&name),
         Some(Commands::RebootToWindows) => zos_core::commands::grub::reboot_to_windows_elevated(),

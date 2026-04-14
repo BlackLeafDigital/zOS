@@ -102,89 +102,85 @@ pub fn apply_flatpak_updates() -> Result<std::process::Output> {
 // Custom package updates (GitHub releases)
 // ---------------------------------------------------------------------------
 
-/// Check for updates to custom (GitHub-distributed) packages.
-/// Returns names of packages that have newer versions available.
-pub fn check_custom_updates() -> Result<Vec<String>> {
-    use super::install::{load_custom_packages, resolve_github_release};
+/// A pending update for a custom package — tag we have vs. tag upstream has.
+#[derive(Debug, Clone)]
+pub struct CustomUpdate {
+    pub name: String,
+    pub slug: String,
+    pub install_type: String,
+    pub installed_tag: String,
+    pub latest_tag: String,
+}
+
+/// Check which custom packages have a newer GitHub release than what's recorded
+/// in `~/.local/share/zos/custom-installed.json`. Flathub entries are skipped
+/// here — `flatpak update` covers them.
+pub fn check_custom_updates() -> Result<Vec<CustomUpdate>> {
+    use super::install::{load_custom_packages, load_manifest, resolve_github_release, slugify};
 
     let packages = load_custom_packages();
+    let manifest = load_manifest();
     let mut updatable = Vec::new();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-
-    // Get installed flatpak list for flatpak-type packages
-    let installed_flatpaks = Command::new("flatpak")
-        .args(["list", "--user", "--columns=application,version"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
 
     for pkg in &packages {
-        let is_installed = match pkg.install_type.as_str() {
-            "github-flatpak" => {
-                let pkg_lower = pkg.name.to_lowercase();
-                installed_flatpaks
-                    .lines()
-                    .any(|l| l.to_lowercase().contains(&pkg_lower))
-            }
-            "github-appimage" => {
-                let slug = pkg
-                    .name
-                    .to_lowercase()
-                    .chars()
-                    .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                    .collect::<String>()
-                    .split('-')
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("-");
-                std::path::Path::new(&format!("{home}/.local/bin/{slug}")).exists()
-            }
-            _ => false,
-        };
-
-        if !is_installed {
+        if pkg.install_type == "flathub" {
             continue;
         }
+        let slug = slugify(&pkg.name);
+        let Some(entry) = manifest.get(&slug) else {
+            continue; // not installed via zos install
+        };
+        let installed_tag = entry.tag.clone().unwrap_or_default();
 
-        let Some(repo) = pkg.github_repo.as_deref() else {
+        let (Some(repo), Some(pattern)) = (pkg.github_repo.as_deref(), pkg.asset_pattern.as_deref())
+        else {
             continue;
         };
-        let Some(pattern) = pkg.asset_pattern.as_deref() else {
-            continue;
+
+        let latest_tag = match resolve_github_release(repo, pattern) {
+            Ok((tag, _)) => tag,
+            Err(_) => continue, // network / API issue; skip silently
         };
-        if let Ok((tag, _url)) = resolve_github_release(repo, pattern) {
-            updatable.push(format!("{} ({})", pkg.name, tag));
+
+        if latest_tag != installed_tag {
+            updatable.push(CustomUpdate {
+                name: pkg.name.clone(),
+                slug,
+                install_type: pkg.install_type.clone(),
+                installed_tag,
+                latest_tag,
+            });
         }
     }
 
     Ok(updatable)
 }
 
-/// Apply updates to custom packages by re-installing from latest GitHub release.
-pub fn apply_custom_updates() -> Result<String> {
-    use super::install::{install_custom_package, load_custom_packages};
+/// Apply updates to custom packages: re-install any `github-appimage` /
+/// `github-flatpak` entry whose manifest tag differs from the latest GitHub
+/// release. `flathub` entries are left to `flatpak update`.
+pub fn apply_custom_updates() -> Result<Vec<String>> {
+    use super::install::{install_custom_package, load_custom_packages, slugify};
+
+    let pending = check_custom_updates()?;
+    if pending.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let packages = load_custom_packages();
     let mut updated = Vec::new();
 
-    for pkg in &packages {
-        if pkg.install_type != "github-flatpak" {
+    for up in &pending {
+        let Some(pkg) = packages.iter().find(|p| slugify(&p.name) == up.slug) else {
             continue;
-        }
+        };
         match install_custom_package(pkg) {
-            Ok(()) => updated.push(pkg.name.clone()),
-            Err(e) => {
-                eprintln!("Failed to update {}: {}", pkg.name, e);
-            }
+            Ok(()) => updated.push(format!("{} {} → {}", up.name, up.installed_tag, up.latest_tag)),
+            Err(e) => eprintln!("Failed to update {}: {}", pkg.name, e),
         }
     }
 
-    if updated.is_empty() {
-        Ok("No custom packages to update.".into())
-    } else {
-        Ok(format!("Updated: {}", updated.join(", ")))
-    }
+    Ok(updated)
 }
 
 /// Ensure flatpak/appimage overrides from custom-packages.json are applied
@@ -277,4 +273,232 @@ fn get_current_image() -> String {
         }
         _ => "unknown".into(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Brew / mise
+// ---------------------------------------------------------------------------
+
+/// Run `brew update && brew upgrade` with live output. No-op if brew isn't
+/// installed.
+pub fn update_brew() -> Result<()> {
+    let Some(brew) = super::install::find_brew() else {
+        println!("brew not installed — skipping.");
+        return Ok(());
+    };
+    let _ = Command::new(&brew).arg("update").status();
+    let _ = Command::new(&brew).arg("upgrade").status();
+    Ok(())
+}
+
+/// Run `mise self-update -y && mise upgrade` with live output. No-op if mise
+/// isn't installed.
+pub fn update_mise() -> Result<()> {
+    let Some(mise) = super::install::find_mise() else {
+        println!("mise not installed — skipping.");
+        return Ok(());
+    };
+    let _ = Command::new(&mise).args(["self-update", "-y"]).status();
+    let _ = Command::new(&mise).arg("upgrade").status();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration
+// ---------------------------------------------------------------------------
+
+fn header(name: &str) {
+    println!("\x1b[1;35m== {name} ==\x1b[0m");
+}
+
+/// Update every source zOS manages: OS (bootc), Flatpak, custom packages
+/// (AppImage + Flathub from custom-packages.json), Brew, mise. `check_only`
+/// limits to diagnostics — no system changes.
+pub fn run_all(check_only: bool) -> Result<()> {
+    let mut os_applied = false;
+
+    header("OS");
+    match check_for_updates() {
+        Ok(status) => {
+            println!("Current image: {}", status.current_image);
+            if status.pending {
+                if let Some(d) = &status.pending_details {
+                    println!("{d}");
+                }
+                if !check_only {
+                    println!("Applying bootc upgrade...");
+                    match apply_update() {
+                        Ok(out) if out.status.success() => {
+                            let s = String::from_utf8_lossy(&out.stdout);
+                            if !s.trim().is_empty() {
+                                println!("{}", s.trim());
+                            }
+                            os_applied = true;
+                        }
+                        Ok(out) => eprintln!(
+                            "bootc upgrade failed: {}",
+                            String::from_utf8_lossy(&out.stderr).trim()
+                        ),
+                        Err(e) => eprintln!("bootc upgrade error: {e}"),
+                    }
+                }
+            } else {
+                println!("Up to date.");
+            }
+        }
+        Err(e) => eprintln!("OS check failed: {e}"),
+    }
+    println!();
+
+    header("Flatpak");
+    match check_flatpak_updates() {
+        Ok(updates) if updates.is_empty() => println!("All flatpaks up to date."),
+        Ok(updates) => {
+            println!("{} update(s) pending:", updates.len());
+            for u in &updates {
+                println!("  {u}");
+            }
+            if !check_only {
+                let _ = Command::new("flatpak").args(["update", "-y"]).status();
+                let _ = ensure_custom_overrides();
+            }
+        }
+        Err(e) => eprintln!("Flatpak check failed: {e}"),
+    }
+    println!();
+
+    header("Custom packages");
+    match check_custom_updates() {
+        Ok(pending) if pending.is_empty() => println!("All custom packages up to date."),
+        Ok(pending) => {
+            for p in &pending {
+                println!("  {} {} → {}", p.name, p.installed_tag, p.latest_tag);
+            }
+            if !check_only {
+                match apply_custom_updates() {
+                    Ok(updated) => {
+                        for u in &updated {
+                            println!("  ✓ {u}");
+                        }
+                    }
+                    Err(e) => eprintln!("Custom update error: {e}"),
+                }
+            }
+        }
+        Err(e) => eprintln!("Custom check failed: {e}"),
+    }
+    println!();
+
+    header("Brew");
+    if check_only {
+        if super::install::find_brew().is_some() {
+            println!("brew installed — run 'zos update --only brew' to upgrade.");
+        } else {
+            println!("brew not installed.");
+        }
+    } else {
+        let _ = update_brew();
+    }
+    println!();
+
+    header("mise");
+    if check_only {
+        if super::install::find_mise().is_some() {
+            println!("mise installed — run 'zos update --only mise' to upgrade.");
+        } else {
+            println!("mise not installed.");
+        }
+    } else {
+        let _ = update_mise();
+    }
+    println!();
+
+    if os_applied {
+        println!("{}", reboot_message());
+    }
+
+    Ok(())
+}
+
+/// Run a single update source. Valid sources: os | flatpak | custom | brew | mise.
+pub fn run_one(source: &str, check_only: bool) -> Result<()> {
+    match source {
+        "os" => {
+            let status = check_for_updates()?;
+            println!("Current image: {}", status.current_image);
+            if !status.pending {
+                println!("Up to date.");
+                return Ok(());
+            }
+            if let Some(d) = &status.pending_details {
+                println!("{d}");
+            }
+            if !check_only {
+                let out = apply_update()?;
+                if out.status.success() {
+                    println!("{}", reboot_message());
+                } else {
+                    eprintln!(
+                        "bootc upgrade failed: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    );
+                }
+            }
+        }
+        "flatpak" => {
+            let updates = check_flatpak_updates()?;
+            if updates.is_empty() {
+                println!("All flatpaks up to date.");
+            } else if check_only {
+                for u in &updates {
+                    println!("  {u}");
+                }
+            } else {
+                let _ = Command::new("flatpak").args(["update", "-y"]).status();
+                let _ = ensure_custom_overrides();
+            }
+        }
+        "custom" => {
+            let pending = check_custom_updates()?;
+            if pending.is_empty() {
+                println!("All custom packages up to date.");
+            } else if check_only {
+                for p in &pending {
+                    println!("  {} {} → {}", p.name, p.installed_tag, p.latest_tag);
+                }
+            } else {
+                let updated = apply_custom_updates()?;
+                for u in &updated {
+                    println!("  ✓ {u}");
+                }
+            }
+        }
+        "brew" => {
+            if check_only {
+                if super::install::find_brew().is_some() {
+                    println!("brew installed.");
+                } else {
+                    println!("brew not installed.");
+                }
+            } else {
+                update_brew()?;
+            }
+        }
+        "mise" => {
+            if check_only {
+                if super::install::find_mise().is_some() {
+                    println!("mise installed.");
+                } else {
+                    println!("mise not installed.");
+                }
+            } else {
+                update_mise()?;
+            }
+        }
+        other => {
+            eprintln!("Unknown source '{other}'. Valid: os | flatpak | custom | brew | mise");
+            std::process::exit(2);
+        }
+    }
+    Ok(())
 }
