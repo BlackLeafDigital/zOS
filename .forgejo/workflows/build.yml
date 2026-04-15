@@ -93,6 +93,8 @@ jobs:
           BASE_DIGEST=$(sudo buildah inspect --format '{{.FromImageDigest}}' docker://${{ matrix.base_image }} 2>/dev/null || echo "unknown")
           sudo buildah build \
             -f Containerfile \
+            --layers \
+            --cache-from docker://${{ env.IMAGE_REGISTRY }}/${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} \
             --build-arg BASE_IMAGE=${{ matrix.base_image }} \
             --build-arg GH_TOKEN=${{ secrets.GH_ACCESS_TOKEN }} \
             -t ${{ matrix.image_name }}:${{ env.DEFAULT_TAG }} \

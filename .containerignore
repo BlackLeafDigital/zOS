@@ -1,0 +1,14 @@
+target/
+output/
+_build_*
+_build-*
+.git/
+.github/
+.forgejo/
+.vscode/
+.idea/
+*.qcow2
+*.iso
+*.raw
+.venv/
+node_modules/

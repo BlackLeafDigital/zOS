@@ -2,9 +2,8 @@
 ARG BASE_IMAGE="ghcr.io/ublue-os/bazzite:stable"
 ARG GH_TOKEN=""
 
-# Build context stage - scripts are mounted, not copied into final image
-FROM scratch AS ctx
-COPY build_files /
+# Rust sources context - isolated so script edits don't invalidate the Rust build layer
+FROM scratch AS rust-ctx
 COPY Cargo.toml /Cargo.toml
 COPY Cargo.lock /Cargo.lock
 COPY zos-core /zos-core
@@ -13,11 +12,15 @@ COPY zos-settings /zos-settings
 COPY zos-dock /zos-dock
 COPY zos-daemon /zos-daemon
 
+# Build scripts + system_files context - isolated so Rust edits don't invalidate script layers
+FROM scratch AS build-ctx
+COPY build_files /
+
 FROM ${BASE_IMAGE}
 
 ### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon)
 ARG GH_TOKEN
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git && \
@@ -48,9 +51,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)
+# Source cloned from upstream; no ctx mount needed
 ARG GH_TOKEN
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache \
+RUN --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
     dnf5 install -y rust cargo gtk4-devel git && \
     export HOME=/tmp && \
@@ -61,15 +64,40 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/regreet /usr/bin/regreet
 
 ### MODIFICATIONS
+# Four separate RUNs -> four independent OCI layers.
+# Editing a single script only invalidates its own layer (and any after it).
 ARG GH_TOKEN
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+
+# Layer: core system packages, fonts, services
+RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
     export GITHUB_TOKEN="${GH_TOKEN}" && \
-    /ctx/build.sh && \
-    /ctx/scripts/install-hyprland.sh && \
-    /ctx/scripts/install-dev-tools.sh && \
+    /ctx/build.sh
+
+# Layer: Hyprland + compositor ecosystem
+RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    export GITHUB_TOKEN="${GH_TOKEN}" && \
+    /ctx/scripts/install-hyprland.sh
+
+# Layer: developer toolchain (largest - compilers, -devel headers, Android SDK, CUDA)
+RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    export GITHUB_TOKEN="${GH_TOKEN}" && \
+    /ctx/scripts/install-dev-tools.sh
+
+# Layer: user default configs deployed to /etc/skel
+RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    export GITHUB_TOKEN="${GH_TOKEN}" && \
     /ctx/scripts/install-user-configs.sh
 
 ### LINTING

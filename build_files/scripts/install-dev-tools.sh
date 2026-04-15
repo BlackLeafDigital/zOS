@@ -22,6 +22,8 @@ dnf5 install -y \
     llvm \
     llvm-devel \
     clang-devel \
+    musl-gcc \
+    musl-libc-static \
     rust \
     cargo \
     clippy \
