@@ -255,4 +255,3 @@ fn render_title_bar(frame: &mut Frame, area: Rect, current: View) {
 
     frame.render_widget(Paragraph::new(title).block(block), area);
 }
-

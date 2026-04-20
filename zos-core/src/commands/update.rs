@@ -132,7 +132,8 @@ pub fn check_custom_updates() -> Result<Vec<CustomUpdate>> {
         };
         let installed_tag = entry.tag.clone().unwrap_or_default();
 
-        let (Some(repo), Some(pattern)) = (pkg.github_repo.as_deref(), pkg.asset_pattern.as_deref())
+        let (Some(repo), Some(pattern)) =
+            (pkg.github_repo.as_deref(), pkg.asset_pattern.as_deref())
         else {
             continue;
         };
@@ -175,7 +176,10 @@ pub fn apply_custom_updates() -> Result<Vec<String>> {
             continue;
         };
         match install_custom_package(pkg) {
-            Ok(()) => updated.push(format!("{} {} → {}", up.name, up.installed_tag, up.latest_tag)),
+            Ok(()) => updated.push(format!(
+                "{} {} → {}",
+                up.name, up.installed_tag, up.latest_tag
+            )),
             Err(e) => eprintln!("Failed to update {}: {}", pkg.name, e),
         }
     }

@@ -957,18 +957,19 @@ pub fn subscription(dock: &Dock) -> Subscription<Message> {
             .iter()
             .any(|item| item.is_focused(&dock.active_address));
 
-    // When animating, tick at ~60fps for smooth spring physics.
-    if any_animating
+    // Tick at ~30fps during animations or while a focused item needs its
+    // rainbow indicator updated. 60fps iced/wgpu/Vulkan + Hyprland layer
+    // recomposite spiked the compositor on every app-launch (the spring takes
+    // ~1s to settle). 30fps is visually indistinguishable for this surface.
+    // `has_focused` already gates on `!dock.hidden`; animation conditions do
+    // not, so springs still settle correctly when the dock is hidden.
+    let has_pending_animation = any_animating
         || dock.slide_offset.has_energy()
         || dock.show_timer.is_some()
         || dock.hide_timer.is_some()
-        || dock.minimize_reveal_timer.is_some()
-    {
-        subs.push(
-            iced::time::every(Duration::from_millis(16)).map(|_| Message::Tick(Instant::now())),
-        );
-    } else if has_focused {
-        // Slower tick for rainbow indicator animation (~30fps).
+        || dock.minimize_reveal_timer.is_some();
+
+    if has_pending_animation || has_focused {
         subs.push(
             iced::time::every(Duration::from_millis(33)).map(|_| Message::Tick(Instant::now())),
         );
