@@ -83,6 +83,15 @@ filesystems=home;
 sockets=system-bus;session-bus;
 FLATPAK_EOF
 
+# Global Flatpak env — make every Electron-based Flatpak (Spotify, Discord,
+# Slack, VS Code, ...) use native Wayland instead of XWayland. On NVIDIA
+# this avoids the XWayland GLX path which pins CPU/GPU for trivial UI work.
+# Ignored by non-Electron apps, so safe as a global default.
+cat > /var/lib/flatpak/overrides/global << 'FLATPAK_EOF'
+[Environment]
+ELECTRON_OZONE_PLATFORM_HINT=wayland
+FLATPAK_EOF
+
 # --- System limits (nofile, nproc, memlock, core) ---
 mkdir -p /etc/security/limits.d
 cp /ctx/system_files/etc/security/limits.d/99-zos.conf /etc/security/limits.d/
