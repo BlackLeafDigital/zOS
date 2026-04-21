@@ -31,6 +31,9 @@ pub enum Message {
     RebootToWindows,
     /// User confirmed reboot to Windows.
     ConfirmReboot,
+    /// Async result of attempting the reboot — only fires on failure
+    /// (on success the machine is already rebooting).
+    RebootFailed(String),
     /// User cancelled reboot confirmation.
     CancelReboot,
     /// Refresh GRUB status from disk.
@@ -124,7 +127,21 @@ impl BootPage {
             }
             Message::ConfirmReboot => {
                 self.confirming_reboot = false;
-                power::reboot_to_windows();
+                self.status_message = None;
+                Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(power::reboot_to_windows)
+                            .await
+                            .unwrap_or_else(|e| Err(format!("Internal error: {}", e)))
+                    },
+                    |result| match result {
+                        Ok(()) => Message::Refresh,
+                        Err(e) => Message::RebootFailed(e),
+                    },
+                )
+            }
+            Message::RebootFailed(msg) => {
+                self.status_message = Some(format!("Failed: {}", msg));
                 Task::none()
             }
             Message::CancelReboot => {
