@@ -139,6 +139,10 @@ LIQUIDCTL_URL="https://github.com/liquidctl/liquidctl"
 if [ -n "${GITHUB_TOKEN:-}" ]; then LIQUIDCTL_URL="https://${GITHUB_TOKEN}@github.com/liquidctl/liquidctl"; fi
 pip install --break-system-packages "git+${LIQUIDCTL_URL}#egg=liquidctl" || true
 
+# --- Emergency recovery: Magic SysRq ---
+# Enables Alt+SysRq+REISUB as a safe forced-reboot when userspace freezes.
+cp /ctx/system_files/usr/lib/sysctl.d/99-zos-sysrq.conf /usr/lib/sysctl.d/
+
 # --- Enable services ---
 systemctl enable podman.socket
 systemctl enable sshd
