@@ -27,6 +27,10 @@ build-nvidia:
         -t zos-nvidia:{{default_tag}} \
         .
 
+# Build the zos-wm compositor locally with the udev+xwayland feature set (matches image build)
+build-wm-local:
+    cargo build --release -p zos-wm --features udev,xwayland
+
 # Copy Docker image into podman/containers storage so BIB can access it
 _load-image:
     docker run \
@@ -140,6 +144,13 @@ dev-release:
 # Run zos CLI TUI
 dev-cli:
     cargo run -p zos
+
+# Run zos-wm compositor in nested winit mode (dev iteration)
+# Filters the NVIDIA+winit EGL_BAD_SURFACE cosmetic log that fires once on startup.
+dev-wm:
+    #!/usr/bin/env bash
+    : "${RUST_LOG:=info,smithay::backend::egl::ffi=off}"
+    RUST_LOG="$RUST_LOG" cargo run -p zos-wm -- --winit
 
 # Check all crates compile
 check:

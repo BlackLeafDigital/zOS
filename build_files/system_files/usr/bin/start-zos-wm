@@ -1,0 +1,41 @@
+#!/bin/sh
+# Launches zos-wm in TTY/udev mode from a logind seat.
+# Invoked by greetd after user picks the "zOS (zos-wm)" session.
+set -eu
+
+# --- Wayland identity
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=zos-wm
+export XDG_SESSION_DESKTOP=zos-wm
+
+# --- Toolkit hints
+export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+export GDK_BACKEND=wayland
+export MOZ_ENABLE_WAYLAND=1
+export _JAVA_AWT_WM_NONREPARENTING=1
+export SDL_VIDEODRIVER=wayland
+export CLUTTER_BACKEND=wayland
+
+# --- Cursor (Smithay's xcursor crate honors these)
+export XCURSOR_THEME="${XCURSOR_THEME:-Adwaita}"
+export XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
+
+# --- NVIDIA / GBM hygiene (per phase-2-c)
+# zos-wm strips GBM_BACKEND in main.rs already, but unset here too
+# so nothing leaks to its forked clients.
+unset GBM_BACKEND
+unset AQ_DRM_DEVICES
+unset __GLX_VENDOR_LIBRARY_NAME
+unset __EGL_VENDOR_LIBRARY_FILENAMES
+
+# --- Optional: pin render device to NVIDIA (until config support lands)
+# Uncomment to override auto-detect.
+# export ZOS_RENDER_DEVICE=/dev/dri/by-path/pci-0000:01:00.0-card
+
+# --- Logging
+export RUST_LOG="${RUST_LOG:-info,smithay=info}"
+export RUST_BACKTRACE=1
+
+# --- Hand off to compositor. exec, not background.
+exec /usr/bin/zos-wm --tty-udev

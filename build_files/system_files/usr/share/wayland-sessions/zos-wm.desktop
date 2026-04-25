@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=zOS (zos-wm)
+Comment=zOS native Wayland compositor
+Exec=/usr/bin/start-zos-wm
+Type=Application
+DesktopNames=zos-wm

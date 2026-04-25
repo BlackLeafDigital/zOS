@@ -11,6 +11,7 @@ COPY zos-cli /zos-cli
 COPY zos-settings /zos-settings
 COPY zos-dock /zos-dock
 COPY zos-daemon /zos-daemon
+COPY zos-wm /zos-wm
 
 # Build scripts + system_files context - isolated so Rust edits don't invalidate script layers
 FROM scratch AS build-ctx
@@ -18,12 +19,12 @@ COPY build_files /
 
 FROM ${BASE_IMAGE}
 
-### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon)
+### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon + zos-wm)
 ARG GH_TOKEN
 RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git libseat-devel mingw64-gcc mingw64-binutils mingw64-headers mingw64-crt && \
     dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel && \
     export HOME=/tmp && \
     if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
@@ -48,6 +49,10 @@ RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/zos-settings /usr/bin/zos-settings && \
     cp /tmp/cargo-target/release/zos-dock /usr/bin/zos-dock && \
     cp /tmp/cargo-target/release/zos-daemon /usr/bin/zos-daemon && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
+    cargo build --release -p zos-wm --features udev,xwayland && \
+    cp /tmp/cargo-target/release/zos-wm /usr/bin/zos-wm && \
+    test -x /usr/bin/zos-wm && \
     dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)

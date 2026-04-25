@@ -18,6 +18,14 @@ gh_clone() {
 # Hyprland Installation
 # Optional tiling WM session alongside KDE Plasma
 # =============================================================================
+#
+# DO NOT REMOVE hyprland / hyprpanel / hyprshell / wlogout / nwg-displays /
+# hypridle / hyprlock / hyprpaper / hyprpolkitagent until the zos-wm + zos-ui
+# rewrite is complete and Phase 8 of the build plan ships
+# (~/.claude/plans/hey-how-do-i-jiggly-balloon.md).
+# These remain the production daily-driver compositor + shell stack while the
+# Rust replacements are in active development.
+# =============================================================================
 
 # --- Hyprland COPR (retired from Fedora 43) ---
 dnf5 copr enable -y sdegler/hyprland

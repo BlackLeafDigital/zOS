@@ -138,6 +138,12 @@ fi
 cp /ctx/system_files/usr/bin/zos-skel-sync /usr/bin/zos-skel-sync
 chmod +x /usr/bin/zos-skel-sync
 
+# --- zos-wm wayland session entry + launcher ---
+cp /ctx/system_files/usr/share/wayland-sessions/zos-wm.desktop \
+   /usr/share/wayland-sessions/zos-wm.desktop
+cp /ctx/system_files/usr/bin/start-zos-wm /usr/bin/start-zos-wm
+chmod +x /usr/bin/start-zos-wm
+
 # --- Legacy scripts (kept for compatibility, absorbed by zos) ---
 cp /ctx/scripts/zos-setup.sh /usr/bin/zos-setup
 chmod +x /usr/bin/zos-setup
