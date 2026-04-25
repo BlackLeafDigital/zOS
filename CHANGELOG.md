@@ -360,3 +360,66 @@ The wayland-sessions entry + start-zos-wm launcher landed in Phase 2 already, so
 Workspace: 12 crates. Total commits this session: 7.
 
 ---
+
+## 2026-04-25 (continued) — second-half session
+
+8 more commits shipping visible features. Tests across workspace: zos-ui 15/15, zos-wm 33/33.
+
+### Phase 4 visible animations + shader (commits 03fffed, d23a364, then P4-V3)
+- **Render-path rewrite (P4-V1)**: `output_elements` walks `Workspace::iter_z_order().rev()` manually, wraps each `WindowRenderElement` in `RelocateRenderElement::from_element` with combined offset (workspace + per-window) and combined alpha. Layer-shell rendering kept separate via `layer_map_for_output`. New `OutputRenderElements::AnimatedWindow` and `LayerSurface` variants. `udev.rs` reschedules every frame while `state.any_animating()`.
+- **Rounded-corners shader (P4-V2 + P4-V3)**: GLSL fragment shader using smithay's v_coords + size uniforms with smoothstep AA. `RoundedCornersEffect::new(&mut GlesRenderer)` compiles via `compile_custom_pixel_shader`. Wired at backend init in udev.rs (per primary GPU) and winit.rs. Stored on BackendData. `AnvilState.corner_radius: f32 = 8.0`. Per-window `PixelShaderElement` push DEFERRED (PixelShaderElement only impls `RenderElement<GlesRenderer>`, not MultiRenderer; documented in render.rs TODO with two resolution paths).
+
+### Phase 6 shell apps — full implementations
+- **zos-power (commit 03fffed)**: 4-button centered popup. `iced_layershell::application(...)` builder + `#[to_layer_message]`. Lock/Logout/Reboot/Shutdown 2x2 grid. Reboot chevron expands "Reboot to Windows" submenu via `zos_core::commands::grub::reboot_to_windows_elevated`. Esc dismiss.
+- **zos-panel (commits 874c68d + d23a364)**: 32px top bar. Modules: workspaces (click-to-switch via Compositor trait), active-window-title (truncated at char boundary), HH:MM clock, audio (pactl), network (nmcli), battery (sysfs). Tick at 1s.
+- **zos-monitors (commit 874c68d)**: Regular iced window. Per-monitor card showing resolution/refresh/scale/focused. "Apply" writes `~/.config/hypr/monitors.conf`. "Refresh" re-runs Compositor::detect.
+- **zos-notify toast (commit d23f8dd)**: Dual-runtime — dedicated OS thread for DBus daemon, main thread for iced layer-shell. mpsc channel. Top-right anchored toasts, click-to-dismiss + auto-dismiss respecting expire_timeout. 360×84px Catppuccin cards, max 4 visible.
+
+### IPC ↔ AnvilState (commit 874c68d)
+- `state.rs::start_ipc_server`: builds calloop channel + spawns IpcServer with closure forwarding via channel + awaiting oneshot.
+- `state.rs::handle_ipc_request`: real handler running on compositor thread. Workspaces/Windows/Monitors/ActiveWindow/SwitchToWorkspace/CloseFocused/Version implemented. Class/title via with_states + XdgToplevelSurfaceData.
+- udev.rs::run_udev + winit.rs::run_winit: call start_ipc_server() right after start_xwayland(). _ipc_server held for life of main loop.
+
+### zos-core Hyprland JSON parsing (commit f399e33)
+- 6 unit tests, +282 lines in hyprland.rs.
+- workspaces() / windows() / monitors() / active_window() now parse hyprctl -j output via serde_json. DTO structs with #[serde(default)] for forward-compat.
+- Cross-references for active workspace per monitor + focused window via /activewindow address comparison.
+- Resolves monitor name from numeric or string monitor field.
+- zos-panel and zos-monitors now populate with real data.
+
+### Framework refactors (commits d23f8dd, P4-V3)
+- **zos-dock onto zos-ui** (-17 lines): replaced 6 raw Color literals with theme constants. 4 direct refs + 2 FRU-syntax alpha variants. No behavior/visual change.
+- **zos-settings onto zos-ui** (-32 lines): `theme.rs` collapsed to 7-line re-export shim of `zos_ui::theme`. 9 internal page files compile unchanged via `crate::theme::*` paths. Validates the framework integrates with the largest existing zOS app.
+
+### Phase 5 timer hooks (P5-W5)
+- New `signal/timer.rs` (441 lines, 5 tests).
+- `use_interval(every, fn) -> Interval` (Drop cancels).
+- `use_timeout(after, fn) -> Timeout` (Drop cancels if not yet fired).
+- `tick_timers()` advances all from frame loop.
+- Pure std, single-threaded matching existing Signal/Effect model.
+- Test-only synthetic clock via `tick_at(Instant)`.
+
+### Status snapshot — end of 2026-04-25 (combined)
+
+| Phase | Status |
+|---|---|
+| 0 | Shipped pre-session |
+| 1 | Done |
+| 2 | Done |
+| 3 | MVP done + polish (modal, always-on-top, workspace tiling toggle) |
+| 4 | Animations infrastructure + drivers + visible (RelocateRenderElement integrated). Rounded-corners shader compiled at backend init; per-window apply deferred (MultiRenderer trait gap). Drop shadow + blur + opacity polish deferred. |
+| 5 | Foundation + layer + widgets + clock demo + use_interval/use_timeout hooks. zos-settings + zos-dock refactored onto zos-ui (validation). Hot reload deferred. |
+| 6 | All 4 apps implemented (zos-panel + zos-power + zos-monitors + zos-notify). Tray/audio popups/wifi-picker UI deferred for follow-up. |
+| 7 | IPC server + AnvilState wiring done. Extension trait scaffold ready for example plugins (deferred). |
+| 8 | Image-build prep done. **NOT** triggering swap. |
+
+Workspace: 12 crates. Session total commits: 15. Tests: zos-ui 15/15, zos-wm 33/33.
+
+### Deferred for future session
+- Phase 4: per-window PixelShaderElement integration (needs PixelShaderElement RenderElement<MultiRenderer> impl or per-backend specialization), drop shadow, kawase blur, opacity wrapping
+- Phase 5: hot reload, style scoping macro (currently styles are inline iced closures), TOML config loader for theme overrides
+- Phase 6: zos-panel system tray (StatusNotifierItem), audio sink picker popup, wifi network picker popup, monitors visual drag layout
+- Phase 7: example out-of-process plugin (CLI tool that talks to IPC), example in-process Extension (e.g., wobbly windows)
+- Phase 8: Hyprland keep-alive removal — only when zos-wm has been daily-driver-validated
+
+---

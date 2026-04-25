@@ -59,6 +59,11 @@ pub struct WinitData {
     full_redraw: u8,
     #[cfg(feature = "debug")]
     pub fps: fps_ticker::Fps,
+    /// Compiled rounded-corners pixel-shader program. `None` if the
+    /// shader failed to compile (logged at backend init); the render
+    /// path then skips per-window rounded masks. See
+    /// `crate::effects::rounded`.
+    pub rounded_effect: Option<crate::effects::rounded::RoundedCornersEffect>,
 }
 
 impl DmabufHandler for AnvilState<WinitData> {
@@ -222,6 +227,23 @@ pub fn run_winit() {
         info!("EGL hardware-acceleration enabled");
     };
 
+    // Compile the rounded-corners pixel shader on the winit GLES renderer.
+    // Failures are non-fatal: we log a warning and proceed without rounding.
+    let rounded_effect = match crate::effects::rounded::RoundedCornersEffect::new(backend.renderer()) {
+        Ok(effect) => {
+            info!("Compiled rounded-corners pixel shader on winit renderer");
+            Some(effect)
+        }
+        Err(err) => {
+            warn!(
+                ?err,
+                "Failed to compile rounded-corners pixel shader; \
+                 windows will render without corner rounding"
+            );
+            None
+        }
+    };
+
     let data = {
         let damage_tracker = OutputDamageTracker::from_output(&output);
 
@@ -232,6 +254,7 @@ pub fn run_winit() {
             full_redraw: 0,
             #[cfg(feature = "debug")]
             fps: fps_ticker::Fps::default(),
+            rounded_effect,
         }
     };
     let mut state = AnvilState::init(display, event_loop.handle(), data, true);

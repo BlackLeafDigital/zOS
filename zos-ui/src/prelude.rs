@@ -4,7 +4,9 @@
 //! code — iced types, the theme, signals, components, and the built-in
 //! widget set.
 
-pub use crate::signal::{Effect, Memo, Signal};
+pub use crate::signal::{
+    Effect, Interval, Memo, Signal, Timeout, tick_timers, use_interval, use_timeout,
+};
 pub use crate::theme::{self, Tokens, zos_theme};
 pub use crate::widgets::{Card, Pill, SectionHeader, StatusDot};
 pub use crate::{Component, View};

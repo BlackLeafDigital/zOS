@@ -39,10 +39,12 @@
 pub mod effect;
 pub mod memo;
 mod runtime;
+pub mod timer;
 pub mod value;
 
 pub use effect::Effect;
 pub use memo::Memo;
+pub use timer::{Interval, Timeout, tick_timers, use_interval, use_timeout};
 pub use value::Signal;
 
 #[cfg(test)]

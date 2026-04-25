@@ -304,25 +304,43 @@ where
                 )
                     .into();
 
-                // TODO(P4-rounded-corners): once `RoundedCornersEffect`
-                // is initialized per-renderer at backend init
-                // (udev.rs / winit.rs), append a `PixelShaderElement`
-                // per window here, layered above the window's content.
-                // See `zos-wm/src/effects/rounded.rs`. The shape is
-                // roughly:
+                // TODO(P4-render-integration): the rounded-corners
+                // shader IS now compiled and stashed on each backend
+                // (`UdevData::rounded_effect`, `WinitData::rounded_effect`),
+                // and `state.corner_radius` (default 8.0 px) is the
+                // per-frame radius. What remains is appending a
+                // `PixelShaderElement` per window here:
                 //
-                //   if let Some(effect) = backend.rounded_corners() {
+                //   if let Some(effect) = rounded_effect {
                 //       let geometry = Rectangle::new(
-                //           logical_loc + offset, window_size);
+                //           logical_loc + combined_offset_logical,
+                //           window_size,
+                //       );
                 //       let mask = effect.pixel_shader_element(
-                //           geometry, /* radius */ 8.0);
-                //       output_render_elements.push(/* wrap mask */);
+                //           geometry, state.corner_radius);
+                //       output_render_elements.push(
+                //           OutputRenderElements::RoundedMask(mask));
                 //   }
                 //
-                // Blocked on threading the GlesRenderer-typed shader
-                // handle through `output_elements`'s renderer-generic
-                // `R` parameter, which needs either a downcast helper
-                // or a backend-specific render path.
+                // Blocker: `PixelShaderElement` only implements
+                // `RenderElement<GlesRenderer>` (smithay
+                // `gles/element.rs:106`). `output_elements` is generic
+                // over `R: Renderer + ImportAll + ImportMem`; for udev
+                // `R = MultiRenderer<...>`, not `GlesRenderer`. Adding
+                // a `RoundedMask=PixelShaderElement` variant to
+                // `OutputRenderElements<R, _>` therefore requires
+                // either:
+                //   1. specializing this fn per-backend (split into
+                //      `output_elements_gles` for winit and a
+                //      `output_elements_multi` for udev with its own
+                //      enum that downcasts to GLES at frame time), or
+                //   2. extending smithay's multigpu module with a
+                //      blanket `RenderElement<MultiRenderer<...>>` for
+                //      `PixelShaderElement` (upstream change).
+                //
+                // The shader compilation, AnvilState::corner_radius,
+                // and per-backend storage are all in place, so lighting
+                // this up is purely a render-path refactor.
                 output_render_elements.extend(window_render_elements.into_iter().map(|el| {
                     OutputRenderElements::AnimatedWindow(RelocateRenderElement::from_element(
                         el,

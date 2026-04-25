@@ -247,6 +247,15 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// animations. Defaults sourced from `AnimationManager::default()`;
     /// TOML config parsing is deferred to a later task.
     pub animation_manager: crate::anim::AnimationManager,
+
+    // Phase 4 effects: rounded-corners radius (in logical pixels).
+    /// Default corner radius applied to windows by the rounded-corners
+    /// pixel shader. 8.0 px matches the Catppuccin/zOS reference theme.
+    /// The actual application of this radius into per-window
+    /// `PixelShaderElement`s lives in the render path (see
+    /// `crate::effects::rounded` and the `TODO(P4-render-integration)`
+    /// in `crate::render`).
+    pub corner_radius: f32,
 }
 
 #[derive(Debug)]
@@ -1157,6 +1166,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
             // Phase 4 animations: registry + per-property config defaults.
             animation_manager: crate::anim::AnimationManager::default(),
+
+            // Phase 4 effects: 8.0 px rounded corners by default.
+            corner_radius: 8.0,
         }
     }
 
