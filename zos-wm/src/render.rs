@@ -10,6 +10,7 @@ use smithay::{
                 RelocateRenderElement, RescaleRenderElement,
             },
         },
+        gles::element::PixelShaderElement,
     },
     desktop::{
         layer_map_for_output,
@@ -26,8 +27,23 @@ use smithay::{
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
+    effects::shadow::DropShadowEffect,
     shell::{FullscreenSurface, WindowElement, WindowRenderElement, workspace::Workspace},
 };
+
+/// Per-frame shadow parameters threaded into `output_elements`.
+///
+/// All fields are values pulled from `AnvilState` once per frame (radius,
+/// color, offset). The effect program reference is borrowed off the
+/// backend (winit-only — udev passes `None` while the `MultiRenderer` /
+/// `PixelShaderElement` trait gap remains).
+#[derive(Clone, Copy)]
+pub struct ShadowParams<'a> {
+    pub effect: &'a DropShadowEffect,
+    pub blur_radius: f32,
+    pub offset: (f32, f32),
+    pub color: [f32; 4],
+}
 
 smithay::backend::renderer::element::render_elements! {
     pub CustomRenderElements<R> where
@@ -163,6 +179,16 @@ where
 /// paths so that animated workspaces don't break panels. The walk mirrors
 /// smithay's `space_render_elements`: Background/Bottom go below windows,
 /// Top/Overlay go above.
+///
+/// Returns a third value, `shadow_elements`, that is a list of
+/// `(insertion_index, PixelShaderElement)` pairs the caller is expected
+/// to splice into the final element list AFTER its corresponding window
+/// element (so the shadow draws below the window). This is split out
+/// because `PixelShaderElement` only implements `RenderElement<GlesRenderer>`
+/// — the udev path uses `MultiRenderer` and cannot consume them, so it
+/// must pass `shadow_params: None` and ignore the returned vec. The winit
+/// path passes its compiled program and per-frame params and is
+/// responsible for splicing.
 #[profiling::function]
 pub fn output_elements<R>(
     output: &Output,
@@ -171,7 +197,12 @@ pub fn output_elements<R>(
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
     show_window_preview: bool,
-) -> (Vec<OutputRenderElements<R, WindowRenderElement<R>>>, Color32F)
+    shadow_params: Option<ShadowParams<'_>>,
+) -> (
+    Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
+    Color32F,
+    Vec<(usize, PixelShaderElement)>,
+)
 where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + Send + 'static,
@@ -194,7 +225,8 @@ where
                     .map(|e| OutputRenderElements::Window(Wrap::from(e))),
             )
             .collect::<Vec<_>>();
-        (elements, CLEAR_COLOR_FULLSCREEN)
+        // Fullscreen windows take the whole output: no shadow makes sense.
+        (elements, CLEAR_COLOR_FULLSCREEN, Vec::new())
     } else {
         let mut output_render_elements = custom_elements
             .into_iter()
@@ -251,6 +283,14 @@ where
             }
         }
 
+        // ---- Per-window drop-shadow elements (winit path only). We
+        //      collect (insertion_index, PixelShaderElement) and surface
+        //      them to the caller. The caller's responsibility is to
+        //      splice these after the corresponding window's elements
+        //      (so the shadow draws beneath the window). The udev path
+        //      passes `shadow_params: None` and this stays empty.
+        let mut shadow_elements: Vec<(usize, PixelShaderElement)> = Vec::new();
+
         // ---- Toplevel windows.
         if let Some(ws) = workspace {
             // Workspace-level translation applies to every window in the
@@ -304,43 +344,52 @@ where
                 )
                     .into();
 
-                // TODO(P4-render-integration): the rounded-corners
-                // shader IS now compiled and stashed on each backend
-                // (`UdevData::rounded_effect`, `WinitData::rounded_effect`),
-                // and `state.corner_radius` (default 8.0 px) is the
-                // per-frame radius. What remains is appending a
-                // `PixelShaderElement` per window here:
+                // P4-V5: per-window drop-shadow `PixelShaderElement`.
+                // Only emitted when `shadow_params` is `Some` (winit
+                // path). The shadow rect is the window's visible
+                // logical bbox (location after animation offset, sized
+                // by the SpaceElement geometry). The element is staged
+                // into `shadow_elements` with the index it will occupy
+                // *after* this window's render elements are pushed
+                // below; the caller splices at that index so the shadow
+                // sits BELOW the window in the final list (later in the
+                // list = farther back).
                 //
-                //   if let Some(effect) = rounded_effect {
-                //       let geometry = Rectangle::new(
-                //           logical_loc + combined_offset_logical,
-                //           window_size,
-                //       );
-                //       let mask = effect.pixel_shader_element(
-                //           geometry, state.corner_radius);
-                //       output_render_elements.push(
-                //           OutputRenderElements::RoundedMask(mask));
-                //   }
-                //
-                // Blocker: `PixelShaderElement` only implements
-                // `RenderElement<GlesRenderer>` (smithay
-                // `gles/element.rs:106`). `output_elements` is generic
-                // over `R: Renderer + ImportAll + ImportMem`; for udev
-                // `R = MultiRenderer<...>`, not `GlesRenderer`. Adding
-                // a `RoundedMask=PixelShaderElement` variant to
-                // `OutputRenderElements<R, _>` therefore requires
-                // either:
-                //   1. specializing this fn per-backend (split into
-                //      `output_elements_gles` for winit and a
-                //      `output_elements_multi` for udev with its own
-                //      enum that downcasts to GLES at frame time), or
-                //   2. extending smithay's multigpu module with a
-                //      blanket `RenderElement<MultiRenderer<...>>` for
-                //      `PixelShaderElement` (upstream change).
-                //
-                // The shader compilation, AnvilState::corner_radius,
-                // and per-backend storage are all in place, so lighting
-                // this up is purely a render-path refactor.
+                // Rounded corners are intentionally not shipped here:
+                // the current `rounded.rs` shader writes a white masked
+                // shape, which would tint the window rather than mask
+                // it. Real rounded corners need a texture-shader rewrite
+                // (sample window, discard outside-corner pixels) — see
+                // `effects/rounded.rs` and the research doc. Shipping
+                // shadow first validates the visual story.
+                if let Some(shadow) = shadow_params {
+                    let win_geo =
+                        smithay::desktop::space::SpaceElement::geometry(&entry.element);
+                    // Window's on-screen logical rect: the entry
+                    // location (workspace-global) translated to
+                    // output-local by subtracting the region origin,
+                    // plus the per-window+workspace animation offset.
+                    let region_origin = output_geo.map(|g| g.loc).unwrap_or_default();
+                    let logical_loc_screen = entry.location - region_origin
+                        + Point::<i32, smithay::utils::Logical>::from((
+                            combined_offset_logical.x.round() as i32,
+                            combined_offset_logical.y.round() as i32,
+                        ));
+                    let shadow_rect = Rectangle::new(logical_loc_screen, win_geo.size);
+                    let element = shadow.effect.pixel_shader_element(
+                        shadow_rect,
+                        shadow.blur_radius,
+                        shadow.color,
+                        shadow.offset,
+                    );
+                    // The window's render elements are pushed
+                    // immediately after this; shadow goes AT the index
+                    // *after* those window elements (current_len +
+                    // window_render_elements.len()).
+                    let insert_at = output_render_elements.len() + window_render_elements.len();
+                    shadow_elements.push((insert_at, element));
+                }
+
                 output_render_elements.extend(window_render_elements.into_iter().map(|el| {
                     OutputRenderElements::AnimatedWindow(RelocateRenderElement::from_element(
                         el,
@@ -372,12 +421,79 @@ where
         }
 
         // Append top/overlay layer-shell on top of everything else.
+        // shadow_elements indices were captured before this append so
+        // shadows still splice below windows (the splice index is
+        // bounded by where the windows landed, not where layer-shell
+        // ends).
         output_render_elements.extend(top_layer_elements);
 
-        (output_render_elements, CLEAR_COLOR)
+        (output_render_elements, CLEAR_COLOR, shadow_elements)
     }
 }
 
+
+// Winit-specific wrapper that lets the damage tracker accept a flat
+// `Vec` containing both `OutputRenderElements<GlesRenderer, _>`
+// produced by `output_elements` AND the per-window shadow
+// `PixelShaderElement`s. The `<=$renderer:ty>` macro form restricts the
+// generated `RenderElement` impl to a specific renderer (here
+// `GlesRenderer`), which is the only renderer that can host
+// `PixelShaderElement`.
+//
+// The udev path doesn't use this — its renderer is `MultiRenderer` and
+// can't host `PixelShaderElement` until smithay grows the impl.
+smithay::backend::renderer::element::render_elements! {
+    pub WinitOutputElements<=smithay::backend::renderer::gles::GlesRenderer>;
+    Inner=OutputRenderElements<
+        smithay::backend::renderer::gles::GlesRenderer,
+        WindowRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
+    >,
+    Shadow=PixelShaderElement,
+}
+
+impl std::fmt::Debug for WinitOutputElements {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inner(arg0) => f.debug_tuple("Inner").field(arg0).finish(),
+            Self::Shadow(arg0) => f.debug_tuple("Shadow").field(arg0).finish(),
+            Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
+        }
+    }
+}
+
+/// Splice `shadow_inserts` into `inner_elements` at their recorded
+/// indices, producing a single `Vec<WinitOutputElements>` ready to hand
+/// to the damage tracker. Insert indices are interpreted with respect to
+/// the original (pre-splice) `inner_elements` ordering — we sort by
+/// index ascending and add `i` to the i-th insert's position so each
+/// later insert accounts for the shadows already spliced before it.
+pub fn splice_winit_elements(
+    inner_elements: Vec<OutputRenderElements<
+        smithay::backend::renderer::gles::GlesRenderer,
+        WindowRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
+    >>,
+    mut shadow_inserts: Vec<(usize, PixelShaderElement)>,
+) -> Vec<WinitOutputElements> {
+    // Wrap the inner elements first.
+    let mut out: Vec<WinitOutputElements> = inner_elements
+        .into_iter()
+        .map(WinitOutputElements::Inner)
+        .collect();
+
+    if shadow_inserts.is_empty() {
+        return out;
+    }
+
+    // Sort ascending so each subsequent insert sees indices in the
+    // already-grown vec. We add the running offset for each prior
+    // insertion.
+    shadow_inserts.sort_by_key(|(idx, _)| *idx);
+    for (offset, (idx, element)) in shadow_inserts.into_iter().enumerate() {
+        let pos = (idx + offset).min(out.len());
+        out.insert(pos, WinitOutputElements::Shadow(element));
+    }
+    out
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn render_output<'a, 'd, R>(
@@ -395,7 +511,18 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + Send + 'static,
 {
-    let (elements, clear_color) =
-        output_elements(output, space, workspace, custom_elements, renderer, show_window_preview);
+    // `render_output` is the smithay-style helper: it doesn't know about
+    // backend-specific effects (shadow needs `GlesRenderer`). Callers
+    // wanting shadow use `output_elements` directly + their own damage
+    // tracker invocation. We pass `None` here.
+    let (elements, clear_color, _shadow_elements) = output_elements(
+        output,
+        space,
+        workspace,
+        custom_elements,
+        renderer,
+        show_window_preview,
+        None,
+    );
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

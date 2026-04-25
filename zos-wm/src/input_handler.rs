@@ -762,6 +762,10 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             workspace.switch_to_tiled(algorithm);
             tracing::info!(workspace_id = workspace.id.0, "switched to tiled mode");
         }
+
+        // Push the workspace's new entry locations to the live Space so the
+        // render path picks them up on the next frame.
+        crate::shell::workspace::sync_active_workspaces_to_space(&self.outputs, &mut self.space);
     }
 
     /// Forward a workspace-driven focus change to the wl_keyboard so

@@ -1194,8 +1194,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             suppressed_keycodes: HashSet::new(),
             suppressed_buttons: HashSet::new(),
 
-            // Phase 4 animations: registry + per-property config defaults.
-            animation_manager: crate::anim::AnimationManager::default(),
+            // Phase 4 animations: registry + per-property config defaults,
+            // overlaid with `~/.config/zos/animations.toml` via zos-ui's
+            // loader. Missing/malformed file degrades to empty overrides.
+            animation_manager: {
+                let overrides = zos_ui::config::load_animations();
+                crate::anim::AnimationManager::default().with_overrides(overrides)
+            },
 
             // Phase 4 effects: 8.0 px rounded corners by default.
             corner_radius: 8.0,

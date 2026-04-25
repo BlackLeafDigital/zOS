@@ -361,6 +361,16 @@ pub fn run_winit() {
 
             state.pre_repaint(&output, frame_target);
 
+            // Snapshot the per-frame shadow parameters before we hand
+            // out the mutable backend borrow. `effect` borrows the
+            // compiled shadow program off `backend_data` (a sibling
+            // field of `.backend`); the disjoint-fields borrow rules
+            // keep this safe alongside the upcoming `&mut backend`.
+            let shadow_effect_ref = state.backend_data.shadow_effect.as_ref();
+            let shadow_radius = state.shadow_radius;
+            let shadow_offset = state.shadow_offset;
+            let shadow_color = state.shadow_color;
+
             let backend = &mut state.backend_data.backend;
 
             // draw the cursor as relevant
@@ -477,8 +487,31 @@ pub fn run_winit() {
                 // Build the concrete element list once and keep a reference
                 // to it so we can replay the same render into each pending
                 // screencopy frame after the main render completes.
-                let (elements, clear_color) =
-                    crate::render::output_elements(&output, space, active_workspace_for_render, custom_elements, renderer, show_window_preview);
+                //
+                // Build per-frame `ShadowParams` from the compiled shadow
+                // shader (if available) plus the live state radii/color/
+                // offset. `output_elements` returns a sidecar vec of
+                // `(insertion_index, PixelShaderElement)` we then splice
+                // into a winit-only wrapper enum (`WinitOutputElements`)
+                // because `PixelShaderElement` only impls
+                // `RenderElement<GlesRenderer>`.
+                let shadow_params = shadow_effect_ref.map(|effect| crate::render::ShadowParams {
+                    effect,
+                    blur_radius: shadow_radius,
+                    offset: shadow_offset,
+                    color: shadow_color,
+                });
+                let (inner_elements, clear_color, shadow_inserts) =
+                    crate::render::output_elements(
+                        &output,
+                        space,
+                        active_workspace_for_render,
+                        custom_elements,
+                        renderer,
+                        show_window_preview,
+                        shadow_params,
+                    );
+                let elements = crate::render::splice_winit_elements(inner_elements, shadow_inserts);
 
                 // Tearing-control hint — winit submits via EGL `eglSwapBuffers`
                 // and has no DRM page flip, so this is purely advisory. Log if

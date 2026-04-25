@@ -11,13 +11,13 @@
 //! `focus_history` is a separate MRU stack. Destroying the active window
 //! pops it and the next entry becomes active.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::anim::AnimatedValue;
 use crate::shell::element::{WindowEntry, WindowId, WorkspaceId, ZBand};
 use crate::shell::output_state::OutputId;
-use crate::shell::tiling::TilingAlgorithm;
+use crate::shell::tiling::{TilingAlgorithm, WindowKey};
 
 /// A workspace's tiling/floating mode.
 ///
@@ -63,6 +63,12 @@ pub struct Workspace {
     /// Workspace-wide alpha. Used for cross-fades during switches and for
     /// fading the outgoing workspace out.
     pub alpha: AnimatedValue<f32>,
+    /// Maps `WindowId` → `WindowKey` for windows currently in the tiling
+    /// tree. Only populated when `mode == Tiled`; cleared when switching
+    /// back to floating. The tiling algorithm uses opaque `WindowKey`s
+    /// internally, so this map is how the workspace correlates its
+    /// `WindowEntry`s with algorithm rectangles.
+    pub tiling_keys: HashMap<WindowId, WindowKey>,
 }
 
 impl Workspace {
@@ -76,6 +82,7 @@ impl Workspace {
             mode: WorkspaceMode::default(),
             render_offset: AnimatedValue::new((0.0, 0.0).into()),
             alpha: AnimatedValue::new(1.0),
+            tiling_keys: HashMap::new(),
         }
     }
 
@@ -111,20 +118,93 @@ impl Workspace {
         false
     }
 
-    /// Switch to Tiled mode using the given algorithm. Existing window
-    /// arrangement is NOT yet re-applied — that's a follow-up. The mode
-    /// flips and future window-placement decisions consult the algorithm.
-    pub fn switch_to_tiled(&mut self, algorithm: Box<dyn TilingAlgorithm>) {
+    /// Switch to Tiled mode using the given algorithm.
+    ///
+    /// Walks the current windows in z-order (bottom-to-top), inserting each
+    /// non-floating-override window into `algorithm`. For each insertion we
+    /// allocate a fresh `WindowKey`, stash the mapping in `self.tiling_keys`,
+    /// then read back the rect the algorithm assigned and update the
+    /// matching `WindowEntry::location` + send a configure to the toplevel
+    /// with the new size. `stored_size` is captured (if not already set) so
+    /// `switch_to_floating` can restore the pre-tile size.
+    ///
+    /// Note: new windows opened *after* this call must also be inserted
+    /// into the algorithm. That hook lives in `shell/xdg.rs::new_toplevel`
+    /// and is tracked separately as a follow-up — currently new windows on
+    /// a tiled workspace will not auto-tile.
+    pub fn switch_to_tiled(&mut self, mut algorithm: Box<dyn TilingAlgorithm>) {
+        let mut new_keys: HashMap<WindowId, WindowKey> = HashMap::new();
+        let window_ids: Vec<WindowId> = self.windows.iter().map(|e| e.id).collect();
+
+        for id in &window_ids {
+            // Skip windows with an explicit floating override.
+            let Some(entry) = self.windows.iter().find(|e| e.id == *id) else {
+                continue;
+            };
+            let override_floating = matches!(
+                *entry.element.layout_state().tiled_override.lock().unwrap(),
+                Some(false)
+            );
+            if override_floating {
+                continue;
+            }
+
+            // Capture pre-tile size for round-trip restoration.
+            let pre_tile_size = entry
+                .stored_size
+                .unwrap_or_else(|| entry.element.0.geometry().size);
+
+            let key = WindowKey::alloc();
+            algorithm.insert(key);
+            new_keys.insert(*id, key);
+
+            // Read back the assigned rect and apply to the entry + toplevel.
+            if let Some(rect) = algorithm.rect_for(key)
+                && let Some(entry) = self.windows.iter_mut().find(|e| e.id == *id)
+            {
+                entry.location = rect.loc;
+                if entry.stored_size.is_none() {
+                    entry.stored_size = Some(pre_tile_size);
+                }
+                if let Some(toplevel) = entry.element.0.toplevel() {
+                    toplevel.with_pending_state(|state| {
+                        state.size = Some(rect.size);
+                    });
+                    if toplevel.is_initial_configure_sent() {
+                        toplevel.send_pending_configure();
+                    }
+                }
+            }
+        }
+
+        self.tiling_keys = new_keys;
         self.mode = WorkspaceMode::Tiled(algorithm);
-        // TODO(P3-tile-relayout): walk self.windows and call
-        // algorithm.insert for each. Update rects via space.map_element
-        // and xdg_toplevel.with_pending_state size.
     }
 
+    /// Switch back to Floating mode.
+    ///
+    /// Restores each window's pre-tile size by sending a configure with
+    /// the saved `stored_size`, then clears the `tiling_keys` map and
+    /// drops the algorithm. Window `location`s are left as-is — they hold
+    /// the last tiled position, which is a reasonable default until the
+    /// user moves them.
     pub fn switch_to_floating(&mut self) {
+        let window_ids: Vec<WindowId> = self.windows.iter().map(|e| e.id).collect();
+        for id in &window_ids {
+            if let Some(entry) = self.windows.iter_mut().find(|e| e.id == *id)
+                && let Some(size) = entry.stored_size
+                && let Some(toplevel) = entry.element.0.toplevel()
+            {
+                toplevel.with_pending_state(|state| {
+                    state.size = Some(size);
+                });
+                if toplevel.is_initial_configure_sent() {
+                    toplevel.send_pending_configure();
+                }
+            }
+        }
+        self.tiling_keys.clear();
         self.mode = WorkspaceMode::Floating;
-        // TODO(P3-float-relayout): restore windows to their stored_size
-        // and a sensible placement.
     }
 
     pub fn is_tiled(&self) -> bool {

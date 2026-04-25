@@ -2155,13 +2155,23 @@ fn render_surface<'a>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) = output_elements(
+    // Pass `None` for `shadow_params`: `PixelShaderElement` only impls
+    // `RenderElement<GlesRenderer>`, but the udev path's renderer is
+    // `MultiRenderer<GbmGlesBackend<GlesRenderer>, ...>`. Until smithay
+    // grows a blanket `RenderElement<MultiRenderer<...>>` for
+    // `PixelShaderElement` (or we hand-roll a wrapper that delegates
+    // through `MultiRenderer::renderer_for(node).borrow_mut()`), the
+    // udev path renders without per-window shadow/rounded-corner
+    // effects. Winit ships them. Returned `_shadow_inserts` is always
+    // empty here.
+    let (elements, clear_color, _shadow_inserts) = output_elements(
         output,
         space,
         workspace,
         custom_elements,
         renderer,
         show_window_preview,
+        None,
     );
 
     let frame_mode = if surface.disable_direct_scanout {
