@@ -12,7 +12,9 @@
 //! pops it and the next entry becomes active.
 
 use std::collections::VecDeque;
+use std::time::Instant;
 
+use crate::anim::AnimatedValue;
 use crate::shell::element::{WindowEntry, WindowId, WorkspaceId, ZBand};
 use crate::shell::output_state::OutputId;
 use crate::shell::tiling::TilingAlgorithm;
@@ -54,6 +56,13 @@ pub struct Workspace {
     pub focus_history: Vec<WindowId>,
     /// Tiling mode. Floating by default; toggled via `Action::ToggleWorkspaceTiling`.
     pub mode: WorkspaceMode,
+    /// Workspace-wide render translation. Drives workspace-switch slide
+    /// animations: the active workspace animates from its on-screen offset
+    /// while the outgoing one animates the opposite direction.
+    pub render_offset: AnimatedValue<smithay::utils::Point<f64, smithay::utils::Logical>>,
+    /// Workspace-wide alpha. Used for cross-fades during switches and for
+    /// fading the outgoing workspace out.
+    pub alpha: AnimatedValue<f32>,
 }
 
 impl Workspace {
@@ -65,7 +74,41 @@ impl Workspace {
             active: None,
             focus_history: Vec::new(),
             mode: WorkspaceMode::default(),
+            render_offset: AnimatedValue::new((0.0, 0.0).into()),
+            alpha: AnimatedValue::new(1.0),
         }
+    }
+
+    /// Advance every animation tied to this workspace + each of its
+    /// windows. Single `now` is used for all ticks within a frame so
+    /// per-property progress stays consistent.
+    pub fn tick_animations(&mut self, now: Instant) {
+        self.render_offset.tick(now);
+        self.alpha.tick(now);
+        for entry in self.windows.iter() {
+            let anim = entry.element.anim_state();
+            anim.render_offset.lock().unwrap().tick(now);
+            anim.alpha.lock().unwrap().tick(now);
+        }
+    }
+
+    /// Returns true if any animation tied to this workspace or its
+    /// windows is still in flight. Render path uses this to decide
+    /// whether to keep scheduling redraws.
+    pub fn any_animating(&self) -> bool {
+        if self.render_offset.is_animating() || self.alpha.is_animating() {
+            return true;
+        }
+        for entry in self.windows.iter() {
+            let anim = entry.element.anim_state();
+            if anim.render_offset.lock().unwrap().is_animating() {
+                return true;
+            }
+            if anim.alpha.lock().unwrap().is_animating() {
+                return true;
+            }
+        }
+        false
     }
 
     /// Switch to Tiled mode using the given algorithm. Existing window

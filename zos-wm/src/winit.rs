@@ -304,6 +304,11 @@ pub fn run_winit() {
                     .current_mode()
                     .map(|mode| Duration::from_secs_f64(1_000f64 / mode.refresh as f64))
                     .unwrap_or_default();
+
+            // Advance all animations before assembling the per-frame element
+            // list. Same shared-Instant semantics as the udev backend.
+            state.tick_animations(std::time::Instant::now());
+
             state.pre_repaint(&output, frame_target);
 
             let backend = &mut state.backend_data.backend;

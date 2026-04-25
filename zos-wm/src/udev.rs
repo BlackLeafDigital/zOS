@@ -1803,6 +1803,11 @@ impl AnvilState<UdevData> {
             return;
         };
 
+        // Advance all animations before assembling the per-frame element list.
+        // Single Instant is shared across this frame's tick_animations call so
+        // workspace-level and per-window AnimatedValues stay in lockstep.
+        self.tick_animations(std::time::Instant::now());
+
         self.pre_repaint(&output, frame_target);
 
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {

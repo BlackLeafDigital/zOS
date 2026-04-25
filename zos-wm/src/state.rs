@@ -241,6 +241,12 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub suppressed_keycodes: HashSet<smithay::input::keyboard::Keycode>,
     /// Same idea but for mouse buttons (Linux input button codes).
     pub suppressed_buttons: HashSet<u32>,
+
+    // Phase 4 animations: registry of named curves + per-property config.
+    /// Drives window-open / window-close / fade / workspace-switch
+    /// animations. Defaults sourced from `AnimationManager::default()`;
+    /// TOML config parsing is deferred to a later task.
+    pub animation_manager: crate::anim::AnimationManager,
 }
 
 #[derive(Debug)]
@@ -1148,6 +1154,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             bindings: crate::binds::default_bindings(),
             suppressed_keycodes: HashSet::new(),
             suppressed_buttons: HashSet::new(),
+
+            // Phase 4 animations: registry + per-property config defaults.
+            animation_manager: crate::anim::AnimationManager::default(),
         }
     }
 
@@ -1449,6 +1458,28 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         for client in clients.into_values() {
             self.client_compositor_state(&client).blocker_cleared(self, &dh);
         }
+    }
+
+    /// Advance every animation across all output states. Called once per
+    /// frame at the start of render before element lists are built.
+    pub fn tick_animations(&mut self, now: std::time::Instant) {
+        for output_state in self.outputs.values_mut() {
+            for workspace in output_state.workspaces.iter_mut() {
+                workspace.tick_animations(now);
+            }
+        }
+    }
+
+    /// Returns true if any animation across all outputs is still in flight.
+    pub fn any_animating(&self) -> bool {
+        for output_state in self.outputs.values() {
+            for workspace in output_state.workspaces.iter() {
+                if workspace.any_animating() {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 

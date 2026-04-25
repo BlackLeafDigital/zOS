@@ -187,3 +187,45 @@ Stubs (deferred): `ToggleWorkspaceTiling`.
 - `cargo check -p zos-wm --features udev` still pre-existing libseat link (host environment)
 
 ---
+
+## 2026-04-25 — Phase 3 polish + Phase 4 animations infrastructure
+
+### Phase 3 polish (commit a5647e2)
+- Modal parent (T-3.9): xdg.rs reads `surface.parent()`, links `WindowEntry.parent_id`, bumps band to AlwaysOnTop, calls `bring_descendants_above`.
+- Always-on-top (T-3.10): inline with modal logic — modals automatically go to AlwaysOnTop band.
+- Workspace tiling toggle (Action::ToggleWorkspaceTiling): real handler. Allocates `DwindleTree` with output mode size as work area on Floating→Tiled. Per-workspace re-tile-on-switch logic still TODO.
+
+### Phase 4 — Animations infrastructure (no commit yet)
+
+**Research artifacts:**
+- `phase-4-hyprland-animations.md` (498 lines) — port plan for Hyprland's BezierCurve + AnimatedVariable + AnimationManager. 14 tasks.
+- `phase-4-smithay-effects.md` (808 lines) — custom shader API + 4 effects (rounded corners, drop shadow, opacity, kawase blur). Smithay's `compile_custom_pixel_shader` + `PixelShaderElement` cover everything.
+
+**`anim/` module (NEW, 672 lines, 19/19 tests passing):**
+- `bezier.rs` — `BezierCurve` with 255-point baking + binary-search eval. Named curves: linear, default, overshot, smoothOut, smoothIn (matching user's existing Hyprland config).
+- `animatable.rs` — `Animatable` trait with impls for f32, Point<f64, Logical>, [f32; 4].
+- `value.rs` — `AnimatedValue<T>` with begun/value/goal triple, animate_to, warp_to, tick(now), is_animating.
+- `manager.rs` — `AnimationManager { curves, windows_in, windows_out, fade_in, fade_out, workspaces, global_enabled }` with sane defaults matching `~/.config/hypr/defaults.conf` from the user's existing zOS image.
+
+**State integration:**
+- `WindowElement::anim_state()` accessor → `WindowAnimationState { render_offset: Mutex<AnimatedValue<Point>>, alpha: Mutex<AnimatedValue<f32>> }` lazily inserted on user_data.
+- `Workspace.render_offset: AnimatedValue<Point>` + `alpha: AnimatedValue<f32>`. Plus `tick_animations(now)` and `any_animating()` walking workspace + per-window state.
+- `AnvilState::tick_animations(now)` walks all outputs/workspaces. Called at start of `udev::render_surface` and `winit::run_winit` per-frame.
+- `AnvilState.animation_manager: AnimationManager` with default config.
+
+**Animation drivers:**
+- `xdg.rs::new_toplevel`: warps render_offset to (0, output_height) then animates to (0,0) using windows_in curve+duration. Warps alpha to 0 then animates to 1 with fade_in. Both gated on per-property + global enabled flags.
+- `input_handler.rs::action_switch_to_workspace`: animates outgoing workspace render_offset off-screen and incoming from off-screen → 0. Direction-aware (forward/backward). Lazy-creates target.
+
+### Deferred for Phase 4 visible effects
+- **RelocateRenderElement integration (P4-W3)** — smithay's `space_render_elements` collapses windows internally; injecting per-window relocate requires bypassing it and walking workspace windows manually. Render-side work pending. Without this, animations tick but don't visually translate windows.
+- **Rounded corners shader** (4.B step 1) — straightforward single-shader pass via `GlesRenderer::compile_custom_pixel_shader`. Independent of relocate; quick visual win.
+- **Drop shadow + blur + opacity wrap** (4.B steps 2-4)
+- **Window close fade** (task 14) — needs "keep window alive in fading-out state" infra.
+- **TOML config for animation params** (task 5)
+
+### Verified
+- `cargo check -p zos-wm` clean
+- `cargo test -p zos-wm --lib` 28/28 passing (5 bezier + 4 animatable + 6 value + 4 manager + 7 dwindle + 2 grabs)
+
+---

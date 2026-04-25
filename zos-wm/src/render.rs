@@ -176,6 +176,29 @@ where
             output_render_elements.extend(space_preview_elements(renderer, space, output));
         }
 
+        // TODO(P4-relocate-render): Wrap each per-window render element in
+        // RelocateRenderElement::from_element(elem, offset, Relocate::Relative)
+        // using element.anim_state().render_offset.lock().unwrap().value().
+        // Smithay's `space_render_elements` collapses windows into
+        // SpaceRenderElements internally via `render_elements_for_region`, so
+        // injecting a relocate wrapper means bypassing that helper and walking
+        // workspace windows directly here. Animation values still tick via
+        // AnvilState::tick_animations; only the render-side relocate is
+        // pending. Log non-zero offsets so we can confirm the value pipeline
+        // is alive while the wrap path is being designed.
+        for window in space.elements_for_output(output) {
+            let anim = window.anim_state();
+            let offset = anim.render_offset.lock().unwrap().value();
+            if offset.x.abs() > f64::EPSILON || offset.y.abs() > f64::EPSILON {
+                tracing::trace!(
+                    window = ?window.id(),
+                    dx = offset.x,
+                    dy = offset.y,
+                    "render_offset is non-zero; render-side RelocateRenderElement wrap is TODO(P4-relocate-render)",
+                );
+            }
+        }
+
         let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
             renderer,
             [space],

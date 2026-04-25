@@ -113,6 +113,44 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             }
         }
 
+        // Drive window-open animation: slide in from below + fade in.
+        //
+        // NOTE: until P4-W3's RelocateRenderElement integration lands these
+        // values tick but don't yet visually translate the window. The state
+        // is correct; the render path just doesn't honor `render_offset` yet.
+        if let Some(focused_output_id) = self.focused_output {
+            if let Some(output_state) = self.outputs.get(&focused_output_id) {
+                let output_height = output_state
+                    .output
+                    .current_mode()
+                    .map(|m| m.size.h as f64)
+                    .unwrap_or(1080.0);
+                let anim = window.anim_state();
+
+                let windows_in = &self.animation_manager.windows_in;
+                let fade_in = &self.animation_manager.fade_in;
+
+                if windows_in.enabled && self.animation_manager.global_enabled {
+                    // Start off-screen below, animate to 0.
+                    let start_offset: smithay::utils::Point<f64, smithay::utils::Logical> =
+                        (0.0, output_height).into();
+                    let mut offset_guard = anim.render_offset.lock().unwrap();
+                    offset_guard.warp_to(start_offset);
+                    offset_guard.animate_to(
+                        (0.0, 0.0).into(),
+                        windows_in.curve.clone(),
+                        windows_in.duration(),
+                    );
+                }
+
+                if fade_in.enabled && self.animation_manager.global_enabled {
+                    let mut alpha_guard = anim.alpha.lock().unwrap();
+                    alpha_guard.warp_to(0.0);
+                    alpha_guard.animate_to(1.0, fade_in.curve.clone(), fade_in.duration());
+                }
+            }
+        }
+
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.space, surface);
         });

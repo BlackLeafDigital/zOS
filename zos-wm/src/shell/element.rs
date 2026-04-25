@@ -523,6 +523,28 @@ pub struct WindowLayoutState {
     pub tiled_override: std::sync::Mutex<Option<bool>>,
 }
 
+/// Per-window animation state. Stored on `WindowElement::user_data()`,
+/// lazily initialized to settled values (offset = (0,0), alpha = 1.0).
+///
+/// Used to drive open/close fades, slide-on-spawn, workspace-switch
+/// translations, and any other per-window transition without mutating
+/// the underlying smithay `Window`. `Mutex` because user_data is shared
+/// across threads via `&self`.
+#[derive(Debug)]
+pub struct WindowAnimationState {
+    pub render_offset: std::sync::Mutex<crate::anim::AnimatedValue<smithay::utils::Point<f64, smithay::utils::Logical>>>,
+    pub alpha: std::sync::Mutex<crate::anim::AnimatedValue<f32>>,
+}
+
+impl Default for WindowAnimationState {
+    fn default() -> Self {
+        Self {
+            render_offset: std::sync::Mutex::new(crate::anim::AnimatedValue::new((0.0, 0.0).into())),
+            alpha: std::sync::Mutex::new(crate::anim::AnimatedValue::new(1.0)),
+        }
+    }
+}
+
 impl WindowElement {
     /// Convenience accessor for `WindowLayoutState`. Lazily inserts a
     /// default instance the first time it's queried, mirroring how
@@ -536,6 +558,14 @@ impl WindowElement {
     /// allocated the id is stable for the life of the element.
     pub fn id(&self) -> WindowId {
         *self.user_data().get_or_insert_threadsafe(WindowId::alloc)
+    }
+
+    /// Lazy accessor for per-window animation state. Same threadsafe
+    /// user_data pattern as `layout_state` / `id`. Settled at first
+    /// access (offset = (0,0), alpha = 1.0).
+    pub fn anim_state(&self) -> &WindowAnimationState {
+        self.user_data()
+            .get_or_insert_threadsafe(WindowAnimationState::default)
     }
 }
 

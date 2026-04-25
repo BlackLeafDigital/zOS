@@ -356,6 +356,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     }
 
     fn action_switch_to_workspace(&mut self, n: u32) {
+        let target_id = WorkspaceId(n);
         let Some(out_id) = self.focused_output else {
             debug!("SwitchToWorkspace: no focused output");
             return;
@@ -363,7 +364,59 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let Some(out_state) = self.outputs.get_mut(&out_id) else {
             return;
         };
-        out_state.switch_to(WorkspaceId(n));
+
+        // Snapshot output width for the off-screen animation distance.
+        let output_width = out_state
+            .output
+            .current_mode()
+            .map(|m| m.size.w as f64)
+            .unwrap_or(1920.0);
+
+        // Get current active workspace id BEFORE switching.
+        let prev_id = out_state.active().id;
+        if prev_id == target_id {
+            return;
+        }
+
+        // Snapshot AnimationProperty BEFORE further mutation; the animation
+        // config is shared between the outgoing and incoming legs and we want
+        // identical curve/duration on both.
+        let workspaces_anim = self.animation_manager.workspaces.clone();
+        let global_enabled = self.animation_manager.global_enabled;
+
+        // Slide direction: forward switches push the outgoing workspace left
+        // and bring the incoming in from the right; reverse for backward.
+        let going_forward = target_id.0 > prev_id.0;
+        let outgoing_target_x: f64 = if going_forward { -output_width } else { output_width };
+        let incoming_start_x: f64 = if going_forward { output_width } else { -output_width };
+
+        // Animate the outgoing workspace OUT.
+        if workspaces_anim.enabled && global_enabled {
+            if let Some(prev_ws) = out_state.workspace_mut(prev_id) {
+                prev_ws.render_offset.warp_to((0.0, 0.0).into());
+                prev_ws.render_offset.animate_to(
+                    (outgoing_target_x, 0.0).into(),
+                    workspaces_anim.curve.clone(),
+                    workspaces_anim.duration(),
+                );
+            }
+        }
+
+        // Switch active workspace (lazy-creates target if needed).
+        out_state.switch_to(target_id);
+
+        // Animate the incoming workspace IN.
+        if workspaces_anim.enabled && global_enabled {
+            if let Some(new_ws) = out_state.workspace_mut(target_id) {
+                new_ws.render_offset.warp_to((incoming_start_x, 0.0).into());
+                new_ws.render_offset.animate_to(
+                    (0.0, 0.0).into(),
+                    workspaces_anim.curve.clone(),
+                    workspaces_anim.duration(),
+                );
+            }
+        }
+
         sync_active_workspaces_to_space(&self.outputs, &mut self.space);
     }
 
