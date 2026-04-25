@@ -12,6 +12,12 @@ COPY zos-settings /zos-settings
 COPY zos-dock /zos-dock
 COPY zos-daemon /zos-daemon
 COPY zos-wm /zos-wm
+COPY zos-ui /zos-ui
+COPY zos-ui-macros /zos-ui-macros
+COPY zos-panel /zos-panel
+COPY zos-power /zos-power
+COPY zos-monitors /zos-monitors
+COPY zos-notify /zos-notify
 
 # Build scripts + system_files context - isolated so Rust edits don't invalidate script layers
 FROM scratch AS build-ctx
@@ -19,7 +25,7 @@ COPY build_files /
 
 FROM ${BASE_IMAGE}
 
-### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon + zos-wm)
+### BUILD Rust workspace (zos-cli + zos-settings + zos-dock + zos-daemon + zos-wm + shell apps)
 ARG GH_TOKEN
 RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
@@ -53,6 +59,12 @@ RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     cargo build --release -p zos-wm --features udev,xwayland && \
     cp /tmp/cargo-target/release/zos-wm /usr/bin/zos-wm && \
     test -x /usr/bin/zos-wm && \
+    CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
+    cargo build --release -p zos-panel -p zos-power -p zos-monitors -p zos-notify && \
+    cp /tmp/cargo-target/release/zos-panel /usr/bin/zos-panel && \
+    cp /tmp/cargo-target/release/zos-power /usr/bin/zos-power && \
+    cp /tmp/cargo-target/release/zos-monitors /usr/bin/zos-monitors && \
+    cp /tmp/cargo-target/release/zos-notify /usr/bin/zos-notify && \
     dnf5 install -y adwaita-icon-theme
 
 ### BUILD ReGreet (GTK4 login greeter)

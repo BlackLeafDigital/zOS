@@ -7456,6 +7456,8 @@ dependencies = [
  "rand 0.8.6",
  "renderdoc",
  "resvg",
+ "serde",
+ "serde_json",
  "smithay",
  "smithay-drm-extras",
  "thiserror 1.0.69",

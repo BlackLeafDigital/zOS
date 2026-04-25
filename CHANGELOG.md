@@ -258,13 +258,105 @@ Two new workspace crates: `zos-ui` (runtime) + `zos-ui-macros` (proc-macros).
 - `cargo test -p zos-ui --lib` — 10 passing (8 signal + 2 component smoke)
 
 ### Deferred for Phase 5 completion
-- iced_layershell wrappers (TopBar, BottomDock, CenteredPopup, SideSheet)
-- Built-in zOS widgets (Card, SectionHeader, Pill, StatusDot, Icon)
 - Module trait + ModuleRegistry (panel-module discovery)
 - TOML config loader for theme overrides
 - Hot reload (stretch)
 - Style scoping macro
-- Compositor IPC trait (lives in zos-core, not zos-ui)
 - Refactor zos-settings + zos-dock onto zos-ui (sequential, post-framework)
+
+---
+
+## 2026-04-25 — Phase 5 polish (layer + widgets + clock demo) [commit 968ced9]
+
+- `src/layer.rs` (89 lines) — `top_bar`, `bottom_dock`, `centered_popup` helpers returning `iced_layershell::LayerShellSettings`. Feature-gated (default-on `layer-shell`).
+- `widgets/{card, pill, status_dot, section_header}.rs` — themed primitives composing iced widgets.
+- `examples/clock.rs` — minimal demo. `cargo build --example clock` clean.
+- Adapted to iced 0.14 API: Pixels::From<f32/u32> only, Padding::from typed array, Space::new() no args, container Style 5-field, iced::application functional.
+
+---
+
+## 2026-04-25 — Phase 6 shell-app scaffolds + Compositor trait [commit 06dc2e6]
+
+Four new workspace members. Each is a minimal main.rs that prints scaffold message and exits — full implementations are downstream work.
+
+- `zos-panel` — replaces HyprPanel
+- `zos-power` — replaces wlogout
+- `zos-monitors` — replaces nwg-displays
+- `zos-notify` — replaces swaync (deps include zbus 5.x for DBus)
+
+`zos-core::compositor` module
+- `Compositor` trait with workspaces / windows / monitors / active_window / focus_window / switch_to_workspace methods.
+- `WorkspaceInfo` / `WindowInfo` / `MonitorInfo` stable types for shell apps.
+- `Hyprland` impl: shells out to `hyprctl -j`, methods stub returning empty Vec / None pending serde_json parsing.
+- `ZosWm` impl: stub returning empty / NotSupported until zos-wm IPC integration lands.
+- `detect()` picks impl from `XDG_CURRENT_DESKTOP` env.
+
+### Verified
+- `cargo build --workspace` clean
+- All 4 scaffolded binaries link
+
+### Deferred for Phase 6 completion
+- Module impls within zos-panel (Clock, Workspaces, Window title, Tray, Audio, Network, Bluetooth, Power)
+- zos-power button grid + reboot-to-Windows dropdown
+- zos-monitors visual layout + per-monitor controls
+- zos-notify DBus server + toast UI
+- TOML config file format
+- serde_json parsing in Hyprland::workspaces/windows/monitors
+
+---
+
+## 2026-04-25 — Phase 7 plugin architecture scaffold
+
+Two channels for extending zos-wm:
+
+### IPC socket (`zos-wm/src/ipc/`)
+- `protocol.rs` — newline-delimited JSON. Request/Response enums. 12 Request variants (Workspaces, Windows, Monitors, ActiveWindow, SwitchToWorkspace, MoveWindowToWorkspace, FocusWindow, CloseFocused, Version, Quit). Response variants mirror.
+- `server.rs` — `IpcServer::start(socket_path, handler)` spawns Unix-socket accept loop on a thread; per-connection thread reads/writes newline-delimited JSON. `default_socket_path()` = `$XDG_RUNTIME_DIR/zos-wm-$WAYLAND_DISPLAY.sock`. Drop removes socket file.
+- `placeholder_handler()` — returns Version on Version request, Error on others. Real handlers wire to AnvilState in main.rs (downstream).
+
+### In-process Extension trait (`zos-wm/src/extension.rs`)
+- `Extension` trait — `name()` + `init()` + `pre_frame(now)` + `post_frame(now)` + `shutdown()`.
+- `ExtensionRegistry` — Vec<Box<dyn Extension>> with init/pre/post/shutdown _all helpers.
+- `LogFrameCount` example impl as template (logs every 120 frames).
+
+Cargo.toml: added `serde = { version = "1", features = ["derive"] }` + `serde_json = "1"`.
+
+### Verified
+- `cargo test -p zos-wm --lib ipc::` 4/4 passing
+- `cargo test -p zos-wm --lib extension::` 1/1 passing
+
+### Deferred
+- Wiring IpcServer into main.rs/state.rs (real handler closure consulting AnvilState)
+- WASM runtime (v2 — wasmtime spike + plugin API design)
+- Example out-of-process plugin (e.g., a custom keybind script via IPC)
+- Example in-process Extension (e.g., wobbly-windows or a tiling layout)
+
+---
+
+## 2026-04-25 — Phase 8 image build prep
+
+Containerfile now copies all 6 new crates (zos-ui, zos-ui-macros, zos-panel, zos-power, zos-monitors, zos-notify) into the rust-ctx scratch stage and builds the 4 shell apps in the Rust build layer. All install to /usr/bin/.
+
+Phase 8 swap-over is **NOT yet triggered** — Hyprland keep-alive banner stays in `install-hyprland.sh`. zos-wm needs visible animations (RelocateRenderElement render-path rewrite) + shell-app modules (Phase 6 follow-ups) + IPC integration (Phase 7 follow-up) before zos-wm becomes daily-driver.
+
+The wayland-sessions entry + start-zos-wm launcher landed in Phase 2 already, so picking "zOS (zos-wm)" from regreet is wired the moment the binary ships in the image (which it now does).
+
+---
+
+# Status snapshot — end of 2026-04-25 session
+
+| Phase | Status |
+|---|---|
+| 0 | Shipped |
+| 1 | Done |
+| 2 | Done (4 from-scratch protocols + udev backend audit + build/install + greetd session) |
+| 3 | MVP done (workspaces + dispatcher + dwindle algorithm + modal/AlwaysOnTop) |
+| 4 | Infrastructure done (animations tick + drivers fire). Visible effects deferred (RelocateRenderElement render-path rewrite needed) |
+| 5 | Foundation done (signals + #[component] macros + theme + layer + widgets + clock demo). Remaining: refactor zos-settings/zos-dock onto zos-ui |
+| 6 | Scaffolds done (4 new app crates + Compositor trait). Remaining: actual app implementations |
+| 7 | Scaffolds done (IPC socket + Extension trait). Remaining: wire to AnvilState + write example plugins |
+| 8 | Image-build prep done. NOT triggering swap until 4/5/6 are visible-feature-complete |
+
+Workspace: 12 crates. Total commits this session: 7.
 
 ---
