@@ -7389,6 +7389,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "zos-ui"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "zos-ui-macros",
+]
+
+[[package]]
+name = "zos-ui-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "zos-wm"
 version = "0.0.1"
 dependencies = [

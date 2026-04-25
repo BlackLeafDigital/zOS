@@ -229,3 +229,42 @@ Stubs (deferred): `ToggleWorkspaceTiling`.
 - `cargo test -p zos-wm --lib` 28/28 passing (5 bezier + 4 animatable + 6 value + 4 manager + 7 dwindle + 2 grabs)
 
 ---
+
+## 2026-04-25 — Phase 5 zos-ui foundation
+
+Two new workspace crates: `zos-ui` (runtime) + `zos-ui-macros` (proc-macros).
+
+### `zos-ui` runtime crate
+- **theme.rs** (157 lines) — Catppuccin Mocha palette (full set incl. SAPPHIRE/SKY/TEAL/MAROON/etc.) + typography scale (font_size::XS..X3L) + spacing tokens (space::X1..X8) + radius tokens (radius::SM..FULL) + duration tokens (FAST/NORMAL/SLOW). `Tokens` zero-sized accessor type. `zos_theme()` returns iced Theme with the canonical palette.
+- **signal/** module (~480 LoC impl, 8 unit tests + 2 doctests passing) — leptos-style fine-grained reactivity. Pure-std, no external deps:
+  - `Signal<T>` — get/set/update/peek with auto-subscription tracking
+  - `Memo<T>` — derived signal, PartialEq dedupe to skip downstream re-runs
+  - `Effect` — auto-subscribes during run, drops cleanly
+  - Thread-local Runtime with effect slab + free-list + pending queue + re-entrancy guard
+- **`Component` + `View` traits** — `View` blanket-impl'd for `T: Into<iced::Element<'static, ()>>`, so users return widgets directly without `.into()`. Component::view returns `impl View`.
+- **prelude.rs** — re-exports iced widgets + theme + signals + macros under one import.
+
+### `zos-ui-macros` proc-macro crate (3 files, 208 lines)
+- `#[component]` — turns `pub fn Clock(class: String, hour_format: bool) -> impl View { body }` into:
+  - `pub struct Clock { class, hour_format }` with field visibility preserved
+  - `Clock::new(class, hour_format)` constructor + `Clock::class(self, ...)` builder methods per field
+  - `impl Component for Clock { fn view(self) -> impl View { let Self { class, hour_format } = self; body } }`
+- `#[panel_module]` and `#[taskbar_icon]` — alias to `#[component]` + TODO marker (real PanelModule / TaskbarIconWidget traits land later)
+- Compile-time errors via `compile_error!` for: generic params, where clauses, async, self receiver, mut/ref arg patterns, destructure args
+- Pure proc-macro2 + quote + syn 2.x, no other deps
+
+### Verified
+- `cargo check --workspace` clean
+- `cargo test -p zos-ui --lib` — 10 passing (8 signal + 2 component smoke)
+
+### Deferred for Phase 5 completion
+- iced_layershell wrappers (TopBar, BottomDock, CenteredPopup, SideSheet)
+- Built-in zOS widgets (Card, SectionHeader, Pill, StatusDot, Icon)
+- Module trait + ModuleRegistry (panel-module discovery)
+- TOML config loader for theme overrides
+- Hot reload (stretch)
+- Style scoping macro
+- Compositor IPC trait (lives in zos-core, not zos-ui)
+- Refactor zos-settings + zos-dock onto zos-ui (sequential, post-framework)
+
+---
