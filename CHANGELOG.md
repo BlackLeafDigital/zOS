@@ -109,3 +109,81 @@ Three follow-up tasks knocked out (all `cargo check -p zos-wm` clean):
 - `cargo check -p zos-wm --features udev` still pre-existing libseat link (host environment)
 
 ---
+
+## 2026-04-24 — Phase 3 MVP (floating-first WM core)
+
+Phase 3 floating-first window management — core path landed. ~6 waves of agent work, 11+ chapters. Each wave verified `cargo check -p zos-wm` clean. Tests added for the dwindle algorithm (7/7 passing).
+
+### Research artifacts (3 new docs in docs/research/)
+- `phase-3-floating-windows.md` (784 lines) — floating model: per-monitor workspaces, VecDeque + ZBand, Smithay Space as cache, drag-state-machine, focus history
+- `phase-3-tiling-opt-in.md` (468 lines) — binary-tree LayoutNode + DwindleAlgorithm + workspace mode toggle + per-window override
+- `phase-3-input-dispatch.md` (680 lines) — Action enum + KeyCombo dispatch + suppressed-key/button mechanism + compositor-initiated grabs
+
+### Foundation types (`shell/element.rs`)
+- `WindowId` (atomic counter), `ZBand` (Below/Normal/AlwaysOnTop/Fullscreen, Ord-derived), `WorkspaceId`, `WindowLayoutState { tiled_override: Mutex<Option<bool>> }`, `WindowEntry`. `WindowElement::id()` and `.layout_state()` accessors via threadsafe user_data.
+
+### Workspace + OutputState data layer (NEW files)
+- `shell/workspace.rs` (~190 lines) — `Workspace { windows: VecDeque<WindowEntry>, active, focus_history }` with add/remove/raise/lower/focus/iter_band/iter_z_order/find/bring_descendants_above. Plus `sync_active_workspaces_to_space(outputs, &mut Space)` brutal sync helper.
+- `shell/output_state.rs` (~70 lines) — `OutputState { id, output, workspaces, active_workspace, last_seen_active }` with switch_to (lazy-creates), workspace/workspace_mut.
+
+### Tiling subsystem (NEW)
+- `shell/tiling/mod.rs` (~70 lines) — `TilingAlgorithm` trait + `WindowKey` newtype + `Direction` + `Edge`.
+- `shell/tiling/dwindle.rs` (~440 lines) — `LayoutNode` enum (Tile | Split { orientation, ratio, children }) + `DwindleTree` with full insert/remove/resize_edge/focus_in_direction implementations + 7 unit tests.
+
+### Input dispatch (NEW + REWRITE)
+- `binds.rs` (193 lines, NEW) — `Modifiers` bitflags, `BindKey { Keysym | MouseButton }`, `KeyCombo`, `Action` enum (33 variants), `default_bindings()` returning a populated HashMap with anvil debug carry-overs + zOS additions (Super+1..9 ws switch, Super+V toggle floating, Super+LMB BeginMove, Super+RMB BeginResize, Alt+Tab cycle, etc.).
+- `input_handler.rs` rewrite — `KeyAction` enum + `process_keyboard_shortcut` deleted. New `dispatch_action` method with Action match. Suppressed-keycodes/buttons mechanism so swallowed press releases are not forwarded. Click-to-focus pre-routing in `on_pointer_button`.
+
+### Action handlers wired
+Real impls (no longer stubs):
+- `CloseWindow` (xdg/x11 send_close)
+- `SwitchToWorkspace(n)` (OutputState::switch_to + sync)
+- `MoveWindowToWorkspace(n)` (remove + add to target + sync)
+- `ToggleFloating` (cycles WindowLayoutState.tiled_override)
+- `ToggleFullscreen` / `ToggleMaximize` (xdg_toplevel state set/unset + send_pending_configure)
+- `BeginMove` / `BeginResize` (compositor-initiated grabs via PointerMoveSurfaceGrab::new_from_id + edges_for_pointer)
+- `FocusNext/Prev` (focus_history step)
+- `FocusDirection(dir)` (closest-window-in-direction by centre distance)
+- `MoveWindow(dir)` (shift entry.location 50px + re-sync)
+- Spawn / Quit / VtSwitch / Screen / ScaleUp/Down / RotateOutput / ToggleTint / TogglePreview (preserved from anvil)
+
+Stubs (deferred): `ToggleWorkspaceTiling`.
+
+### AnvilState additions (`state.rs`)
+- `outputs: HashMap<OutputId, OutputState>`
+- `focused_output: Option<OutputId>`
+- `workspace_history: Vec<(OutputId, WorkspaceId)>`
+- `parking_lot: Vec<WindowEntry>`
+- `focus_mode: FocusMode { ClickToFocus, FollowMouse, FollowMouseClickToRaise }`
+- `bindings: HashMap<KeyCombo, Action>` (initialized from `default_bindings()`)
+- `suppressed_keycodes: HashSet<Keycode>`
+- `suppressed_buttons: HashSet<u32>`
+
+### Backend lifecycle integration
+- `udev.rs::connector_connected`: bootstrap `OutputState`, set `focused_output` if first.
+- `udev.rs::connector_disconnected`: tear down OutputState, reassign focused_output.
+- `winit.rs::run_winit`: bootstrap virtual-output OutputState.
+- `shell/xdg.rs::new_toplevel`: backfill WindowEntry into focused output's active workspace using location chosen by `place_new_window`.
+
+### Smart placement (`shell/mod.rs::place_new_window`)
+- Replaced random placement with 3-tier algorithm: (1) center on parent if xdg parent exists, (2) cascade +(48,48) from last window with wrap, (3) horizontally-centered upper-third fallback. `clamp_to_area` helper. `rand` dep no longer used here.
+
+### Grabs refactor (`shell/grabs.rs`)
+- `PointerMoveSurfaceGrab.window: WindowElement` → `window_id: WindowId`. Two constructors: `new_from_element` (back-compat) + `new_from_id`. Lookup-via-id in motion handler so workspace switch / window destroy doesn't panic.
+- New `pub fn edges_for_pointer(rect, pointer) -> ResizeEdge` — 8px threshold + quadrant fallback for SUPER+RMB. Tested.
+
+### Deferred for future Phase 3 polish
+- Workspace tiling-mode toggle (Super+Shift+T) — needs Action::ToggleWorkspaceTiling handler + DwindleAlgorithm wiring
+- Super+V tile/float toggle — Action wired but doesn't actually re-tile yet
+- Modal parent above (T-3.9)
+- Always-on-top via xdg set_above (T-3.10)
+- Snap-to-corner half/quarter tile (T-3.14)
+- Floating-on-tiled rendering z-stack (3.B-T13)
+- Smoke tests (3.B-T16)
+
+### Verified
+- `cargo check -p zos-wm` clean after every wave
+- `cargo test -p zos-wm --lib shell::tiling::dwindle` 7/7 passing
+- `cargo check -p zos-wm --features udev` still pre-existing libseat link (host environment)
+
+---

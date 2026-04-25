@@ -419,11 +419,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             }
         }
 
-        let grab = PointerMoveSurfaceGrab {
+        let grab = PointerMoveSurfaceGrab::new_from_element(
             start_data,
-            window: element.clone(),
+            element,
             initial_window_location,
-        };
+        );
 
         let pointer = self.pointer.clone();
         pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);

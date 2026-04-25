@@ -71,6 +71,19 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
         place_new_window(&mut self.space, self.pointer.current_location(), &window, true);
 
+        // place_new_window has already mapped to Space at this point.
+        // Backfill the workspace bookkeeping using the chosen location, so
+        // the active workspace's window list reflects what's on screen.
+        if let Some(focused_output_id) = self.focused_output {
+            if let Some(output_state) = self.outputs.get_mut(&focused_output_id) {
+                let workspace_id = output_state.active().id;
+                let location = self.space.element_location(&window).unwrap_or_default();
+                let mut entry = crate::shell::element::WindowEntry::new(window.clone(), workspace_id);
+                entry.location = location;
+                output_state.active_mut().add(entry);
+            }
+        }
+
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.space, surface);
         });
@@ -611,11 +624,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             initial_window_location = (pos.x as i32, pos.y as i32).into();
         }
 
-        let grab = PointerMoveSurfaceGrab {
+        let grab = PointerMoveSurfaceGrab::new_from_element(
             start_data,
-            window,
+            &window,
             initial_window_location,
-        };
+        );
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }

@@ -462,3 +462,116 @@ where
         }
     }
 }
+
+// ============================================================================
+// Phase 3 floating-first WM foundation types
+// ============================================================================
+
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Monotonic identifier for windows. Stable for the lifetime of the
+/// `WindowEntry`. Used as a key everywhere a `WindowElement` would otherwise
+/// be cloned (grabs, focus history, workspace stacks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowId(u32);
+
+impl WindowId {
+    /// Allocate a new id. Counter is process-global, never reused.
+    pub fn alloc() -> Self {
+        static COUNTER: AtomicU32 = AtomicU32::new(1);
+        Self(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+/// Z-stack band a window lives in. Layers compose: Below renders below
+/// Normal, Normal below AlwaysOnTop, AlwaysOnTop below Fullscreen.
+///
+/// The variant order below is load-bearing: derived `PartialOrd`/`Ord`
+/// follow declaration order, so `Below < Normal < AlwaysOnTop <
+/// Fullscreen`. `Workspace::raise`/`Workspace::lower` rely on this for
+/// band-aware insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ZBand {
+    Below,
+    Normal,
+    AlwaysOnTop,
+    Fullscreen,
+}
+
+impl Default for ZBand {
+    fn default() -> Self {
+        ZBand::Normal
+    }
+}
+
+/// Workspace identifier. Per-monitor workspaces; multiple workspaces share
+/// the same numeric id across different outputs (workspace 1 on each
+/// monitor is a separate `Workspace` instance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WorkspaceId(pub u32);
+
+/// Tiling-side per-window state stored on `WindowElement.user_data()`.
+/// `tiled_override = None` means "follow workspace mode"; `Some(false)`
+/// means "always floating"; `Some(true)` means "tiled when workspace
+/// mode permits".
+#[derive(Debug, Default)]
+pub struct WindowLayoutState {
+    pub tiled_override: std::sync::Mutex<Option<bool>>,
+}
+
+impl WindowElement {
+    /// Convenience accessor for `WindowLayoutState`. Lazily inserts a
+    /// default instance the first time it's queried, mirroring how
+    /// smithay APIs treat user-data slots.
+    pub fn layout_state(&self) -> &WindowLayoutState {
+        self.user_data()
+            .get_or_insert_threadsafe(WindowLayoutState::default)
+    }
+
+    /// Convenience accessor for `WindowId`. Same lazy-init pattern; once
+    /// allocated the id is stable for the life of the element.
+    pub fn id(&self) -> WindowId {
+        *self.user_data().get_or_insert_threadsafe(WindowId::alloc)
+    }
+}
+
+/// A window plus the workspace-side bookkeeping that surrounds it.
+///
+/// `WindowEntry` is the unit a `Workspace` holds. It owns the
+/// `WindowElement` (which itself wraps `smithay::desktop::Window`), the
+/// global-coordinate logical position, the z-band, parent linkage for
+/// modals, the stored size used to restore from fullscreen/maximize, and
+/// the activated flag mirrored to xdg_toplevel.
+#[derive(Debug, Clone)]
+pub struct WindowEntry {
+    pub id: WindowId,
+    pub element: WindowElement,
+    pub location: Point<i32, Logical>,
+    pub band: ZBand,
+    pub workspace_id: WorkspaceId,
+    pub parent_id: Option<WindowId>,
+    pub stored_size: Option<smithay::utils::Size<i32, Logical>>,
+    pub activated: bool,
+}
+
+impl WindowEntry {
+    /// Construct a new entry for `element`, allocating a fresh `WindowId`
+    /// (and stashing it on the element's user_data for reverse lookup).
+    pub fn new(element: WindowElement, workspace_id: WorkspaceId) -> Self {
+        let id = element.id();
+        Self {
+            id,
+            element,
+            location: (0, 0).into(),
+            band: ZBand::Normal,
+            workspace_id,
+            parent_id: None,
+            stored_size: None,
+            activated: false,
+        }
+    }
+}

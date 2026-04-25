@@ -248,6 +248,12 @@ pub fn run_winit() {
         &output,
     );
 
+    // Bootstrap an OutputState for the winit virtual output.
+    let output_state = crate::shell::output_state::OutputState::new(output.clone());
+    let output_state_id = output_state.id;
+    state.outputs.insert(output_state_id, output_state);
+    state.focused_output = Some(output_state_id);
+
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 

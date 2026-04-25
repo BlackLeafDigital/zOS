@@ -1,6 +1,15 @@
-use std::{convert::TryInto, process::Command, sync::atomic::Ordering};
+use std::{process::Command, sync::atomic::Ordering};
 
-use crate::{AnvilState, focus::PointerFocusTarget, shell::FullscreenSurface};
+use crate::{
+    AnvilState,
+    binds::{Action, BindKey, Direction, KeyCombo, Modifiers},
+    focus::PointerFocusTarget,
+    shell::{
+        FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData, ResizeState,
+        SurfaceData, WindowId, WorkspaceId, edges_for_pointer, output_state::OutputId,
+        workspace::sync_active_workspaces_to_space,
+    },
+};
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
@@ -14,14 +23,11 @@ use smithay::{
     },
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{
-        keyboard::{FilterResult, Keysym, ModifiersState, keysyms as xkb},
+        keyboard::{FilterResult, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, MotionEvent},
     },
     output::Scale,
-    reexports::{
-        wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1,
-        wayland_server::protocol::wl_pointer,
-    },
+    reexports::wayland_server::protocol::wl_pointer,
     utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER, Serial, Transform},
     wayland::{
         input_method::InputMethodSeat,
@@ -35,7 +41,7 @@ use smithay::backend::input::AbsolutePositionEvent;
 
 #[cfg(any(feature = "winit", feature = "x11"))]
 use smithay::output::Output;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::state::Backend;
 #[cfg(feature = "udev")]
@@ -64,86 +70,49 @@ use smithay::{
     },
 };
 
-impl<BackendData: Backend> AnvilState<BackendData> {
-    // Allow in this method because of existing usage
-    #[allow(clippy::uninlined_format_args)]
-    fn process_common_key_action(&mut self, action: KeyAction) {
-        match action {
-            KeyAction::None => (),
-
-            KeyAction::Quit => {
-                info!("Quitting.");
-                self.running.store(false, Ordering::SeqCst);
-            }
-
-            KeyAction::Run(cmd) => {
-                info!(cmd, "Starting program");
-
-                if let Err(e) = Command::new(&cmd)
-                    .envs(
-                        self.socket_name
-                            .clone()
-                            .map(|v| ("WAYLAND_DISPLAY", v))
-                            .into_iter()
-                            .chain(
-                                #[cfg(feature = "xwayland")]
-                                self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
-                                #[cfg(not(feature = "xwayland"))]
-                                None,
-                            ),
-                    )
-                    .spawn()
-                {
-                    error!(cmd, err = %e, "Failed to start program");
-                }
-            }
-
-            KeyAction::TogglePreview => {
-                self.show_window_preview = !self.show_window_preview;
-            }
-
-            KeyAction::ToggleDecorations => {
-                for element in self.space.elements() {
-                    #[allow(irrefutable_let_patterns)]
-                    if let Some(toplevel) = element.0.toplevel() {
-                        let mode_changed = toplevel.with_pending_state(|state| {
-                            if let Some(current_mode) = state.decoration_mode {
-                                let new_mode =
-                                    if current_mode == zxdg_toplevel_decoration_v1::Mode::ClientSide {
-                                        zxdg_toplevel_decoration_v1::Mode::ServerSide
-                                    } else {
-                                        zxdg_toplevel_decoration_v1::Mode::ClientSide
-                                    };
-                                state.decoration_mode = Some(new_mode);
-                                true
-                            } else {
-                                false
-                            }
-                        });
-
-                        if mode_changed && toplevel.is_initial_configure_sent() {
-                            toplevel.send_pending_configure();
-                        }
-                    }
-                }
-            }
-
-            _ => unreachable!(
-                "Common key action handler encountered backend specific action {:?}",
-                action
-            ),
-        }
+/// Translate smithay's `ModifiersState` into our compositor-relevant
+/// `Modifiers` bitflag set. Caps-lock / num-lock are deliberately ignored;
+/// they're keyboard state, not bindable mods.
+fn current_modifiers(state: &ModifiersState) -> Modifiers {
+    let mut m = Modifiers::empty();
+    if state.shift {
+        m |= Modifiers::SHIFT;
     }
+    if state.ctrl {
+        m |= Modifiers::CTRL;
+    }
+    if state.alt {
+        m |= Modifiers::ALT;
+    }
+    if state.logo {
+        m |= Modifiers::SUPER;
+    }
+    if state.iso_level3_shift {
+        m |= Modifiers::ALTGR;
+    }
+    m
+}
 
-    fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
+impl<BackendData: Backend> AnvilState<BackendData> {
+    /// Decode a keyboard event into an `Action` (if any matches the bind
+    /// table) and update the suppression set so the matching release is
+    /// silently swallowed instead of leaking to the focused client.
+    ///
+    /// Returns `Some(action)` only on the *press* of a bound combo. Releases
+    /// always return `None` — they're either swallowed (when the keycode is
+    /// in `suppressed_keycodes`) or forwarded to the client by smithay's
+    /// keyboard machinery.
+    fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> Option<Action> {
         let keycode = evt.key_code();
         let state = evt.state();
         debug!(?keycode, ?state, "key");
         let serial = SCOUNTER.next_serial();
         let time = Event::time_msec(&evt);
-        let mut suppressed_keys = self.suppressed_keys.clone();
         let keyboard = self.seat.get_keyboard().unwrap();
 
+        // Exclusive layer surface (Top/Overlay) steals the keyboard. We
+        // don't run any binding lookup in that case; the layer client owns
+        // the keyboard until it releases interactivity.
         for layer in self.layer_shell_state.layer_surfaces().rev() {
             let exclusive = layer.with_cached_state(|data| {
                 data.keyboard_interactivity == KeyboardInteractivity::Exclusive
@@ -159,11 +128,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                     keyboard.input::<(), _>(self, keycode, state, serial, time, |_, _, _| {
                         FilterResult::Forward
                     });
-                    return KeyAction::None;
+                    return None;
                 };
             }
         }
 
+        // If the focused surface holds a keyboard-shortcut inhibitor, skip
+        // compositor binds entirely so the client sees the raw key.
         let inhibited = self
             .space
             .element_under(self.pointer.current_location())
@@ -174,59 +145,732 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             .map(|inhibitor| inhibitor.is_active())
             .unwrap_or(false);
 
-        let action = keyboard
-            .input(self, keycode, state, serial, time, |_, modifiers, handle| {
-                let keysym = handle.modified_sym();
+        keyboard.input(self, keycode, state, serial, time, |data, modifiers, handle| {
+            let keysym = handle.modified_sym();
+            debug!(
+                ?state,
+                mods = ?modifiers,
+                keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
+                "keysym"
+            );
 
-                debug!(
-                    ?state,
-                    mods = ?modifiers,
-                    keysym = ::xkbcommon::xkb::keysym_get_name(keysym),
-                    "keysym"
-                );
-
-                // If the key is pressed and triggered a action
-                // we will not forward the key to the client.
-                // Additionally add the key to the suppressed keys
-                // so that we can decide on a release if the key
-                // should be forwarded to the client or not.
-                if let KeyState::Pressed = state {
-                    if !inhibited {
-                        let action = process_keyboard_shortcut(*modifiers, keysym);
-
-                        if action.is_some() {
-                            suppressed_keys.push(keysym);
-                        }
-
-                        action
-                            .map(FilterResult::Intercept)
-                            .unwrap_or(FilterResult::Forward)
-                    } else {
-                        FilterResult::Forward
+            match state {
+                KeyState::Pressed => {
+                    if inhibited {
+                        return FilterResult::Forward;
                     }
-                } else {
-                    let suppressed = suppressed_keys.contains(&keysym);
-                    if suppressed {
-                        suppressed_keys.retain(|k| *k != keysym);
-                        FilterResult::Intercept(KeyAction::None)
+                    let combo = KeyCombo::keysym(current_modifiers(modifiers), keysym);
+                    if let Some(action) = data.bindings.get(&combo).cloned() {
+                        // Remember the keycode so the matching release is
+                        // suppressed; otherwise the client would see a
+                        // dangling release for a press it never received.
+                        data.suppressed_keycodes.insert(keycode);
+                        FilterResult::Intercept(action)
                     } else {
                         FilterResult::Forward
                     }
                 }
-            })
-            .unwrap_or(KeyAction::None);
+                KeyState::Released => {
+                    if data.suppressed_keycodes.remove(&keycode) {
+                        // Release of a previously-suppressed press: swallow.
+                        // We use `Action::Nop` as the "intercepted but no
+                        // dispatch needed" sentinel; the call site filters
+                        // it out before handing off to `dispatch_action`.
+                        FilterResult::Intercept(Action::Nop)
+                    } else {
+                        FilterResult::Forward
+                    }
+                }
+            }
+        })
+    }
 
-        self.suppressed_keys = suppressed_keys;
-        action
+    /// Single dispatcher for compositor `Action`s. Most arms are stubs that
+    /// log a `warn!` until the relevant subsystem (workspace, grabs, focus
+    /// machinery) lands; the arms preserved verbatim from the old
+    /// `KeyAction` are: Quit, Spawn, ScaleUp/Down, RotateOutput, ToggleTint,
+    /// TogglePreview, Screen, VtSwitch.
+    pub fn dispatch_action(&mut self, action: Action) {
+        match action {
+            Action::Nop => {}
+
+            Action::Quit => {
+                info!("Quitting.");
+                self.running.store(false, Ordering::SeqCst);
+            }
+
+            Action::Spawn(argv) => {
+                if argv.is_empty() {
+                    warn!("Action::Spawn invoked with empty argv");
+                    return;
+                }
+                info!(cmd = ?argv, "Spawning program");
+
+                let mut cmd = Command::new(&argv[0]);
+                cmd.args(&argv[1..]);
+                cmd.envs(
+                    self.socket_name
+                        .clone()
+                        .map(|v| ("WAYLAND_DISPLAY", v))
+                        .into_iter()
+                        .chain(
+                            #[cfg(feature = "xwayland")]
+                            self.xdisplay.map(|v| ("DISPLAY", format!(":{v}"))),
+                            #[cfg(not(feature = "xwayland"))]
+                            None,
+                        ),
+                );
+                if let Err(e) = cmd.spawn() {
+                    error!(cmd = ?argv, err = %e, "Failed to start program");
+                }
+            }
+
+            Action::VtSwitch(vt) => {
+                self.dispatch_vt_switch(vt);
+            }
+
+            Action::ScaleUp => self.dispatch_scale_delta(0.25),
+            Action::ScaleDown => self.dispatch_scale_delta(-0.25),
+            Action::RotateOutput => self.dispatch_rotate_output(),
+            Action::ToggleTint => self.dispatch_toggle_tint(),
+
+            Action::TogglePreview => {
+                self.show_window_preview = !self.show_window_preview;
+            }
+
+            Action::Screen(num) => {
+                let geometry = self
+                    .space
+                    .outputs()
+                    .nth(num)
+                    .map(|o| self.space.output_geometry(o).unwrap());
+
+                if let Some(geometry) = geometry {
+                    let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
+                    let y = geometry.size.h as f64 / 2.0;
+                    let location = (x, y).into();
+                    let pointer = self.pointer.clone();
+                    let under = self.surface_under(location);
+                    pointer.motion(
+                        self,
+                        under,
+                        &MotionEvent {
+                            location,
+                            serial: SCOUNTER.next_serial(),
+                            time: self.clock.now().as_millis(),
+                        },
+                    );
+                    pointer.frame(self);
+                }
+            }
+
+            Action::CloseWindow => {
+                self.action_close_window();
+            }
+
+            Action::SwitchToWorkspace(n) => {
+                self.action_switch_to_workspace(n);
+            }
+
+            Action::MoveWindowToWorkspace(n) => {
+                self.action_move_window_to_workspace(n);
+            }
+
+            Action::ToggleFloating => {
+                self.action_toggle_floating();
+            }
+
+            Action::ToggleFullscreen => {
+                self.action_toggle_fullscreen();
+            }
+
+            Action::ToggleMaximize => {
+                self.action_toggle_maximize();
+            }
+
+            Action::BeginMove => {
+                self.action_begin_move();
+            }
+
+            Action::BeginResize => {
+                self.action_begin_resize();
+            }
+
+            Action::FocusNext => {
+                self.action_focus_history_step(true);
+            }
+
+            Action::FocusPrev => {
+                self.action_focus_history_step(false);
+            }
+
+            Action::FocusDirection(dir) => {
+                self.action_focus_direction(dir);
+            }
+
+            Action::MoveWindow(dir) => {
+                self.action_move_window(dir);
+            }
+
+            other @ Action::ToggleWorkspaceTiling => {
+                // Tiling-mode toggle requires the per-workspace tiling
+                // algorithm to be hooked up to layout application; that
+                // wiring lands with the dwindle relayout pass. Until
+                // then we no-op rather than mis-toggling state nothing
+                // reads.
+                warn!(?other, "Action::ToggleWorkspaceTiling not yet wired to layout pass");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Action handlers — broken out as helpers so dispatch_action stays
+    // readable and so each unit can be exercised in isolation.
+    // ------------------------------------------------------------------
+
+    /// Resolve the focused window: `(window_id, output_id)` of the
+    /// active window on the focused output's active workspace, if any.
+    fn focused_output_window(&self) -> Option<(WindowId, OutputId)> {
+        let out_id = self.focused_output?;
+        let out_state = self.outputs.get(&out_id)?;
+        let win_id = out_state.active().active?;
+        Some((win_id, out_id))
+    }
+
+    fn action_close_window(&mut self) {
+        let Some((focused_id, _)) = self.focused_output_window() else {
+            debug!("CloseWindow: no focused window");
+            return;
+        };
+        let Some(elem) = self
+            .space
+            .elements()
+            .find(|e| e.id() == focused_id)
+            .cloned()
+        else {
+            debug!("CloseWindow: focused window id not in space");
+            return;
+        };
+        match elem.0.underlying_surface() {
+            smithay::desktop::WindowSurface::Wayland(w) => w.send_close(),
+            #[cfg(feature = "xwayland")]
+            smithay::desktop::WindowSurface::X11(w) => {
+                let _ = w.close();
+            }
+        }
+    }
+
+    fn action_switch_to_workspace(&mut self, n: u32) {
+        let Some(out_id) = self.focused_output else {
+            debug!("SwitchToWorkspace: no focused output");
+            return;
+        };
+        let Some(out_state) = self.outputs.get_mut(&out_id) else {
+            return;
+        };
+        out_state.switch_to(WorkspaceId(n));
+        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+    }
+
+    fn action_move_window_to_workspace(&mut self, n: u32) {
+        let target = WorkspaceId(n);
+        let Some(out_id) = self.focused_output else {
+            debug!("MoveWindowToWorkspace: no focused output");
+            return;
+        };
+        let Some(out_state) = self.outputs.get_mut(&out_id) else {
+            return;
+        };
+        let Some(focused_id) = out_state.active().active else {
+            debug!("MoveWindowToWorkspace: no focused window");
+            return;
+        };
+        if out_state.active().id == target {
+            // Already on the target workspace.
+            return;
+        }
+
+        let Some(mut entry) = out_state.active_mut().remove(focused_id) else {
+            return;
+        };
+        entry.workspace_id = target;
+
+        if out_state.workspace(target).is_some() {
+            out_state.workspace_mut(target).unwrap().add(entry);
+        } else {
+            // Lazy-create the target without leaving it active.
+            let prev_active_id = out_state.active().id;
+            out_state.switch_to(target);
+            out_state.active_mut().add(entry);
+            out_state.switch_to(prev_active_id);
+        }
+
+        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+    }
+
+    fn action_toggle_floating(&mut self) {
+        let Some((focused_id, _)) = self.focused_output_window() else {
+            debug!("ToggleFloating: no focused window");
+            return;
+        };
+        let Some(elem) = self.space.elements().find(|e| e.id() == focused_id) else {
+            return;
+        };
+        let mut guard = elem.layout_state().tiled_override.lock().unwrap();
+        *guard = match *guard {
+            None => Some(false),
+            Some(false) => Some(true),
+            Some(true) => None,
+        };
+    }
+
+    fn action_toggle_fullscreen(&mut self) {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+        let Some((focused_id, _)) = self.focused_output_window() else {
+            debug!("ToggleFullscreen: no focused window");
+            return;
+        };
+        let Some(elem) = self
+            .space
+            .elements()
+            .find(|e| e.id() == focused_id)
+            .cloned()
+        else {
+            return;
+        };
+        if let Some(toplevel) = elem.0.toplevel() {
+            toplevel.with_pending_state(|s| {
+                if s.states.contains(xdg_toplevel::State::Fullscreen) {
+                    s.states.unset(xdg_toplevel::State::Fullscreen);
+                    s.size = None;
+                } else {
+                    s.states.set(xdg_toplevel::State::Fullscreen);
+                }
+            });
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
+            }
+        }
+    }
+
+    fn action_toggle_maximize(&mut self) {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+        let Some((focused_id, _)) = self.focused_output_window() else {
+            debug!("ToggleMaximize: no focused window");
+            return;
+        };
+        let Some(elem) = self
+            .space
+            .elements()
+            .find(|e| e.id() == focused_id)
+            .cloned()
+        else {
+            return;
+        };
+        if let Some(toplevel) = elem.0.toplevel() {
+            toplevel.with_pending_state(|s| {
+                if s.states.contains(xdg_toplevel::State::Maximized) {
+                    s.states.unset(xdg_toplevel::State::Maximized);
+                    s.size = None;
+                } else {
+                    s.states.set(xdg_toplevel::State::Maximized);
+                }
+            });
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
+            }
+        }
+    }
+
+    fn action_begin_move(&mut self) {
+        let pointer = self.pointer.clone();
+        let pointer_loc = pointer.current_location();
+        let Some((elem, win_loc)) = self
+            .space
+            .element_under(pointer_loc)
+            .map(|(e, l)| (e.clone(), l))
+        else {
+            debug!("BeginMove: no window under pointer");
+            return;
+        };
+        let win_id = elem.id();
+        let serial = SCOUNTER.next_serial();
+        let start_data = smithay::input::pointer::GrabStartData {
+            focus: None,
+            button: 0x110, // BTN_LEFT
+            location: pointer_loc,
+        };
+        let grab: PointerMoveSurfaceGrab<BackendData> =
+            PointerMoveSurfaceGrab::new_from_id(start_data, win_id, win_loc);
+        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+    }
+
+    fn action_begin_resize(&mut self) {
+        use std::cell::RefCell;
+        use smithay::wayland::compositor::with_states;
+        let pointer = self.pointer.clone();
+        let pointer_loc = pointer.current_location();
+        let Some((elem, win_loc)) = self
+            .space
+            .element_under(pointer_loc)
+            .map(|(e, l)| (e.clone(), l))
+        else {
+            debug!("BeginResize: no window under pointer");
+            return;
+        };
+        let geometry = smithay::desktop::space::SpaceElement::geometry(&elem);
+        let initial_window_size = geometry.size;
+        let win_rect = smithay::utils::Rectangle::new(win_loc, geometry.size);
+        let edges = edges_for_pointer(win_rect, pointer_loc);
+        if edges.is_empty() {
+            return;
+        }
+
+        // Record the per-surface resize state so commit handlers can
+        // finish out the resize after the grab releases.
+        if let Some(surface) = elem.wl_surface() {
+            with_states(&surface, |states| {
+                if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
+                    data.borrow_mut().resize_state = ResizeState::Resizing(ResizeData {
+                        edges,
+                        initial_window_location: win_loc,
+                        initial_window_size,
+                    });
+                }
+            });
+        }
+
+        let serial = SCOUNTER.next_serial();
+        let start_data = smithay::input::pointer::GrabStartData {
+            focus: None,
+            button: 0x111, // BTN_RIGHT
+            location: pointer_loc,
+        };
+        let grab: PointerResizeSurfaceGrab<BackendData> = PointerResizeSurfaceGrab {
+            start_data,
+            window: elem,
+            edges,
+            initial_window_location: win_loc,
+            initial_window_size,
+            last_window_size: initial_window_size,
+        };
+        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+    }
+
+    /// MRU-history step. `forward = true` corresponds to FocusNext (one
+    /// step back in time, the previously-focused window); `forward =
+    /// false` is FocusPrev. With only the focus stack to go on, both
+    /// reduce to "the entry directly before the current top of stack".
+    ///
+    /// TODO(phase-3): track an Alt-Tab cursor across multiple invocations
+    /// so repeated FocusNext walks deeper into history. The current
+    /// implementation flips between the top two entries, which matches
+    /// the behaviour most users expect from a single press.
+    fn action_focus_history_step(&mut self, forward: bool) {
+        let _ = forward; // both directions resolve to the same target today
+        let Some(out_id) = self.focused_output else {
+            return;
+        };
+        let Some(out_state) = self.outputs.get_mut(&out_id) else {
+            return;
+        };
+        let history = &out_state.active().focus_history;
+        let target = if history.len() >= 2 {
+            history[history.len() - 2]
+        } else {
+            return;
+        };
+        out_state.active_mut().focus(target, true);
+        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+        self.update_keyboard_focus_to_window(target);
+    }
+
+    fn action_focus_direction(&mut self, dir: Direction) {
+        let Some(out_id) = self.focused_output else {
+            return;
+        };
+        // Snapshot focused window's rect.
+        let (focused_id, focus_rect) = {
+            let Some(out_state) = self.outputs.get(&out_id) else {
+                return;
+            };
+            let Some(focused_id) = out_state.active().active else {
+                return;
+            };
+            let Some(focused_elem) = self.space.elements().find(|e| e.id() == focused_id) else {
+                return;
+            };
+            let loc = self
+                .space
+                .element_location(focused_elem)
+                .unwrap_or_default();
+            let geo = smithay::desktop::space::SpaceElement::geometry(focused_elem);
+            (focused_id, smithay::utils::Rectangle::new(loc, geo.size))
+        };
+
+        // Pick the closest candidate strictly in `dir` from the focused
+        // window's centre. Distance is squared euclidean distance
+        // between centres; ties resolve by stable iteration order.
+        let focus_centre = (
+            focus_rect.loc.x as f64 + focus_rect.size.w as f64 / 2.0,
+            focus_rect.loc.y as f64 + focus_rect.size.h as f64 / 2.0,
+        );
+        let mut best: Option<(i64, WindowId)> = None;
+        let active_ids: std::collections::HashSet<WindowId> = self
+            .outputs
+            .get(&out_id)
+            .map(|os| os.active().windows.iter().map(|e| e.id).collect())
+            .unwrap_or_default();
+        for elem in self.space.elements() {
+            let id = elem.id();
+            if id == focused_id {
+                continue;
+            }
+            if !active_ids.contains(&id) {
+                continue;
+            }
+            let loc = self.space.element_location(elem).unwrap_or_default();
+            let geo = smithay::desktop::space::SpaceElement::geometry(elem);
+            let cand_centre = (
+                loc.x as f64 + geo.size.w as f64 / 2.0,
+                loc.y as f64 + geo.size.h as f64 / 2.0,
+            );
+            let dx = cand_centre.0 - focus_centre.0;
+            let dy = cand_centre.1 - focus_centre.1;
+            let in_dir = match dir {
+                Direction::Left => dx < -1.0 && dx.abs() >= dy.abs(),
+                Direction::Right => dx > 1.0 && dx.abs() >= dy.abs(),
+                Direction::Up => dy < -1.0 && dy.abs() >= dx.abs(),
+                Direction::Down => dy > 1.0 && dy.abs() >= dx.abs(),
+            };
+            if !in_dir {
+                continue;
+            }
+            let dist2 = (dx * dx + dy * dy) as i64;
+            if best.map(|(d, _)| dist2 < d).unwrap_or(true) {
+                best = Some((dist2, id));
+            }
+        }
+
+        let Some((_, target)) = best else {
+            return;
+        };
+        if let Some(out_state) = self.outputs.get_mut(&out_id) {
+            out_state.active_mut().focus(target, true);
+        }
+        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+        self.update_keyboard_focus_to_window(target);
+    }
+
+    fn action_move_window(&mut self, dir: Direction) {
+        const STEP: i32 = 50;
+        let Some((focused_id, out_id)) = self.focused_output_window() else {
+            return;
+        };
+        let delta: smithay::utils::Point<i32, smithay::utils::Logical> = match dir {
+            Direction::Left => (-STEP, 0).into(),
+            Direction::Right => (STEP, 0).into(),
+            Direction::Up => (0, -STEP).into(),
+            Direction::Down => (0, STEP).into(),
+        };
+
+        // Update the workspace entry's location in-place, then re-sync
+        // the live Space so the on-screen position follows.
+        if let Some(out_state) = self.outputs.get_mut(&out_id) {
+            if let Some(entry) = out_state.active_mut().find_mut(focused_id) {
+                entry.location += delta;
+            }
+        }
+        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+    }
+
+    /// Forward a workspace-driven focus change to the wl_keyboard so
+    /// clients see the focus event. Used by FocusNext/FocusPrev/
+    /// FocusDirection where we change the active window without a
+    /// pointer click.
+    fn update_keyboard_focus_to_window(&mut self, id: WindowId) {
+        let Some(elem) = self.space.elements().find(|e| e.id() == id).cloned() else {
+            return;
+        };
+        let serial = SCOUNTER.next_serial();
+        let keyboard = self.seat.get_keyboard().unwrap();
+        if !keyboard.is_grabbed() {
+            keyboard.set_focus(self, Some(elem.into()), serial);
+        }
+    }
+
+    /// VT switching: udev backend wires this through to libseat;
+    /// winit/x11 don't own a TTY, so we log and continue.
+    #[cfg(feature = "udev")]
+    fn dispatch_vt_switch(&mut self, vt: i32) {
+        info!(to = vt, "Trying to switch vt");
+        if let Err(err) = self.backend_data.session.change_vt(vt) {
+            error!(vt, "Error switching vt: {}", err);
+        }
+    }
+
+    #[cfg(not(feature = "udev"))]
+    fn dispatch_vt_switch(&mut self, vt: i32) {
+        debug!(?vt, "VtSwitch ignored: backend has no session");
+    }
+
+    /// Output-tint debug toggle (anvil dev knob). Only the udev backend
+    /// exposes `DebugFlags`; on winit/x11 this is a no-op.
+    #[cfg(feature = "udev")]
+    fn dispatch_toggle_tint(&mut self) {
+        // Only the udev backend has DebugFlags; the trait method exists on
+        // every Backend impl for the udev build (anvil_state) but we keep
+        // the call best-effort by feature-gating the whole helper.
+        let mut debug_flags = self.backend_data.debug_flags();
+        debug_flags.toggle(DebugFlags::TINT);
+        self.backend_data.set_debug_flags(debug_flags);
+    }
+
+    #[cfg(not(feature = "udev"))]
+    fn dispatch_toggle_tint(&mut self) {
+        debug!("ToggleTint ignored: backend has no debug-flags surface");
+    }
+
+    /// Adjust the fractional scale of the output under the pointer by
+    /// `delta` (clamped to 1.0 minimum). Pointer is re-anchored on the
+    /// rescaled output so it doesn't fly off-screen.
+    fn dispatch_scale_delta(&mut self, delta: f64) {
+        let pos = self.pointer.current_location().to_i32_round();
+        let output = self
+            .space
+            .outputs()
+            .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
+            .cloned();
+
+        let Some(output) = output else {
+            debug!("Scale change requested but pointer is on no output");
+            return;
+        };
+
+        let (output_location, scale) = (
+            self.space.output_geometry(&output).unwrap().loc,
+            output.current_scale().fractional_scale(),
+        );
+        let new_scale = f64::max(1.0, scale + delta);
+        if (new_scale - scale).abs() < f64::EPSILON {
+            return;
+        }
+        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+
+        let rescale = scale / new_scale;
+        let output_location = output_location.to_f64();
+        let mut pointer_output_location = self.pointer.current_location() - output_location;
+        pointer_output_location.x *= rescale;
+        pointer_output_location.y *= rescale;
+        let pointer_location = output_location + pointer_output_location;
+
+        crate::shell::fixup_positions(&mut self.space, pointer_location);
+        let pointer = self.pointer.clone();
+        let under = self.surface_under(pointer_location);
+        pointer.motion(
+            self,
+            under,
+            &MotionEvent {
+                location: pointer_location,
+                serial: SCOUNTER.next_serial(),
+                time: self.clock.now().as_millis(),
+            },
+        );
+        pointer.frame(self);
+        self.backend_data.reset_buffers(&output);
+    }
+
+    /// Cycle through the eight `Transform` orientations on the output under
+    /// the pointer. Anvil dev knob, preserved as-is.
+    fn dispatch_rotate_output(&mut self) {
+        let pos = self.pointer.current_location().to_i32_round();
+        let output = self
+            .space
+            .outputs()
+            .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
+            .cloned();
+
+        let Some(output) = output else {
+            debug!("RotateOutput requested but pointer is on no output");
+            return;
+        };
+
+        let current_transform = output.current_transform();
+        let new_transform = match current_transform {
+            Transform::Normal => Transform::_90,
+            Transform::_90 => Transform::_180,
+            Transform::_180 => Transform::_270,
+            Transform::_270 => Transform::Flipped,
+            Transform::Flipped => Transform::Flipped90,
+            Transform::Flipped90 => Transform::Flipped180,
+            Transform::Flipped180 => Transform::Flipped270,
+            Transform::Flipped270 => Transform::Normal,
+        };
+        info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
+        output.change_current_state(None, Some(new_transform), None, None);
+        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+        self.backend_data.reset_buffers(&output);
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
         let serial = SCOUNTER.next_serial();
         let button = evt.button_code();
-
         let state = wl_pointer::ButtonState::from(evt.state());
 
+        // Bind lookup: if the press matches a (Modifiers, MouseButton) combo,
+        // suppress it from the surface and dispatch the action instead.
+        // Releases of previously-suppressed buttons are swallowed so the
+        // client never sees an orphan release.
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            let modifiers = current_modifiers(&keyboard.modifier_state());
+            let combo = KeyCombo {
+                modifiers,
+                key: BindKey::MouseButton(button),
+            };
+
+            match state {
+                wl_pointer::ButtonState::Pressed => {
+                    if let Some(action) = self.bindings.get(&combo).cloned() {
+                        self.suppressed_buttons.insert(button);
+                        self.dispatch_action(action);
+                        return;
+                    }
+                }
+                wl_pointer::ButtonState::Released => {
+                    if self.suppressed_buttons.remove(&button) {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         if wl_pointer::ButtonState::Pressed == state {
+            // Click-to-focus at the workspace level: if the press lands
+            // on a tracked window, move it to the top of the active
+            // workspace's focus history and raise it. This runs *after*
+            // the bind-table lookup (so SUPER+LMB still triggers
+            // BeginMove without flipping focus) but *before* the
+            // surface-forward path so the client sees the click against
+            // the now-focused window.
+            if !self.pointer.is_grabbed() {
+                let pointer_loc = self.pointer.current_location();
+                if let Some((elem, _)) = self
+                    .space
+                    .element_under(pointer_loc)
+                    .map(|(e, l)| (e.clone(), l))
+                {
+                    let win_id = elem.id();
+                    if let Some(out_id) = self.focused_output {
+                        if let Some(out_state) = self.outputs.get_mut(&out_id) {
+                            if out_state.active().find(win_id).is_some() {
+                                out_state.active_mut().focus(win_id, true);
+                            }
+                        }
+                        sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+                    }
+                }
+            }
             self.update_keyboard_focus(self.pointer.current_location(), serial);
         };
         let pointer = self.pointer.clone();
@@ -442,78 +1086,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 impl<BackendData: Backend> AnvilState<BackendData> {
     pub fn process_input_event_windowed<B: InputBackend>(&mut self, event: InputEvent<B>, output_name: &str) {
         match event {
-            InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
-                KeyAction::ScaleUp => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = current_scale + 0.25;
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
+            InputEvent::Keyboard { event } => {
+                if let Some(action) = self.keyboard_key_to_action::<B>(event) {
+                    if matches!(action, Action::Nop) {
+                        return;
+                    }
+                    self.dispatch_action_windowed(action, output_name);
                 }
-
-                KeyAction::ScaleDown => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_scale = output.current_scale().fractional_scale();
-                    let new_scale = f64::max(1.0, current_scale - 0.25);
-                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
-                }
-
-                KeyAction::RotateOutput => {
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| o.name() == output_name)
-                        .unwrap()
-                        .clone();
-
-                    let current_transform = output.current_transform();
-                    let new_transform = match current_transform {
-                        Transform::Normal => Transform::_90,
-                        Transform::_90 => Transform::_180,
-                        Transform::_180 => Transform::_270,
-                        Transform::_270 => Transform::Flipped,
-                        Transform::Flipped => Transform::Flipped90,
-                        Transform::Flipped90 => Transform::Flipped180,
-                        Transform::Flipped180 => Transform::Flipped270,
-                        Transform::Flipped270 => Transform::Normal,
-                    };
-                    tracing::info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
-                    output.change_current_state(None, Some(new_transform), None, None);
-                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
-                    self.backend_data.reset_buffers(&output);
-                }
-
-                action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::TogglePreview
-                    | KeyAction::ToggleDecorations => self.process_common_key_action(action),
-
-                    _ => tracing::warn!(
-                        ?action,
-                        output_name,
-                        "Key action unsupported on on output backend.",
-                    ),
-                },
-            },
+            }
 
             InputEvent::PointerMotionAbsolute { event } => {
                 let output = self
@@ -527,6 +1107,57 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             InputEvent::PointerButton { event } => self.on_pointer_button::<B>(event),
             InputEvent::PointerAxis { event } => self.on_pointer_axis::<B>(event),
             _ => (), // other events are not handled in anvil (yet)
+        }
+    }
+
+    /// Windowed-backend-specific dispatcher: anvil debug knobs (ScaleUp,
+    /// ScaleDown, RotateOutput) act on the *named* virtual output rather
+    /// than the output under the pointer, since the windowed backends only
+    /// have one output and the pointer-location lookup would still resolve
+    /// to it. Everything else falls through to the generic dispatcher.
+    fn dispatch_action_windowed(&mut self, action: Action, output_name: &str) {
+        match action {
+            Action::ScaleUp => {
+                let output = self.space.outputs().find(|o| o.name() == output_name).cloned();
+                if let Some(output) = output {
+                    let current_scale = output.current_scale().fractional_scale();
+                    let new_scale = current_scale + 0.25;
+                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    self.backend_data.reset_buffers(&output);
+                }
+            }
+            Action::ScaleDown => {
+                let output = self.space.outputs().find(|o| o.name() == output_name).cloned();
+                if let Some(output) = output {
+                    let current_scale = output.current_scale().fractional_scale();
+                    let new_scale = f64::max(1.0, current_scale - 0.25);
+                    output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
+                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    self.backend_data.reset_buffers(&output);
+                }
+            }
+            Action::RotateOutput => {
+                let output = self.space.outputs().find(|o| o.name() == output_name).cloned();
+                if let Some(output) = output {
+                    let current_transform = output.current_transform();
+                    let new_transform = match current_transform {
+                        Transform::Normal => Transform::_90,
+                        Transform::_90 => Transform::_180,
+                        Transform::_180 => Transform::_270,
+                        Transform::_270 => Transform::Flipped,
+                        Transform::Flipped => Transform::Flipped90,
+                        Transform::Flipped90 => Transform::Flipped180,
+                        Transform::Flipped180 => Transform::Flipped270,
+                        Transform::Flipped270 => Transform::Normal,
+                    };
+                    info!(?current_transform, ?new_transform, output = ?output.name(), "changing output transform");
+                    output.change_current_state(None, Some(new_transform), None, None);
+                    crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
+                    self.backend_data.reset_buffers(&output);
+                }
+            }
+            other => self.dispatch_action(other),
         }
     }
 
@@ -573,158 +1204,13 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 impl AnvilState<UdevData> {
     pub fn process_input_event<B: InputBackend>(&mut self, dh: &DisplayHandle, event: InputEvent<B>) {
         match event {
-            InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
-                #[cfg(feature = "udev")]
-                KeyAction::VtSwitch(vt) => {
-                    info!(to = vt, "Trying to switch vt");
-                    if let Err(err) = self.backend_data.session.change_vt(vt) {
-                        error!(vt, "Error switching vt: {}", err);
+            InputEvent::Keyboard { event, .. } => {
+                if let Some(action) = self.keyboard_key_to_action::<B>(event) {
+                    if !matches!(action, Action::Nop) {
+                        self.dispatch_action(action);
                     }
                 }
-                KeyAction::Screen(num) => {
-                    let geometry = self
-                        .space
-                        .outputs()
-                        .nth(num)
-                        .map(|o| self.space.output_geometry(o).unwrap());
-
-                    if let Some(geometry) = geometry {
-                        let x = geometry.loc.x as f64 + geometry.size.w as f64 / 2.0;
-                        let y = geometry.size.h as f64 / 2.0;
-                        let location = (x, y).into();
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location,
-                                serial: SCOUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                    }
-                }
-                KeyAction::ScaleUp => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            self.space.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = scale + 0.25;
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-
-                        crate::shell::fixup_positions(&mut self.space, pointer_location);
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location: pointer_location,
-                                serial: SCOUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::ScaleDown => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let (output_location, scale) = (
-                            self.space.output_geometry(&output).unwrap().loc,
-                            output.current_scale().fractional_scale(),
-                        );
-                        let new_scale = f64::max(1.0, scale - 0.25);
-                        output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
-
-                        let rescale = scale / new_scale;
-                        let output_location = output_location.to_f64();
-                        let mut pointer_output_location = self.pointer.current_location() - output_location;
-                        pointer_output_location.x *= rescale;
-                        pointer_output_location.y *= rescale;
-                        let pointer_location = output_location + pointer_output_location;
-
-                        crate::shell::fixup_positions(&mut self.space, pointer_location);
-                        let pointer = self.pointer.clone();
-                        let under = self.surface_under(pointer_location);
-                        pointer.motion(
-                            self,
-                            under,
-                            &MotionEvent {
-                                location: pointer_location,
-                                serial: SCOUNTER.next_serial(),
-                                time: self.clock.now().as_millis(),
-                            },
-                        );
-                        pointer.frame(self);
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::RotateOutput => {
-                    let pos = self.pointer.current_location().to_i32_round();
-                    let output = self
-                        .space
-                        .outputs()
-                        .find(|o| self.space.output_geometry(o).unwrap().contains(pos))
-                        .cloned();
-
-                    if let Some(output) = output {
-                        let current_transform = output.current_transform();
-                        let new_transform = match current_transform {
-                            Transform::Normal => Transform::_90,
-                            Transform::_90 => Transform::_180,
-                            Transform::_180 => Transform::_270,
-                            Transform::_270 => Transform::Flipped,
-                            Transform::Flipped => Transform::Flipped90,
-                            Transform::Flipped90 => Transform::Flipped180,
-                            Transform::Flipped180 => Transform::Flipped270,
-                            Transform::Flipped270 => Transform::Normal,
-                        };
-                        output.change_current_state(None, Some(new_transform), None, None);
-                        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
-                        self.backend_data.reset_buffers(&output);
-                    }
-                }
-                KeyAction::ToggleTint => {
-                    let mut debug_flags = self.backend_data.debug_flags();
-                    debug_flags.toggle(DebugFlags::TINT);
-                    self.backend_data.set_debug_flags(debug_flags);
-                }
-
-                action => match action {
-                    KeyAction::None
-                    | KeyAction::Quit
-                    | KeyAction::Run(_)
-                    | KeyAction::TogglePreview
-                    | KeyAction::ToggleDecorations => self.process_common_key_action(action),
-
-                    _ => unreachable!(),
-                },
-            },
+            }
             InputEvent::PointerMotion { event, .. } => self.on_pointer_move::<B>(dh, event),
             InputEvent::PointerMotionAbsolute { event, .. } => self.on_pointer_move_absolute::<B>(dh, event),
             InputEvent::PointerButton { event, .. } => self.on_pointer_button::<B>(event),
@@ -1270,60 +1756,5 @@ impl AnvilState<UdevData> {
         } else {
             (clamped_x, pos_y).into()
         }
-    }
-}
-
-/// Possible results of a keyboard action
-#[allow(dead_code)] // some of these are only read if udev is enabled
-#[derive(Debug)]
-enum KeyAction {
-    /// Quit the compositor
-    Quit,
-    /// Trigger a vt-switch
-    VtSwitch(i32),
-    /// run a command
-    Run(String),
-    /// Switch the current screen
-    Screen(usize),
-    ScaleUp,
-    ScaleDown,
-    TogglePreview,
-    RotateOutput,
-    ToggleTint,
-    ToggleDecorations,
-    /// Do nothing more
-    None,
-}
-
-fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Option<KeyAction> {
-    if modifiers.ctrl && modifiers.alt && keysym == Keysym::BackSpace || modifiers.logo && keysym == Keysym::q
-    {
-        // ctrl+alt+backspace = quit
-        // logo + q = quit
-        Some(KeyAction::Quit)
-    } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym.raw()) {
-        // VTSwitch
-        Some(KeyAction::VtSwitch(
-            (keysym.raw() - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-        ))
-    } else if modifiers.logo && keysym == Keysym::Return {
-        // run terminal
-        Some(KeyAction::Run("weston-terminal".into()))
-    } else if modifiers.logo && (xkb::KEY_1..=xkb::KEY_9).contains(&keysym.raw()) {
-        Some(KeyAction::Screen((keysym.raw() - xkb::KEY_1) as usize))
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::M {
-        Some(KeyAction::ScaleDown)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
-        Some(KeyAction::ScaleUp)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::W {
-        Some(KeyAction::TogglePreview)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::R {
-        Some(KeyAction::RotateOutput)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
-        Some(KeyAction::ToggleTint)
-    } else if modifiers.logo && modifiers.shift && keysym == Keysym::D {
-        Some(KeyAction::ToggleDecorations)
-    } else {
-        None
     }
 }

@@ -218,12 +218,46 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
 
     pub show_window_preview: bool,
+
+    // Phase 3: per-output workspaces, focus tracking, parking lot.
+    /// Per-output state holding workspaces. Keyed by `OutputId` for stable
+    /// access during hotplug.
+    pub outputs: HashMap<crate::shell::output_state::OutputId, crate::shell::output_state::OutputState>,
+    /// Currently-focused output for keyboard / spawn placement.
+    pub focused_output: Option<crate::shell::output_state::OutputId>,
+    /// Recent (output, workspace) pairs for "go-back" navigation.
+    pub workspace_history: Vec<(crate::shell::output_state::OutputId, crate::shell::WorkspaceId)>,
+    /// Windows whose home output disconnected; restored when a matching
+    /// output reappears (or on user rescue).
+    pub parking_lot: Vec<crate::shell::WindowEntry>,
+    /// Click-to-focus vs follows-mouse; controls focus-on-pointer-enter.
+    pub focus_mode: FocusMode,
+
+    // Phase 3 input dispatch: bind table + suppression sets.
+    /// Bind table — `KeyCombo` → `Action`.
+    pub bindings: HashMap<crate::binds::KeyCombo, crate::binds::Action>,
+    /// Keycodes whose press already triggered a binding/grab. The matching
+    /// release event is dropped so the client never sees a hanging release.
+    pub suppressed_keycodes: HashSet<smithay::input::keyboard::Keycode>,
+    /// Same idea but for mouse buttons (Linux input button codes).
+    pub suppressed_buttons: HashSet<u32>,
 }
 
 #[derive(Debug)]
 pub struct DndIcon {
     pub surface: WlSurface,
     pub offset: Point<i32, Logical>,
+}
+
+/// Pointer focus policy. Controls whether moving the pointer over a window
+/// changes keyboard focus and/or raises it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FocusMode {
+    #[default]
+    ClickToFocus,
+    FollowMouse,
+    /// Hover focuses, but raise only on click.
+    FollowMouseClickToRaise,
 }
 
 delegate_compositor!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -1102,6 +1136,18 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
             show_window_preview: false,
+
+            // Phase 3: per-output workspaces / focus tracking / parking lot.
+            outputs: HashMap::new(),
+            focused_output: None,
+            workspace_history: Vec::new(),
+            parking_lot: Vec::new(),
+            focus_mode: FocusMode::default(),
+
+            // Phase 3 input dispatch: bind table + suppression sets.
+            bindings: crate::binds::default_bindings(),
+            suppressed_keycodes: HashSet::new(),
+            suppressed_buttons: HashSet::new(),
         }
     }
 

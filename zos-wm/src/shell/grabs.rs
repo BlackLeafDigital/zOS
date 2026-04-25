@@ -18,7 +18,7 @@ use smithay::{
 #[cfg(feature = "xwayland")]
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
 
-use super::{SurfaceData, WindowElement};
+use super::{SurfaceData, WindowElement, WindowId};
 use crate::{
     focus::PointerFocusTarget,
     state::{AnvilState, Backend},
@@ -26,8 +26,44 @@ use crate::{
 
 pub struct PointerMoveSurfaceGrab<BackendData: Backend + 'static> {
     pub start_data: PointerGrabStartData<AnvilState<BackendData>>,
-    pub window: WindowElement,
+    /// Identity of the window being moved. We carry the id rather than a
+    /// `WindowElement` clone so the grab survives workspace switches and
+    /// window destruction without dangling references — see
+    /// `phase-3-floating-windows.md` T-3.6.
+    pub window_id: WindowId,
     pub initial_window_location: Point<i32, Logical>,
+}
+
+impl<BackendData: Backend + 'static> PointerMoveSurfaceGrab<BackendData> {
+    /// Construct from an existing `WindowElement`, looking up its
+    /// `WindowId`. Convenience for call sites that already have the
+    /// element in hand.
+    pub fn new_from_element(
+        start_data: PointerGrabStartData<AnvilState<BackendData>>,
+        element: &WindowElement,
+        initial_window_location: Point<i32, Logical>,
+    ) -> Self {
+        Self {
+            start_data,
+            window_id: element.id(),
+            initial_window_location,
+        }
+    }
+
+    /// Construct directly from a `WindowId`. Preferred for new call sites
+    /// that work in id-space (e.g. compositor-initiated grabs from input
+    /// dispatch).
+    pub fn new_from_id(
+        start_data: PointerGrabStartData<AnvilState<BackendData>>,
+        window_id: WindowId,
+        initial_window_location: Point<i32, Logical>,
+    ) -> Self {
+        Self {
+            start_data,
+            window_id,
+            initial_window_location,
+        }
+    }
 }
 
 impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveSurfaceGrab<BackendData> {
@@ -44,8 +80,21 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerMoveS
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
 
+        // Resolve the target window from its id. If it was destroyed or
+        // moved off this space (e.g. the user switched workspaces while
+        // dragging), simply skip the update; the button release will
+        // unset the grab on its own.
+        let Some(window) = data
+            .space
+            .elements()
+            .find(|w| w.id() == self.window_id)
+            .cloned()
+        else {
+            return;
+        };
+
         data.space
-            .map_element(self.window.clone(), new_location.to_i32_round(), true);
+            .map_element(window, new_location.to_i32_round(), true);
     }
 
     fn relative_motion(
@@ -866,4 +915,103 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchResizeSur
     }
 
     fn unset(&mut self, _data: &mut AnvilState<BackendData>) {}
+}
+
+/// Compute the resize edges for a compositor-initiated resize grab,
+/// based on the pointer's position relative to the window rect.
+///
+/// If the pointer is within `THRESHOLD_PX` of an edge, that edge is
+/// included. Corner regions get two edges. For pointers in the deep
+/// interior of the window, falls back to picking the nearest edges
+/// based on which quadrant the pointer is in (Hyprland behaviour — feels
+/// natural for SUPER+RMB resize).
+///
+/// See `phase-3-input-dispatch.md` §3.2.
+pub fn edges_for_pointer(
+    window_rect: smithay::utils::Rectangle<i32, Logical>,
+    pointer: Point<f64, Logical>,
+) -> ResizeEdge {
+    const THRESHOLD_PX: i32 = 8;
+    let local_x = pointer.x as i32 - window_rect.loc.x;
+    let local_y = pointer.y as i32 - window_rect.loc.y;
+    let w = window_rect.size.w;
+    let h = window_rect.size.h;
+
+    let mut edges = ResizeEdge::NONE;
+
+    let near_left = local_x <= THRESHOLD_PX;
+    let near_right = local_x >= w - THRESHOLD_PX;
+    let near_top = local_y <= THRESHOLD_PX;
+    let near_bottom = local_y >= h - THRESHOLD_PX;
+
+    if near_left || near_right || near_top || near_bottom {
+        if near_left {
+            edges |= ResizeEdge::LEFT;
+        }
+        if near_right {
+            edges |= ResizeEdge::RIGHT;
+        }
+        if near_top {
+            edges |= ResizeEdge::TOP;
+        }
+        if near_bottom {
+            edges |= ResizeEdge::BOTTOM;
+        }
+        return edges;
+    }
+
+    // Deep-interior fallback: split into 4 quadrants, pick the corresponding
+    // corner edges. This gives SUPER+RMB a useful "always works" semantics
+    // even when the pointer isn't on an edge.
+    let mid_x = w / 2;
+    let mid_y = h / 2;
+    if local_x < mid_x {
+        edges |= ResizeEdge::LEFT;
+    } else {
+        edges |= ResizeEdge::RIGHT;
+    }
+    if local_y < mid_y {
+        edges |= ResizeEdge::TOP;
+    } else {
+        edges |= ResizeEdge::BOTTOM;
+    }
+    edges
+}
+
+#[cfg(test)]
+mod tests {
+    use smithay::utils::Rectangle;
+
+    use super::*;
+
+    fn rect() -> Rectangle<i32, Logical> {
+        // Window at (100, 200), 800x600.
+        Rectangle::new((100, 200).into(), (800, 600).into())
+    }
+
+    #[test]
+    fn corner_top_left() {
+        // Pointer 5px inside the top-left corner — within THRESHOLD on
+        // both axes, so we expect TOP|LEFT.
+        let p = Point::from((105.0, 205.0));
+        let e = edges_for_pointer(rect(), p);
+        assert!(e.contains(ResizeEdge::TOP));
+        assert!(e.contains(ResizeEdge::LEFT));
+        assert!(!e.contains(ResizeEdge::RIGHT));
+        assert!(!e.contains(ResizeEdge::BOTTOM));
+    }
+
+    #[test]
+    fn deep_interior_lower_right_quadrant() {
+        // Pointer well inside the window, in the lower-right quadrant.
+        // window loc=(100,200), size=(800,600); pointer (700,650) ->
+        // local (600, 450) -> right of mid_x=400, below mid_y=300 ->
+        // BOTTOM|RIGHT.
+        let p = Point::from((700.0, 650.0));
+        let e = edges_for_pointer(rect(), p);
+        assert!(e.contains(ResizeEdge::BOTTOM));
+        assert!(e.contains(ResizeEdge::RIGHT));
+        assert!(!e.contains(ResizeEdge::TOP));
+        assert!(!e.contains(ResizeEdge::LEFT));
+    }
 }

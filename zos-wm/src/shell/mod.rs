@@ -47,7 +47,10 @@ use crate::{
 
 mod element;
 mod grabs;
+pub mod output_state;
 pub(crate) mod ssd;
+pub mod tiling;
+pub mod workspace;
 #[cfg(feature = "xwayland")]
 mod x11;
 mod xdg;
@@ -391,47 +394,129 @@ fn ensure_initial_configure(surface: &WlSurface, space: &Space<WindowElement>, p
     };
 }
 
+/// Clamp a point so a window of `size` stays inside `area`.
+fn clamp_to_area(
+    loc: Point<i32, Logical>,
+    size: Size<i32, Logical>,
+    area: Rectangle<i32, Logical>,
+) -> Point<i32, Logical> {
+    let min_x = area.loc.x;
+    let min_y = area.loc.y;
+    let max_x = (area.loc.x + area.size.w - size.w).max(min_x);
+    let max_y = (area.loc.y + area.size.h - size.h).max(min_y);
+    Point::from((loc.x.clamp(min_x, max_x), loc.y.clamp(min_y, max_y)))
+}
+
 fn place_new_window(
     space: &mut Space<WindowElement>,
     pointer_location: Point<f64, Logical>,
     window: &WindowElement,
     activate: bool,
 ) {
-    // place the window at a random location on same output as pointer
-    // or if there is not output in a [0;800]x[0;800] square
-    use rand::distributions::{Distribution, Uniform};
+    // Cascade / padding constants (cosmic-comp values).
+    const CASCADE_DX: i32 = 48;
+    const CASCADE_DY: i32 = 48;
+    const PADDING: i32 = 16;
 
+    // Pick the output: pointer-focused first, otherwise any. Pointer location
+    // is used ONLY for output selection, never as a literal placement.
     let output = space
         .output_under(pointer_location)
         .next()
         .or_else(|| space.outputs().next())
         .cloned();
-    let output_geometry = output
+
+    // Working zone (output minus exclusive layer-shell areas).
+    let output_zone = output
+        .as_ref()
         .and_then(|o| {
-            let geo = space.output_geometry(&o)?;
-            let map = layer_map_for_output(&o);
+            let geo = space.output_geometry(o)?;
+            let map = layer_map_for_output(o);
             let zone = map.non_exclusive_zone();
             Some(Rectangle::new(geo.loc + zone.loc, zone.size))
         })
         .unwrap_or_else(|| Rectangle::from_size((800, 800).into()));
 
-    // set the initial toplevel bounds
+    // Set the initial toplevel bounds so clients can size themselves sensibly.
     #[allow(irrefutable_let_patterns)]
     if let Some(toplevel) = window.0.toplevel() {
         toplevel.with_pending_state(|state| {
-            state.bounds = Some(output_geometry.size);
+            state.bounds = Some(output_zone.size);
         });
     }
 
-    let max_x = output_geometry.loc.x + (((output_geometry.size.w as f32) / 3.0) * 2.0) as i32;
-    let max_y = output_geometry.loc.y + (((output_geometry.size.h as f32) / 3.0) * 2.0) as i32;
-    let x_range = Uniform::new(output_geometry.loc.x, max_x);
-    let y_range = Uniform::new(output_geometry.loc.y, max_y);
-    let mut rng = rand::thread_rng();
-    let x = x_range.sample(&mut rng);
-    let y = y_range.sample(&mut rng);
+    // Use the post-initial-configure natural geometry. Fall back to bbox if
+    // the client hasn't reported geometry yet.
+    let mut win_size = window.0.geometry().size;
+    if win_size.w <= 0 || win_size.h <= 0 {
+        win_size = window.0.bbox().size;
+    }
+    if win_size.w <= 0 {
+        win_size.w = 1;
+    }
+    if win_size.h <= 0 {
+        win_size.h = 1;
+    }
 
-    space.map_element(window.clone(), (x, y), activate);
+    // ---- Tier 1: explicit hint — dialog/transient with a parent. ----
+    let parent_surface = window.0.toplevel().and_then(|t| t.parent());
+    let parent_match = parent_surface.as_ref().and_then(|psurf| {
+        let elem = space
+            .elements()
+            .find(|e| e.wl_surface().map(|s| &*s == psurf).unwrap_or(false))
+            .cloned()?;
+        let loc = space.element_location(&elem)?;
+        Some((elem, loc))
+    });
+    if let Some((parent_elem, parent_loc)) = parent_match {
+        let parent_geom = parent_elem.0.geometry();
+        let centered = Point::from((
+            parent_loc.x + (parent_geom.size.w - win_size.w) / 2,
+            parent_loc.y + (parent_geom.size.h - win_size.h) / 2,
+        ));
+        let placed = clamp_to_area(centered, win_size, output_zone);
+        space.map_element(window.clone(), placed, activate);
+        return;
+    }
+
+    // ---- Tier 2: cascade from the most-recently-mapped window on this output. ----
+    if let Some(target_output) = output.as_ref() {
+        // `space.elements()` is in map-order; the last entry is the most
+        // recently mapped window. Filter to the same output.
+        let last_on_output = space
+            .elements()
+            .filter(|e| space.outputs_for_element(e).iter().any(|o| o == target_output))
+            .next_back()
+            .cloned();
+
+        if let Some(prev) = last_on_output {
+            if let Some(prev_loc) = space.element_location(&prev) {
+                let mut cascade = Point::from((prev_loc.x + CASCADE_DX, prev_loc.y + CASCADE_DY));
+
+                // Wrap horizontally if the cascade would push us off the right edge.
+                if cascade.x + win_size.w > output_zone.loc.x + output_zone.size.w {
+                    cascade.x = output_zone.loc.x + PADDING;
+                }
+                // Wrap vertically if the cascade would push us off the bottom edge.
+                if cascade.y + win_size.h > output_zone.loc.y + output_zone.size.h {
+                    cascade.y = output_zone.loc.y + PADDING;
+                }
+
+                // Final safety clamp in case the window itself is larger than the zone.
+                let placed = clamp_to_area(cascade, win_size, output_zone);
+                space.map_element(window.clone(), placed, activate);
+                return;
+            }
+        }
+    }
+
+    // ---- Tier 3: fallback — centered horizontally, upper third vertically. ----
+    let centered = Point::from((
+        output_zone.loc.x + (output_zone.size.w - win_size.w) / 2,
+        output_zone.loc.y + (output_zone.size.h - win_size.h) / 3,
+    ));
+    let placed = clamp_to_area(centered, win_size, output_zone);
+    space.map_element(window.clone(), placed, activate);
 }
 
 pub fn fixup_positions(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>) {

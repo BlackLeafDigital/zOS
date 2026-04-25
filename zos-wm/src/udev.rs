@@ -1333,6 +1333,16 @@ impl AnvilState<UdevData> {
                 device_id: node,
             });
 
+            // Bootstrap an OutputState for this output. Workspace 1 is created
+            // automatically by `OutputState::new`. If this is the first output,
+            // also set it as focused.
+            let output_state = crate::shell::output_state::OutputState::new(output.clone());
+            let output_state_id = output_state.id;
+            self.outputs.insert(output_state_id, output_state);
+            if self.focused_output.is_none() {
+                self.focused_output = Some(output_state_id);
+            }
+
             #[cfg(feature = "debug")]
             let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
 
@@ -1460,6 +1470,20 @@ impl AnvilState<UdevData> {
             );
             self.space.unmap_output(&surface.output);
             self.space.refresh();
+
+            // Find the OutputId tied to this Output and remove the OutputState.
+            let target_output = surface.output.clone();
+            let output_id = self
+                .outputs
+                .iter()
+                .find(|(_, os)| os.output == target_output)
+                .map(|(id, _)| *id);
+            if let Some(id) = output_id {
+                self.outputs.remove(&id);
+                if self.focused_output == Some(id) {
+                    self.focused_output = self.outputs.keys().next().copied();
+                }
+            }
         }
 
         let render_node = device.render_node.unwrap_or(self.backend_data.primary_gpu);

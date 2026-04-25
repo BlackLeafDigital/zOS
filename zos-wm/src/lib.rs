@@ -7,6 +7,7 @@
     allow(dead_code, unused_imports)
 )]
 
+pub mod binds;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 pub mod drawing;
