@@ -97,6 +97,30 @@ pub fn send(req: &Request) -> Result<Response, Box<dyn std::error::Error>> {
     Ok(response)
 }
 
+// --- Watch helper ---
+
+/// Loop running `f` every `interval_ms`, clearing the screen each time.
+/// Runs until Ctrl-C / SIGTERM (process kill).
+///
+/// Errors from `f` are printed but do not crash the loop — useful when
+/// zos-wm restarts and the IPC socket transiently disappears.
+pub fn watch_loop<F>(interval_ms: u64, mut f: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Result<(), Box<dyn std::error::Error>>,
+{
+    use std::io::Write;
+    let interval = std::time::Duration::from_millis(interval_ms);
+    loop {
+        // ANSI: clear screen + move cursor home
+        print!("\x1b[2J\x1b[H");
+        let _ = std::io::stdout().flush();
+        if let Err(e) = f() {
+            eprintln!("(watch) error: {}", e);
+        }
+        std::thread::sleep(interval);
+    }
+}
+
 // --- Command handlers ---
 
 pub fn cmd_version() -> Result<(), Box<dyn std::error::Error>> {

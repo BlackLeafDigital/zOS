@@ -1,0 +1,19 @@
+[package]
+name = "zos-launcher"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "App launcher — replaces wofi"
+
+[dependencies]
+zos-ui = { path = "../zos-ui" }
+iced = { version = "0.14", features = ["wayland", "tokio", "image", "svg"] }
+iced_layershell = "0.17"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "zos-launcher"
+path = "src/main.rs"

@@ -209,13 +209,18 @@ pub fn connect_wifi(ssid: &str, password: Option<&str>) {
     }
 }
 
+// Network favorites persistence — retained for the planned "favorite networks"
+// UI affordance (pinning SSIDs to the top of the list). Wired in but not yet
+// consumed by the network page.
 /// Path to the network favorites JSON file.
+#[allow(dead_code)]
 pub fn favorites_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
     std::path::Path::new(&home).join(".config/zos/network-favorites.json")
 }
 
 /// Load favorite device names from disk.
+#[allow(dead_code)]
 pub fn load_favorites() -> Vec<String> {
     let path = favorites_path();
     let contents = match std::fs::read_to_string(&path) {
@@ -238,6 +243,7 @@ pub fn load_favorites() -> Vec<String> {
 }
 
 /// Save favorite device names to disk.
+#[allow(dead_code)]
 pub fn save_favorites(favorites: &[String]) {
     let path = favorites_path();
     if let Some(parent) = path.parent() {

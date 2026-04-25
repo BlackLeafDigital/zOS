@@ -13,7 +13,12 @@ const DEVICE_BLOCKLIST: &[&str] = &["speech-dispatcher", "dummy"];
 pub struct AudioDevice {
     pub id: u32,
     pub name: String,
+    // `volume` and `muted` are populated by `parse_device_section` and exercised by
+    // the unit tests; retained for the audio-page UI to surface initial state once
+    // it stops setting volume blindly on every Apply.
+    #[allow(dead_code)]
     pub volume: Option<f32>,
+    #[allow(dead_code)]
     pub muted: bool,
 }
 
@@ -138,6 +143,8 @@ pub fn set_volume(device_id: u32, volume: f32) {
 }
 
 /// Toggle mute for a device.
+// Retained for upcoming per-device mute control on the audio page (wpctl path).
+#[allow(dead_code)]
 pub fn toggle_mute(device_id: u32) {
     let _ = Command::new("wpctl")
         .args(["set-mute", &device_id.to_string(), "toggle"])
@@ -145,6 +152,8 @@ pub fn toggle_mute(device_id: u32) {
 }
 
 /// Set a device as the default for its type.
+// Retained for the planned default-device picker (wpctl path).
+#[allow(dead_code)]
 pub fn set_default(device_id: u32) {
     let _ = Command::new("wpctl")
         .args(["set-default", &device_id.to_string()])
@@ -461,6 +470,9 @@ pub struct AudioBusConfig {
 }
 
 /// Persisted UI state for the audio settings page.
+// Retained for the planned "remember last selected bus" UX — the audio page
+// will read/write this on next iteration.
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct AudioUiState {
     pub last_selected_bus: String,
@@ -470,6 +482,8 @@ fn audio_bus_configs_path() -> PathBuf {
     zos_config_dir().join("audio-buses-v2.json")
 }
 
+// Retained alongside `AudioUiState` for the planned UI-state persistence.
+#[allow(dead_code)]
 fn audio_ui_state_path() -> PathBuf {
     zos_config_dir().join("audio-settings.json")
 }
@@ -572,6 +586,8 @@ pub fn save_audio_bus_configs(configs: &[AudioBusConfig]) {
     }
 }
 
+// Retained for the planned UI-state persistence (see `AudioUiState`).
+#[allow(dead_code)]
 pub fn load_audio_ui_state() -> AudioUiState {
     let path = audio_ui_state_path();
     if let Ok(data) = std::fs::read_to_string(&path) {
@@ -582,6 +598,7 @@ pub fn load_audio_ui_state() -> AudioUiState {
     AudioUiState::default()
 }
 
+#[allow(dead_code)]
 pub fn save_audio_ui_state(state: &AudioUiState) {
     let dir = zos_config_dir();
     let _ = std::fs::create_dir_all(&dir);

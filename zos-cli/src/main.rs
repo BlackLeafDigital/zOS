@@ -74,24 +74,36 @@ enum CompositorCmd {
         /// Emit raw JSON instead of a human-readable table
         #[arg(long)]
         json: bool,
+        /// Re-run continuously every <MS> milliseconds (default 1000); Ctrl-C to quit
+        #[arg(long, value_name = "MS", num_args = 0..=1, default_missing_value = "1000")]
+        watch: Option<u64>,
     },
     /// List windows across all workspaces
     Windows {
         /// Emit raw JSON instead of a human-readable table
         #[arg(long)]
         json: bool,
+        /// Re-run continuously every <MS> milliseconds (default 1000); Ctrl-C to quit
+        #[arg(long, value_name = "MS", num_args = 0..=1, default_missing_value = "1000")]
+        watch: Option<u64>,
     },
     /// List connected monitors
     Monitors {
         /// Emit raw JSON instead of a human-readable table
         #[arg(long)]
         json: bool,
+        /// Re-run continuously every <MS> milliseconds (default 1000); Ctrl-C to quit
+        #[arg(long, value_name = "MS", num_args = 0..=1, default_missing_value = "1000")]
+        watch: Option<u64>,
     },
     /// Show the currently focused window
     Active {
         /// Emit raw JSON instead of a human-readable summary
         #[arg(long)]
         json: bool,
+        /// Re-run continuously every <MS> milliseconds (default 1000); Ctrl-C to quit
+        #[arg(long, value_name = "MS", num_args = 0..=1, default_missing_value = "1000")]
+        watch: Option<u64>,
     },
     /// Switch the focused output to workspace <id>
     Switch {
@@ -174,10 +186,30 @@ fn main() -> Result<()> {
 fn run_compositor(cmd: CompositorCmd) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         CompositorCmd::Version => compositor::cmd_version(),
-        CompositorCmd::Workspaces { json } => compositor::cmd_workspaces(json),
-        CompositorCmd::Windows { json } => compositor::cmd_windows(json),
-        CompositorCmd::Monitors { json } => compositor::cmd_monitors(json),
-        CompositorCmd::Active { json } => compositor::cmd_active(json),
+        CompositorCmd::Workspaces { json, watch } => match watch {
+            Some(interval_ms) => compositor::watch_loop(interval_ms, move || {
+                compositor::cmd_workspaces(json)
+            }),
+            None => compositor::cmd_workspaces(json),
+        },
+        CompositorCmd::Windows { json, watch } => match watch {
+            Some(interval_ms) => {
+                compositor::watch_loop(interval_ms, move || compositor::cmd_windows(json))
+            }
+            None => compositor::cmd_windows(json),
+        },
+        CompositorCmd::Monitors { json, watch } => match watch {
+            Some(interval_ms) => {
+                compositor::watch_loop(interval_ms, move || compositor::cmd_monitors(json))
+            }
+            None => compositor::cmd_monitors(json),
+        },
+        CompositorCmd::Active { json, watch } => match watch {
+            Some(interval_ms) => {
+                compositor::watch_loop(interval_ms, move || compositor::cmd_active(json))
+            }
+            None => compositor::cmd_active(json),
+        },
         CompositorCmd::Switch { id } => compositor::cmd_switch(id),
         CompositorCmd::MoveToWorkspace { id } => compositor::cmd_move_to_workspace(id),
         CompositorCmd::FocusWindow { id } => compositor::cmd_focus_window(id),

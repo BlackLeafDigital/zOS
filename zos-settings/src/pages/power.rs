@@ -11,7 +11,7 @@ use crate::theme;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PowerAction {
+pub(crate) enum PowerAction {
     Suspend,
     Reboot,
     Shutdown,

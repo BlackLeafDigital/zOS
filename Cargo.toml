@@ -13,6 +13,7 @@ members = [
     "zos-power",
     "zos-monitors",
     "zos-notify",
+    "zos-launcher",
 ]
 
 [profile.release]

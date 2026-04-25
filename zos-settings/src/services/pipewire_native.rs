@@ -65,6 +65,11 @@ impl MediaClass {
 }
 
 /// Events emitted by the PipeWire client thread.
+// Field-level dead-code lints fire because no subscriber consumes the events
+// yet — the audio page polls via `list_app_streams` instead. The variants and
+// their payloads are emitted by the loop thread today and will be consumed
+// once `PwClient::subscribe` is wired into the audio page.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PwEvent {
     NodeAdded {
@@ -95,6 +100,9 @@ pub enum PwEvent {
 ///
 /// Currently a no-op placeholder so downstream code compiles. When task 3
 /// lands, dropping the handle will disconnect the peak-meter stream.
+// Retained as a public placeholder so the peak-meter API surface is stable
+// before task 3 lands.
+#[allow(dead_code)]
 pub struct PeakMeterHandle {
     _private: (),
 }
@@ -116,6 +124,13 @@ pub struct AppStream {
 
 type Reply<T> = mpsc::SyncSender<Result<T, String>>;
 
+// `CreateLink` / `RemoveLink` / `CreateNullSink` / `DestroyNode` are matched by
+// `process_cmd` but currently never produced because the corresponding
+// `PwClient` methods (also retained) are not yet called from the audio page —
+// routing today still goes through the wpctl/pw-link CLI helpers in
+// `services::pipewire`. Keep the variants so the loop thread is feature-complete
+// once the audio page switches over.
+#[allow(dead_code)]
 enum Cmd {
     CreateLink {
         src: u32,
@@ -161,7 +176,11 @@ struct NodeInfo {
 
 #[derive(Debug, Clone)]
 struct LinkInfo {
+    // Tracked so we can correlate registry global removals back to which nodes
+    // were linked; consumed once the event subscriber path is wired up.
+    #[allow(dead_code)]
     output_node: u32,
+    #[allow(dead_code)]
     input_node: u32,
 }
 
@@ -184,6 +203,9 @@ struct PwState {
 /// Client handle for talking to the PipeWire main loop thread.
 pub struct PwClient {
     cmd_tx: mpsc::Sender<Cmd>,
+    // Cloned out by `subscribe()` for future event subscribers; the audio page
+    // does not subscribe yet, so this currently has no readers.
+    #[allow(dead_code)]
     events_rx: Receiver<PwEvent>,
     thread: Option<JoinHandle<()>>,
 }
@@ -224,12 +246,17 @@ impl PwClient {
     }
 
     /// Subscribe to the event stream.
+    // Retained for the planned reactive audio page (replaces the polling-based
+    // `list_app_streams` call site).
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> Receiver<PwEvent> {
         self.events_rx.clone()
     }
 
     /// Create one or more `link-factory` links between two nodes, pairing
     /// ports by channel. Returns the new link ids (one per matched pair).
+    // Retained alongside `Cmd::CreateLink` for the native routing path.
+    #[allow(dead_code)]
     pub fn create_link(&self, src_node: u32, dst_node: u32) -> Result<Vec<u32>, String> {
         let (reply, rx) = mpsc::sync_channel(1);
         self.cmd_tx
@@ -244,6 +271,8 @@ impl PwClient {
     }
 
     /// Destroy a link by id.
+    // Retained alongside `Cmd::RemoveLink` for the native routing path.
+    #[allow(dead_code)]
     pub fn remove_link(&self, link_id: u32) -> Result<(), String> {
         let (reply, rx) = mpsc::sync_channel(1);
         self.cmd_tx
@@ -255,6 +284,9 @@ impl PwClient {
 
     /// Create a null-audio-sink node via the `adapter` factory and wait for
     /// the registry to confirm it.
+    // Retained for the planned native bus-creation flow (replaces the
+    // pipewire.conf.d fragment writes in `services::pipewire`).
+    #[allow(dead_code)]
     pub fn create_null_sink(&self, name: &str, description: &str) -> Result<u32, String> {
         let (reply, rx) = mpsc::sync_channel(1);
         self.cmd_tx
@@ -269,6 +301,8 @@ impl PwClient {
     }
 
     /// Destroy a node by id.
+    // Retained alongside `Cmd::DestroyNode` for the native bus-teardown flow.
+    #[allow(dead_code)]
     pub fn destroy_node(&self, id: u32) -> Result<(), String> {
         let (reply, rx) = mpsc::sync_channel(1);
         self.cmd_tx
@@ -296,6 +330,9 @@ impl PwClient {
 
     /// Placeholder for the future peak-meter implementation (task 3).
     /// Returns an empty handle that does nothing.
+    // Retained as a public placeholder so the peak-meter API surface is stable
+    // before task 3 lands.
+    #[allow(dead_code)]
     pub fn start_peak_meter(&self, _node_id: u32) -> Result<PeakMeterHandle, String> {
         Ok(PeakMeterHandle { _private: () })
     }

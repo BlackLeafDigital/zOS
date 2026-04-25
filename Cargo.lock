@@ -7386,6 +7386,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zos-launcher"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_layershell",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zos-ui",
+]
+
+[[package]]
 name = "zos-monitors"
 version = "0.1.0"
 dependencies = [
