@@ -192,3 +192,371 @@ pub fn default_bindings() -> HashMap<KeyCombo, Action> {
 
     m
 }
+
+// ============================================================================
+// User TOML loader: ~/.config/zos/binds.toml
+// ----------------------------------------------------------------------------
+// Users can add or override keybinds without recompiling. The file format is:
+//
+//     [[bind]]
+//     mods = ["SUPER", "SHIFT"]
+//     key = "1"                # OR button = 274
+//     action = "MoveWindowToWorkspace"
+//     args = [1]               # action-dependent
+//
+// Parse failures (missing file, malformed entries, unknown actions) are logged
+// at WARN level and the affected entries are skipped — the compositor still
+// boots with the surviving defaults + valid user entries.
+// ============================================================================
+
+/// One [[bind]] entry from binds.toml.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct UserBindEntry {
+    #[serde(default)]
+    pub mods:   Vec<String>,
+    pub key:    Option<String>,
+    pub button: Option<u32>,
+    pub action: String,
+    #[serde(default)]
+    pub args:   Vec<toml::Value>,
+}
+
+/// Top-level structure of binds.toml.
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct UserBinds {
+    #[serde(default, rename = "bind")]
+    pub binds: Vec<UserBindEntry>,
+}
+
+/// Resolve `~/.config/zos/binds.toml`, honoring `XDG_CONFIG_HOME` if set.
+pub fn user_binds_path() -> std::path::PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return std::path::PathBuf::from(xdg).join("zos/binds.toml");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(home).join(".config/zos/binds.toml")
+}
+
+/// Read + parse `~/.config/zos/binds.toml` and return its (combo, action)
+/// entries. On any error (missing file, bad TOML, malformed entry) returns
+/// what could be parsed and logs a warning for the rest.
+pub fn load_user_bindings() -> Vec<(KeyCombo, Action)> {
+    let path = user_binds_path();
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = ?e, "failed to read binds.toml");
+            return Vec::new();
+        }
+    };
+    let parsed: UserBinds = match toml::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "failed to parse binds.toml");
+            return Vec::new();
+        }
+    };
+
+    let mut out = Vec::new();
+    for entry in parsed.binds {
+        match parse_user_bind(&entry) {
+            Ok(combo_action) => out.push(combo_action),
+            Err(e) => {
+                tracing::warn!(error = %e, "skipping malformed bind in binds.toml");
+            }
+        }
+    }
+    tracing::info!(count = out.len(), path = %path.display(), "loaded user bindings");
+    out
+}
+
+fn parse_user_bind(entry: &UserBindEntry) -> Result<(KeyCombo, Action), String> {
+    let mods = parse_modifiers(&entry.mods)?;
+    let bind_key = match (&entry.key, entry.button) {
+        (Some(k), None)    => BindKey::Keysym(parse_keysym(k)?),
+        (None, Some(b))    => BindKey::MouseButton(b),
+        (Some(_), Some(_)) => return Err("bind has both `key` and `button`".into()),
+        (None, None)       => return Err("bind has neither `key` nor `button`".into()),
+    };
+    let action = parse_action(&entry.action, &entry.args)?;
+    Ok((KeyCombo::new(mods, bind_key), action))
+}
+
+fn parse_modifiers(strs: &[String]) -> Result<Modifiers, String> {
+    let mut m = Modifiers::empty();
+    for s in strs {
+        match s.to_uppercase().as_str() {
+            "SHIFT"                => m |= Modifiers::SHIFT,
+            "CTRL" | "CONTROL"     => m |= Modifiers::CTRL,
+            "ALT"                  => m |= Modifiers::ALT,
+            "SUPER" | "LOGO" | "MOD" => m |= Modifiers::SUPER,
+            "ALTGR"                => m |= Modifiers::ALTGR,
+            other                  => return Err(format!("unknown modifier: {}", other)),
+        }
+    }
+    Ok(m)
+}
+
+fn parse_keysym(s: &str) -> Result<Keysym, String> {
+    use smithay::input::keyboard::xkb;
+    let sym = xkb::keysym_from_name(s, xkb::KEYSYM_NO_FLAGS);
+    // KEY_NoSymbol == 0 — keysym_from_name returns this for unknown names.
+    if sym.raw() == 0 {
+        return Err(format!("unknown keysym: {}", s));
+    }
+    Ok(sym)
+}
+
+fn parse_action(name: &str, args: &[toml::Value]) -> Result<Action, String> {
+    use Action::*;
+    match name {
+        "Quit"                  => Ok(Quit),
+        "CloseWindow"           => Ok(CloseWindow),
+        "BeginMove"             => Ok(BeginMove),
+        "BeginResize"           => Ok(BeginResize),
+        "ToggleFullscreen"      => Ok(ToggleFullscreen),
+        "ToggleMaximize"        => Ok(ToggleMaximize),
+        "ToggleFloating"        => Ok(ToggleFloating),
+        "ToggleWorkspaceTiling" => Ok(ToggleWorkspaceTiling),
+        "FocusNext"             => Ok(FocusNext),
+        "FocusPrev"             => Ok(FocusPrev),
+        "ScaleUp"               => Ok(ScaleUp),
+        "ScaleDown"             => Ok(ScaleDown),
+        "RotateOutput"          => Ok(RotateOutput),
+        "ToggleTint"            => Ok(ToggleTint),
+        "TogglePreview"         => Ok(TogglePreview),
+        "Nop"                   => Ok(Nop),
+        "Spawn" => {
+            let argv: Vec<String> = args
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+            if argv.is_empty() {
+                return Err("Spawn needs at least one string arg".into());
+            }
+            Ok(Spawn(argv))
+        }
+        "VtSwitch" => {
+            let n = args
+                .first()
+                .and_then(|v| v.as_integer())
+                .ok_or("VtSwitch needs an integer arg")?;
+            Ok(VtSwitch(n as i32))
+        }
+        "SwitchToWorkspace" => {
+            let id = args
+                .first()
+                .and_then(|v| v.as_integer())
+                .ok_or("SwitchToWorkspace needs an integer arg")?;
+            Ok(SwitchToWorkspace(id as u32))
+        }
+        "MoveWindowToWorkspace" => {
+            let id = args
+                .first()
+                .and_then(|v| v.as_integer())
+                .ok_or("MoveWindowToWorkspace needs an integer arg")?;
+            Ok(MoveWindowToWorkspace(id as u32))
+        }
+        "Screen" => {
+            let n = args
+                .first()
+                .and_then(|v| v.as_integer())
+                .ok_or("Screen needs an integer arg")?;
+            Ok(Screen(n as usize))
+        }
+        "FocusDirection" => {
+            let dir = args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or("FocusDirection needs a string arg")?;
+            Ok(FocusDirection(parse_direction(dir)?))
+        }
+        "MoveWindow" => {
+            let dir = args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or("MoveWindow needs a string arg")?;
+            Ok(MoveWindow(parse_direction(dir)?))
+        }
+        other => Err(format!("unknown action: {}", other)),
+    }
+}
+
+fn parse_direction(s: &str) -> Result<Direction, String> {
+    match s.to_lowercase().as_str() {
+        "left"  => Ok(Direction::Left),
+        "right" => Ok(Direction::Right),
+        "up"    => Ok(Direction::Up),
+        "down"  => Ok(Direction::Down),
+        other   => Err(format!("unknown direction: {}", other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_toml_yields_empty_binds() {
+        let parsed: UserBinds = toml::from_str("").expect("empty TOML deserializes");
+        assert!(parsed.binds.is_empty());
+    }
+
+    #[test]
+    fn parses_spawn_and_integer_arg_actions() {
+        let src = r#"
+            [[bind]]
+            mods = ["SUPER"]
+            key = "e"
+            action = "Spawn"
+            args = ["nautilus"]
+
+            [[bind]]
+            mods = ["SUPER", "SHIFT"]
+            key = "1"
+            action = "MoveWindowToWorkspace"
+            args = [1]
+
+            [[bind]]
+            mods = ["SUPER"]
+            button = 274
+            action = "ToggleFloating"
+        "#;
+        let parsed: UserBinds = toml::from_str(src).expect("valid TOML");
+        assert_eq!(parsed.binds.len(), 3);
+
+        let entries: Vec<(KeyCombo, Action)> = parsed
+            .binds
+            .iter()
+            .map(|e| parse_user_bind(e).expect("valid bind"))
+            .collect();
+
+        // Spawn
+        assert_eq!(entries[0].0.modifiers, Modifiers::SUPER);
+        assert!(matches!(entries[0].0.key, BindKey::Keysym(_)));
+        assert_eq!(entries[0].1, Action::Spawn(vec!["nautilus".into()]));
+
+        // MoveWindowToWorkspace(1)
+        assert_eq!(
+            entries[1].0.modifiers,
+            Modifiers::SUPER | Modifiers::SHIFT
+        );
+        assert_eq!(entries[1].1, Action::MoveWindowToWorkspace(1));
+
+        // Mouse button 274 -> ToggleFloating
+        assert_eq!(entries[2].0.key, BindKey::MouseButton(274));
+        assert_eq!(entries[2].1, Action::ToggleFloating);
+    }
+
+    #[test]
+    fn rejects_unknown_action_modifier_and_direction() {
+        // Unknown action.
+        let bad_action = UserBindEntry {
+            mods:   vec!["SUPER".into()],
+            key:    Some("a".into()),
+            button: None,
+            action: "FlipMonitor".into(),
+            args:   vec![],
+        };
+        assert!(parse_user_bind(&bad_action).is_err());
+
+        // Unknown modifier.
+        let bad_mod = UserBindEntry {
+            mods:   vec!["HYPER".into()],
+            key:    Some("a".into()),
+            button: None,
+            action: "Quit".into(),
+            args:   vec![],
+        };
+        assert!(parse_user_bind(&bad_mod).is_err());
+
+        // Unknown direction inside FocusDirection.
+        let bad_dir = UserBindEntry {
+            mods:   vec!["SUPER".into()],
+            key:    Some("a".into()),
+            button: None,
+            action: "FocusDirection".into(),
+            args:   vec![toml::Value::String("backward".into())],
+        };
+        assert!(parse_user_bind(&bad_dir).is_err());
+
+        // Both key and button -> error.
+        let both = UserBindEntry {
+            mods:   vec!["SUPER".into()],
+            key:    Some("a".into()),
+            button: Some(272),
+            action: "Quit".into(),
+            args:   vec![],
+        };
+        assert!(parse_user_bind(&both).is_err());
+
+        // Neither key nor button -> error.
+        let neither = UserBindEntry {
+            mods:   vec!["SUPER".into()],
+            key:    None,
+            button: None,
+            action: "Quit".into(),
+            args:   vec![],
+        };
+        assert!(parse_user_bind(&neither).is_err());
+    }
+
+    #[test]
+    fn round_trip_sample_binds_toml() {
+        let src = r#"
+            [[bind]]
+            mods = ["SUPER"]
+            key = "Tab"
+            action = "FocusNext"
+
+            [[bind]]
+            mods = ["SUPER"]
+            key = "h"
+            action = "FocusDirection"
+            args = ["left"]
+
+            [[bind]]
+            mods = ["CTRL", "ALT"]
+            key = "BackSpace"
+            action = "Quit"
+
+            [[bind]]
+            mods = ["SUPER"]
+            key = "Return"
+            action = "Spawn"
+            args = ["wezterm", "--config", "font_size=14"]
+        "#;
+        let parsed: UserBinds = toml::from_str(src).expect("valid TOML");
+        let entries: Vec<(KeyCombo, Action)> = parsed
+            .binds
+            .iter()
+            .map(|e| parse_user_bind(e).expect("valid bind"))
+            .collect();
+        assert_eq!(entries.len(), 4);
+
+        // FocusNext on Super+Tab.
+        assert_eq!(entries[0].1, Action::FocusNext);
+        assert_eq!(entries[0].0.modifiers, Modifiers::SUPER);
+
+        // FocusDirection(Left) on Super+h.
+        assert_eq!(entries[1].1, Action::FocusDirection(Direction::Left));
+
+        // Quit on Ctrl+Alt+BackSpace.
+        assert_eq!(entries[2].1, Action::Quit);
+        assert_eq!(
+            entries[2].0.modifiers,
+            Modifiers::CTRL | Modifiers::ALT
+        );
+
+        // Spawn carries every string arg verbatim.
+        assert_eq!(
+            entries[3].1,
+            Action::Spawn(vec![
+                "wezterm".into(),
+                "--config".into(),
+                "font_size=14".into(),
+            ])
+        );
+    }
+}

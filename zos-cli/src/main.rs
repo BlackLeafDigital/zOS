@@ -6,6 +6,7 @@
 
 mod compositor;
 mod doctor;
+mod screenshot;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -62,6 +63,21 @@ enum Commands {
     Compositor {
         #[command(subcommand)]
         cmd: CompositorCmd,
+    },
+    /// Take a screenshot via grim.
+    Screenshot {
+        /// Use slurp to select a region first.
+        #[arg(long)]
+        region: bool,
+        /// Also copy to clipboard via wl-copy.
+        #[arg(long)]
+        copy: bool,
+        /// Capture only the specified output (e.g., DP-1).
+        #[arg(long)]
+        output: Option<String>,
+        /// Suppress the "Saved: ..." path output.
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
@@ -180,6 +196,20 @@ fn main() -> Result<()> {
         Some(Commands::Install { name }) => zos_core::commands::install::search_and_install(&name),
         Some(Commands::RebootToWindows) => zos_core::commands::grub::reboot_to_windows_elevated(),
         Some(Commands::Compositor { cmd }) => run_compositor(cmd).map_err(|e| eyre!(e.to_string())),
+        Some(Commands::Screenshot {
+            region,
+            copy,
+            output,
+            quiet,
+        }) => {
+            let opts = screenshot::ScreenshotOpts {
+                region,
+                copy,
+                output: output.as_deref(),
+                quiet,
+            };
+            screenshot::run(opts).map_err(|e| eyre!(e.to_string()))
+        }
     }
 }
 

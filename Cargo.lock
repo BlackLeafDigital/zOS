@@ -7504,6 +7504,7 @@ dependencies = [
  "smithay-drm-extras",
  "thiserror 1.0.69",
  "tiny-skia",
+ "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
  "usvg",

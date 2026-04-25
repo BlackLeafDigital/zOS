@@ -1190,7 +1190,15 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             focus_mode: FocusMode::default(),
 
             // Phase 3 input dispatch: bind table + suppression sets.
-            bindings: crate::binds::default_bindings(),
+            // User bindings from ~/.config/zos/binds.toml are merged on top of
+            // the defaults — same KeyCombo overrides, new combos extend.
+            bindings: {
+                let mut b = crate::binds::default_bindings();
+                for (combo, action) in crate::binds::load_user_bindings() {
+                    b.insert(combo, action);
+                }
+                b
+            },
             suppressed_keycodes: HashSet::new(),
             suppressed_buttons: HashSet::new(),
 
