@@ -481,7 +481,61 @@ Workspace: 13 crates, all warning-free. Session total commits: 22 (this session 
 - Phase 5: hot reload, style scoping macro
 - Phase 6: zos-panel system tray (StatusNotifierItem), wifi picker popup, monitors visual drag layout
 - Phase 6: zos-notify history panel
+- Phase 6: OSD overlay (volume/brightness on-screen indicator)
 - Phase 7: WASM runtime (v2), example out-of-process plugin
 - Phase 8: actual swap-over (Hyprland-removal, daily-drive zos-wm)
+
+---
+
+## 2026-04-25 (continued, fourth-half) — final batch
+
+### binds.toml user keybinds (commit e0e1422)
+- `~/.config/zos/binds.toml` parsed via toml-0.8. UserBindEntry struct with `mods=[..]` `key="..."` (or `button=N`) `action="..."` `args=[..]`.
+- Modifier names: SHIFT/CTRL/ALT/SUPER/ALTGR. Keysym names via `xkb::keysym_from_name`. Action variants enumerated string-to-enum with arg parsing per type (string/integer).
+- Loaded at startup in state.rs::init, merged over default_bindings via HashMap::insert (user combos override defaults).
+- 4 unit tests covering empty TOML, parse with args, error paths, full round-trip.
+
+### zos screenshot CLI (commit e0e1422)
+- New zos-cli/src/screenshot.rs (117 lines). Wraps grim + slurp + wl-copy.
+- Saves to ~/Pictures/Screenshots/zos-YYYY-MM-DD_HH-MM-SS.png (via system `date`, no chrono dep).
+- --region (slurp selection), --copy (wl-copy clipboard), --output OUT (specific monitor), --quiet (suppress output).
+- Tool probing with helpful "install: dnf install ..." errors.
+
+### Media keys + scroll-wheel volume (commit ab3f920)
+- zos-wm: XF86Audio{Raise,Lower}Volume/Mute/MicMute/Play/Next/Prev → pactl/playerctl. XF86MonBrightness{Up,Down} → brightnessctl. Print → `zos screenshot --copy --quiet`. Super+P → region screenshot.
+- zos-panel audio module wrapped in MouseArea: scroll up = +5%, scroll down = -5%, middle-click = toggle mute. Pixel-delta scaled by /20 for natural feel.
+
+### Status snapshot — end of 2026-04-25 (final)
+
+| Phase | Status |
+|---|---|
+| 0-3 | Done |
+| 4 | Animations visible. Drop shadow + texture-shader rounded corners compiled and ready; render-side texture-shader wrap deferred (smithay MultiRenderer trait gap). |
+| 5 | zos-ui foundation (signals + macros + theme + layer + widgets + config + use_interval) + zos-settings/zos-dock refactored onto it. |
+| 6 | All 5 shell apps shipping (zos-panel + zos-power + zos-monitors + zos-notify + zos-launcher). Audio scroll-wheel + media keys wired. |
+| 7 | IPC + Extension trait wired and validated (LogFrameCount + zos doctor + zos compositor CLI). |
+| 8 | Image-build prep complete; swap awaits daily-driver validation. |
+
+**Workspace: 13 crates, all warning-free. Tests: zos-ui 25/25, zos-wm 44/44, zos-core 9/9, zos-launcher 4/4 = 82 passing.**
+
+**Session total commits: 25** (this session pass, autonomous mode after the initial "go").
+
+### Daily-driver readiness checklist for Phase 8 swap
+
+- [x] zos-wm scaffold + Wayland protocols + udev backend
+- [x] Greetd session entry + start-zos-wm launcher in image
+- [x] zos-panel (clock + workspaces + audio + network + battery + active title)
+- [x] zos-power (4 actions + reboot-to-Windows)
+- [x] zos-monitors (mode picker + monitors.conf write)
+- [x] zos-notify (DBus daemon + toast UI)
+- [x] zos-launcher (Super+Space)
+- [x] Media keys + screenshot bindings
+- [x] zos compositor CLI (workspaces / windows / monitors / switch / focus / move / version / --watch)
+- [x] zos doctor diagnostic
+- [ ] Daily-drive zos-wm for 48+ hours under real load (user task)
+- [ ] Confirm visual fidelity at 144Hz on 3× 1080p NVIDIA setup
+- [ ] Verify the deferred render-side shader integration isn't blocking (or implement smithay PR / per-backend specialization)
+- [ ] Drop Hyprland keep-alive banner in install-hyprland.sh, remove HyprPanel/wlogout/nwg-displays from dnf install
+- [ ] CI image rebuild + rebase via rpm-ostree
 
 ---
