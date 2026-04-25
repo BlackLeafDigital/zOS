@@ -5576,8 +5576,10 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -7256,6 +7258,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_repr",
+ "tokio",
  "tracing",
  "uds_windows",
  "uuid",
@@ -7387,10 +7390,11 @@ dependencies = [
 name = "zos-notify"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "zbus",
- "zos-core",
 ]
 
 [[package]]
