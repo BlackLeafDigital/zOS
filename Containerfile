@@ -18,6 +18,7 @@ COPY zos-panel /zos-panel
 COPY zos-power /zos-power
 COPY zos-monitors /zos-monitors
 COPY zos-notify /zos-notify
+COPY zos-launcher /zos-launcher
 
 # Build scripts + system_files context - isolated so Rust edits don't invalidate script layers
 FROM scratch AS build-ctx
@@ -60,9 +61,10 @@ RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     cp /tmp/cargo-target/release/zos-wm /usr/bin/zos-wm && \
     test -x /usr/bin/zos-wm && \
     CARGO_HOME=/tmp/cargo-home CARGO_TARGET_DIR=/tmp/cargo-target \
-    cargo build --release -p zos-panel -p zos-power -p zos-monitors -p zos-notify && \
+    cargo build --release -p zos-panel -p zos-power -p zos-monitors -p zos-notify -p zos-launcher && \
     cp /tmp/cargo-target/release/zos-panel /usr/bin/zos-panel && \
     cp /tmp/cargo-target/release/zos-power /usr/bin/zos-power && \
+    cp /tmp/cargo-target/release/zos-launcher /usr/bin/zos-launcher && \
     cp /tmp/cargo-target/release/zos-monitors /usr/bin/zos-monitors && \
     cp /tmp/cargo-target/release/zos-notify /usr/bin/zos-notify && \
     dnf5 install -y adwaita-icon-theme

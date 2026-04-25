@@ -226,6 +226,10 @@ pub fn get_monitor_heights() -> Vec<u32> {
 }
 
 /// Check if the currently focused window is fullscreen.
+///
+/// Retained for the dock auto-hide feature (hide when fullscreen window
+/// is focused). Wired into the dock state machine in a follow-up.
+#[allow(dead_code)]
 pub fn is_active_window_fullscreen() -> bool {
     let output = match Command::new("hyprctl")
         .args(["activewindow", "-j"])

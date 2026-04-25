@@ -26,6 +26,10 @@ impl DockPosition {
         matches!(self, DockPosition::Bottom | DockPosition::Top)
     }
 
+    /// Retained for layout helpers that branch on top-edge anchor.
+    /// Currently unused but matches `is_horizontal` API; future panel-style
+    /// rendering will consume it.
+    #[allow(dead_code)]
     pub fn is_top(self) -> bool {
         matches!(self, DockPosition::Top)
     }

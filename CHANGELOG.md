@@ -423,3 +423,65 @@ Workspace: 12 crates. Session total commits: 15. Tests: zos-ui 15/15, zos-wm 33/
 - Phase 8: Hyprland keep-alive removal — only when zos-wm has been daily-driver-validated
 
 ---
+
+## 2026-04-25 (continued) — third-half session
+
+12 more commits. Tests across workspace: zos-ui 25/25, zos-wm 40/40, zos-core 9/9, zos-launcher 4/4. Workspace is now warning-free.
+
+### Phase 4 polish
+- **Drop shadow shader** (effects/shadow.rs, 191 lines): closed-form gaussian SDF + smoothstep, single-pass fragment shader. DropShadowEffect::new compiles via compile_custom_pixel_shader. State.rs: shadow_radius=16, shadow_offset=(0,4), shadow_color=[0,0,0,0.5] defaults. Compiled at backend init in udev.rs and winit.rs.
+- **Winit-only shadow render** (P4-V5): MultiRenderer trait gap confirmed — no blanket RenderElement impl. Took fallback path 1: ShadowParams struct, new WinitOutputElements wrapper holds PixelShaderElements only on winit's R = GlesRenderer path. udev passes None. Shadow ships visibly on winit.
+- **Texture-shader rounded corners** (P4-V6): rewrote effects/rounded.rs to use compile_custom_texture_shader instead of pixel shader. GlesTexProgram. Sampler shader multiplies tex sample by smoothstep mask alpha. Handles EXTERNAL/NO_ALPHA/DEBUG_FLAGS variants. Render-side TextureShaderElement wrapping still TODO (mirrors shadow trait gap).
+
+### Phase 3 polish
+- **Auto-tile new windows** (P3-auto-tile): xdg.rs::new_toplevel checks if focused workspace is Tiled; if so, allocates WindowKey, calls algorithm.insert, reads back rect, overrides location via space.map_element + sends configure. Floating workspaces unchanged.
+- **Workspace mode-switch relayout** (P3-tile-relayout): switch_to_tiled walks windows, allocates WindowKey per window, inserts, captures rects, updates entry.location + stored_size, sends configure with new size. switch_to_floating restores stored_size. tiling_keys: HashMap<WindowId, WindowKey> on Workspace.
+
+### Phase 5 config
+- **TOML config loader** (zos-ui::config): animations.toml + theme.toml parsers. AnimationOverrides + BezierCurveOverride + PropertyOverride structs. ThemeOverrides with palette/font_size/space/radius hashmaps + parse_hex_color (#RRGGBB + #RRGGBBAA). Graceful default on missing/malformed file. 10 unit tests passing.
+- **AnimationManager::with_overrides** (P5-config-consume): merges TOML overrides over defaults at startup. Custom curves registered before resolving property curve-by-name. Unknown curves/styles emit warn + keep default. 7 new unit tests.
+
+### Phase 6 — shell-app polish
+- **zos-panel module clicks**: audio module → spawn pavucontrol on click. network → nm-connection-editor. Battery stays read-only.
+- **zos-monitors mode picker**: per-monitor pick_list dropdown listing available modes. MonitorMode { width, height, refresh_hz } + Display impl in zos-core. hyprland.rs parses availableModes JSON array (e.g., "1920x1080@60.00Hz"). Apply writes monitors.conf with chosen WxH@RR.
+- **zos-launcher** (NEW crate, 500 lines): centered-popup app launcher replacing wofi. Reads .desktop files from /usr/share/applications + ~/.local/share/applications + Flatpak exports. Substring scoring (exact name > prefix > contains-position > comment match). Up/Down/Enter selection, Esc dismiss. Terminal=true wraps in `wezterm start --`. Discovers 81 entries on test box.
+- **zos-settings warning cleanup**: 22 → 0 warnings via #[allow(dead_code)] annotations + 1 visibility fix on PowerAction.
+- **zos-dock warning cleanup**: 2 → 0 warnings (annotated DockPosition::is_top + is_active_window_fullscreen as retained-for-future).
+
+### IPC + CLI
+- **IPC class/title** + **MoveWindowToWorkspace** + **FocusWindow** handlers wired from stub-error to real impls in zos-wm/src/state.rs::handle_ipc_request.
+- **zos compositor move-to-workspace / focus-window** subcommands in zos-cli.
+- **zos compositor --watch [MS]** flag on read commands. Default 1000ms when no value given. Watch loop clears screen via ANSI codes + sleeps interval. Errors print and continue (so socket reconnects work).
+- **zos doctor** (NEW, 274 lines): 8 health checks — Wayland session, NVIDIA driver (modeset/fbdev/version), logind (Active=yes via loginctl), hyprctl + version, zos-wm IPC + Version round-trip, ~/.config/zos writable, animations.toml presence, DRM outputs. Colorized ✓/⚠/✗ output via inline ANSI. Exit code 1 on any Fail.
+
+### Phase 7
+- **Example Extension wired**: LogFrameCount registered in AnvilState::init, ticks pre_frame_all + post_frame_all from udev render_surface and winit run_winit. Validates Phase 7 in-process Extension trait end-to-end.
+
+### Phase 8 — image build
+- **zos-launcher in Containerfile**: rust-ctx COPY + cargo build line for shell apps + install to /usr/bin/.
+- **Super+Space binding** in zos-wm/src/binds.rs spawns zos-launcher.
+
+### Status snapshot — end of 2026-04-25 (combined, all-day)
+
+| Phase | Status |
+|---|---|
+| 0-2 | Done |
+| 3 | Done MVP + polish + auto-tile + relayout. ToggleWorkspaceTiling functional. |
+| 4 | Animations visible. Shadow visible on winit (udev blocked on MultiRenderer trait gap). Rounded corners shader compiles, render-side wrap deferred (same gap). |
+| 5 | Foundation + macros + signals + use_interval/timeout + theme + layer + widgets + config loader + clock demo. zos-settings + zos-dock refactored onto zos-ui. |
+| 6 | All 5 shell apps implemented (zos-panel + zos-power + zos-monitors + zos-notify + zos-launcher). Tray/visual-drag deferred. |
+| 7 | IPC + Extension trait wired and validated end-to-end. |
+| 8 | Image-build prep complete; swap not triggered. |
+
+Workspace: 13 crates, all warning-free. Session total commits: 22 (this session pass). Tests: zos-ui 25/25, zos-wm 40/40, zos-core 9/9, zos-launcher 4/4.
+
+### Still deferred
+- Phase 4: render-time integration of texture-shader rounded corners + udev-side shadow (blocked on smithay MultiRenderer's lack of blanket RenderElement impl)
+- Phase 4: kawase blur, opacity wrapping (lower priority)
+- Phase 5: hot reload, style scoping macro
+- Phase 6: zos-panel system tray (StatusNotifierItem), wifi picker popup, monitors visual drag layout
+- Phase 6: zos-notify history panel
+- Phase 7: WASM runtime (v2), example out-of-process plugin
+- Phase 8: actual swap-over (Hyprland-removal, daily-drive zos-wm)
+
+---

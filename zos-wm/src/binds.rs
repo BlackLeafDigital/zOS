@@ -129,6 +129,7 @@ pub fn default_bindings() -> HashMap<KeyCombo, Action> {
     m.insert(KeyCombo::keysym(Modifiers::CTRL | Modifiers::ALT, Keysym::BackSpace), Quit);
     m.insert(KeyCombo::keysym(Modifiers::SUPER, Keysym::q),            CloseWindow);
     m.insert(KeyCombo::keysym(Modifiers::SUPER, Keysym::Return),       Spawn(vec!["wezterm".into()]));
+    m.insert(KeyCombo::keysym(Modifiers::SUPER, Keysym::space),        Spawn(vec!["zos-launcher".into()]));
     m.insert(KeyCombo::keysym(Modifiers::SUPER, Keysym::v),            ToggleFloating);
     m.insert(KeyCombo::keysym(Modifiers::SUPER | Modifiers::SHIFT, Keysym::T), ToggleWorkspaceTiling);
 
