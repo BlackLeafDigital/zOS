@@ -12,6 +12,7 @@ pub mod binds;
 #[cfg(any(feature = "udev", feature = "xwayland"))]
 pub mod cursor;
 pub mod drawing;
+pub mod effects;
 pub mod extension;
 pub mod focus;
 pub mod input_handler;

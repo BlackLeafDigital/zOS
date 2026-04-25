@@ -304,6 +304,25 @@ where
                 )
                     .into();
 
+                // TODO(P4-rounded-corners): once `RoundedCornersEffect`
+                // is initialized per-renderer at backend init
+                // (udev.rs / winit.rs), append a `PixelShaderElement`
+                // per window here, layered above the window's content.
+                // See `zos-wm/src/effects/rounded.rs`. The shape is
+                // roughly:
+                //
+                //   if let Some(effect) = backend.rounded_corners() {
+                //       let geometry = Rectangle::new(
+                //           logical_loc + offset, window_size);
+                //       let mask = effect.pixel_shader_element(
+                //           geometry, /* radius */ 8.0);
+                //       output_render_elements.push(/* wrap mask */);
+                //   }
+                //
+                // Blocked on threading the GlesRenderer-typed shader
+                // handle through `output_elements`'s renderer-generic
+                // `R` parameter, which needs either a downcast helper
+                // or a backend-specific render path.
                 output_render_elements.extend(window_render_elements.into_iter().map(|el| {
                     OutputRenderElements::AnimatedWindow(RelocateRenderElement::from_element(
                         el,
