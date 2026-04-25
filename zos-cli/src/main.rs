@@ -4,10 +4,11 @@
 // No subcommand -> TUI dashboard.
 // migrate --auto -> silent migration (no TUI, for systemd).
 
+mod compositor;
 mod tui;
 
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 
 #[derive(Parser)]
 #[command(name = "zos", about = "zOS system management tool", version)]
@@ -56,6 +57,48 @@ enum Commands {
     },
     /// Set Windows as next boot target and reboot
     RebootToWindows,
+    /// Talk to the zos-wm compositor over its IPC socket
+    Compositor {
+        #[command(subcommand)]
+        cmd: CompositorCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CompositorCmd {
+    /// Show zos-wm IPC + build version
+    Version,
+    /// List workspaces across all outputs
+    Workspaces {
+        /// Emit raw JSON instead of a human-readable table
+        #[arg(long)]
+        json: bool,
+    },
+    /// List windows across all workspaces
+    Windows {
+        /// Emit raw JSON instead of a human-readable table
+        #[arg(long)]
+        json: bool,
+    },
+    /// List connected monitors
+    Monitors {
+        /// Emit raw JSON instead of a human-readable table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the currently focused window
+    Active {
+        /// Emit raw JSON instead of a human-readable summary
+        #[arg(long)]
+        json: bool,
+    },
+    /// Switch the focused output to workspace <id>
+    Switch {
+        /// Workspace id
+        id: u32,
+    },
+    /// Close the currently focused window
+    CloseFocused,
 }
 
 fn main() -> Result<()> {
@@ -113,5 +156,18 @@ fn main() -> Result<()> {
         Some(Commands::Search { name }) => zos_core::commands::install::search_and_print(&name),
         Some(Commands::Install { name }) => zos_core::commands::install::search_and_install(&name),
         Some(Commands::RebootToWindows) => zos_core::commands::grub::reboot_to_windows_elevated(),
+        Some(Commands::Compositor { cmd }) => run_compositor(cmd).map_err(|e| eyre!(e.to_string())),
+    }
+}
+
+fn run_compositor(cmd: CompositorCmd) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        CompositorCmd::Version => compositor::cmd_version(),
+        CompositorCmd::Workspaces { json } => compositor::cmd_workspaces(json),
+        CompositorCmd::Windows { json } => compositor::cmd_windows(json),
+        CompositorCmd::Monitors { json } => compositor::cmd_monitors(json),
+        CompositorCmd::Active { json } => compositor::cmd_active(json),
+        CompositorCmd::Switch { id } => compositor::cmd_switch(id),
+        CompositorCmd::CloseFocused => compositor::cmd_close_focused(),
     }
 }

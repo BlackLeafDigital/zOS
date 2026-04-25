@@ -33,6 +33,24 @@ pub struct ExtensionRegistry {
     pub extensions: Vec<Box<dyn Extension>>,
 }
 
+impl std::fmt::Debug for ExtensionRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Box<dyn Extension> isn't Debug (and we don't want to require it on
+        // the trait), so just print the registered extension names. Lets
+        // AnvilState keep its blanket `#[derive(Debug)]`.
+        f.debug_struct("ExtensionRegistry")
+            .field(
+                "extensions",
+                &self
+                    .extensions
+                    .iter()
+                    .map(|e| e.name())
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
 impl ExtensionRegistry {
     pub fn new() -> Self {
         Self {

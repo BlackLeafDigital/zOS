@@ -334,7 +334,10 @@ pub fn run_winit() {
 
             // Advance all animations before assembling the per-frame element
             // list. Same shared-Instant semantics as the udev backend.
-            state.tick_animations(std::time::Instant::now());
+            let frame_now = std::time::Instant::now();
+            state.tick_animations(frame_now);
+            // Notify all in-process extensions that a new frame is starting.
+            state.extension_registry.pre_frame_all(frame_now);
 
             state.pre_repaint(&output, frame_target);
 
@@ -573,6 +576,10 @@ pub fn run_winit() {
                 }
                 Err(err) => warn!("Rendering error: {}", err),
             }
+
+            // Notify all in-process extensions that the frame has finished.
+            // Mirrors the `pre_frame_all` call above.
+            state.extension_registry.post_frame_all(frame_now);
         }
 
         let result = event_loop.dispatch(Some(Duration::from_millis(1)), &mut state);

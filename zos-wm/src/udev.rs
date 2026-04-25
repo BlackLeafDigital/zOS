@@ -1866,7 +1866,11 @@ impl AnvilState<UdevData> {
         // Advance all animations before assembling the per-frame element list.
         // Single Instant is shared across this frame's tick_animations call so
         // workspace-level and per-window AnimatedValues stay in lockstep.
-        self.tick_animations(std::time::Instant::now());
+        let frame_now = std::time::Instant::now();
+        self.tick_animations(frame_now);
+        // Notify all in-process extensions that a new frame is starting.
+        // Disjoint-field borrow: only touches `self.extension_registry`.
+        self.extension_registry.pre_frame_all(frame_now);
 
         self.pre_repaint(&output, frame_target);
 
@@ -2022,6 +2026,11 @@ impl AnvilState<UdevData> {
             let elapsed = start.elapsed();
             tracing::trace!(?elapsed, "rendered surface");
         }
+
+        // Notify all in-process extensions that the frame has finished.
+        // Mirrors the `pre_frame_all` call above; disjoint-field borrow on
+        // `self.extension_registry` only.
+        self.extension_registry.post_frame_all(frame_now);
 
         profiling::finish_frame!();
     }

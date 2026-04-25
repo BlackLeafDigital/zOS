@@ -256,6 +256,11 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// `crate::effects::rounded` and the `TODO(P4-render-integration)`
     /// in `crate::render`).
     pub corner_radius: f32,
+
+    /// Compile-time extension registry. Populated in `init` with whatever
+    /// the compositor wants running in-process every frame. Each frame the
+    /// backends call `pre_frame_all` / `post_frame_all` around render.
+    pub extension_registry: crate::extension::ExtensionRegistry,
 }
 
 #[derive(Debug)]
@@ -1093,6 +1098,15 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         #[cfg(feature = "xwayland")]
         XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
+        // Build the compile-time extension registry. Register everything we
+        // want running in-process before the first frame, then run init_all
+        // so each extension can prepare any state it needs. LogFrameCount is
+        // the canonical example/template; real extensions (animations, layout
+        // hooks, etc.) get registered alongside it here.
+        let mut extension_registry = crate::extension::ExtensionRegistry::new();
+        extension_registry.register(Box::new(crate::extension::LogFrameCount::new()));
+        extension_registry.init_all();
+
         AnvilState {
             backend_data,
             display_handle: dh,
@@ -1169,6 +1183,9 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
             // Phase 4 effects: 8.0 px rounded corners by default.
             corner_radius: 8.0,
+
+            // Compile-time extension registry, already populated + init'd above.
+            extension_registry,
         }
     }
 
