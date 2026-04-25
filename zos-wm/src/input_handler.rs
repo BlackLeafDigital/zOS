@@ -312,13 +312,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 self.action_move_window(dir);
             }
 
-            other @ Action::ToggleWorkspaceTiling => {
-                // Tiling-mode toggle requires the per-workspace tiling
-                // algorithm to be hooked up to layout application; that
-                // wiring lands with the dwindle relayout pass. Until
-                // then we no-op rather than mis-toggling state nothing
-                // reads.
-                warn!(?other, "Action::ToggleWorkspaceTiling not yet wired to layout pass");
+            Action::ToggleWorkspaceTiling => {
+                self.action_toggle_workspace_tiling();
             }
         }
     }
@@ -682,6 +677,38 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             }
         }
         sync_active_workspaces_to_space(&self.outputs, &mut self.space);
+    }
+
+    fn action_toggle_workspace_tiling(&mut self) {
+        let Some(out_id) = self.focused_output else {
+            return;
+        };
+        let Some(out_state) = self.outputs.get_mut(&out_id) else {
+            return;
+        };
+
+        // Snapshot the output's current mode size BEFORE taking the active
+        // workspace mut borrow, so we don't double-borrow.
+        let work_area = out_state
+            .output
+            .current_mode()
+            .map(|m| {
+                smithay::utils::Rectangle::new(
+                    smithay::utils::Point::from((0, 0)),
+                    m.size.to_logical(1),
+                )
+            })
+            .unwrap_or_default();
+
+        let workspace = out_state.active_mut();
+        if workspace.is_tiled() {
+            workspace.switch_to_floating();
+            tracing::info!(workspace_id = workspace.id.0, "switched to floating mode");
+        } else {
+            let algorithm = Box::new(crate::shell::tiling::dwindle::DwindleTree::new(work_area));
+            workspace.switch_to_tiled(algorithm);
+            tracing::info!(workspace_id = workspace.id.0, "switched to tiled mode");
+        }
     }
 
     /// Forward a workspace-driven focus change to the wl_keyboard so

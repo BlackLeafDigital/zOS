@@ -74,13 +74,42 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // place_new_window has already mapped to Space at this point.
         // Backfill the workspace bookkeeping using the chosen location, so
         // the active workspace's window list reflects what's on screen.
+        // T-3.9 modal parent: if the toplevel has an xdg parent set, link
+        // the new entry to it and bump it to the AlwaysOnTop band so it
+        // floats above the parent. Then re-stack any descendants of the
+        // parent so the modal appears in the right place.
+        let parent_surface = surface.parent();
         if let Some(focused_output_id) = self.focused_output {
             if let Some(output_state) = self.outputs.get_mut(&focused_output_id) {
                 let workspace_id = output_state.active().id;
                 let location = self.space.element_location(&window).unwrap_or_default();
                 let mut entry = crate::shell::element::WindowEntry::new(window.clone(), workspace_id);
                 entry.location = location;
+
+                // Resolve parent WindowEntry, if any.
+                let parent_entry_id = parent_surface.as_ref().and_then(|parent_wl| {
+                    output_state
+                        .active()
+                        .windows
+                        .iter()
+                        .find_map(|e| {
+                            (e.element.wl_surface().as_deref() == Some(parent_wl)).then_some(e.id)
+                        })
+                });
+                if let Some(parent_id) = parent_entry_id {
+                    entry.parent_id = Some(parent_id);
+                    // T-3.10: a modal with a parent goes into AlwaysOnTop so it
+                    // visibly floats above its parent on close inspection.
+                    entry.band = crate::shell::element::ZBand::AlwaysOnTop;
+                }
+
                 output_state.active_mut().add(entry);
+
+                // After insertion, re-stack descendants of the parent so the
+                // modal lands in the correct within-band z position.
+                if let Some(parent_id) = parent_entry_id {
+                    output_state.active_mut().bring_descendants_above(parent_id);
+                }
             }
         }
 

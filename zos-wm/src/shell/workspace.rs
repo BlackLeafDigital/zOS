@@ -15,6 +15,32 @@ use std::collections::VecDeque;
 
 use crate::shell::element::{WindowEntry, WindowId, WorkspaceId, ZBand};
 use crate::shell::output_state::OutputId;
+use crate::shell::tiling::TilingAlgorithm;
+
+/// A workspace's tiling/floating mode.
+///
+/// `Floating` is the default; windows open free-floating and are placed
+/// by `place_new_window`. `Tiled` consults a `TilingAlgorithm` for
+/// window rectangles instead.
+pub enum WorkspaceMode {
+    Floating,
+    Tiled(Box<dyn TilingAlgorithm>),
+}
+
+impl std::fmt::Debug for WorkspaceMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkspaceMode::Floating => write!(f, "Floating"),
+            WorkspaceMode::Tiled(_) => write!(f, "Tiled(<dyn>)"),
+        }
+    }
+}
+
+impl Default for WorkspaceMode {
+    fn default() -> Self {
+        Self::Floating
+    }
+}
 
 #[derive(Debug)]
 pub struct Workspace {
@@ -26,6 +52,8 @@ pub struct Workspace {
     pub active: Option<WindowId>,
     /// MRU focus stack. Last entry = most recently focused.
     pub focus_history: Vec<WindowId>,
+    /// Tiling mode. Floating by default; toggled via `Action::ToggleWorkspaceTiling`.
+    pub mode: WorkspaceMode,
 }
 
 impl Workspace {
@@ -36,7 +64,28 @@ impl Workspace {
             windows: VecDeque::new(),
             active: None,
             focus_history: Vec::new(),
+            mode: WorkspaceMode::default(),
         }
+    }
+
+    /// Switch to Tiled mode using the given algorithm. Existing window
+    /// arrangement is NOT yet re-applied — that's a follow-up. The mode
+    /// flips and future window-placement decisions consult the algorithm.
+    pub fn switch_to_tiled(&mut self, algorithm: Box<dyn TilingAlgorithm>) {
+        self.mode = WorkspaceMode::Tiled(algorithm);
+        // TODO(P3-tile-relayout): walk self.windows and call
+        // algorithm.insert for each. Update rects via space.map_element
+        // and xdg_toplevel.with_pending_state size.
+    }
+
+    pub fn switch_to_floating(&mut self) {
+        self.mode = WorkspaceMode::Floating;
+        // TODO(P3-float-relayout): restore windows to their stored_size
+        // and a sensible placement.
+    }
+
+    pub fn is_tiled(&self) -> bool {
+        matches!(self.mode, WorkspaceMode::Tiled(_))
     }
 
     pub fn add(&mut self, entry: WindowEntry) {
