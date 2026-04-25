@@ -1,0 +1,10 @@
+zos-wm is a fork of Smithay's anvil reference compositor.
+
+Upstream: https://github.com/Smithay/smithay
+Fork base commit: 27af99ef492ab4d7dc5cd2e625374d2beb2772f7 (April 2026)
+
+Smithay and anvil are MIT-licensed. See LICENSE files in the upstream repo.
+This fork retains the MIT license.
+
+Material changes from upstream will accumulate under zos-wm/ and
+are documented in zOS commit history.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zos-cli", "zos-core", "zos-settings", "zos-dock", "zos-daemon"]
+members = ["zos-cli", "zos-core", "zos-settings", "zos-dock", "zos-daemon", "zos-wm"]
 
 [profile.release]
 strip = true
