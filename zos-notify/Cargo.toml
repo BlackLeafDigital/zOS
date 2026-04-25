@@ -1,0 +1,17 @@
+[package]
+name = "zos-notify"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Notification daemon — replaces swaync"
+
+[dependencies]
+zos-core = { path = "../zos-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zbus = "5"
+
+[[bin]]
+name = "zos-notify"
+path = "src/main.rs"

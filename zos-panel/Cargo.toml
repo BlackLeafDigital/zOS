@@ -1,0 +1,16 @@
+[package]
+name = "zos-panel"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "zOS top panel — replaces HyprPanel"
+
+[dependencies]
+zos-core = { path = "../zos-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "zos-panel"
+path = "src/main.rs"

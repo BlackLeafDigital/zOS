@@ -7373,6 +7373,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "zos-monitors"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "zos-core",
+]
+
+[[package]]
+name = "zos-notify"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "zbus",
+ "zos-core",
+]
+
+[[package]]
+name = "zos-panel"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "zos-core",
+]
+
+[[package]]
+name = "zos-power"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+ "zos-core",
+]
+
+[[package]]
 name = "zos-settings"
 version = "0.1.0"
 dependencies = [

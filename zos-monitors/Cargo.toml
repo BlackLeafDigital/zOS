@@ -1,0 +1,16 @@
+[package]
+name = "zos-monitors"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Monitor configuration — replaces nwg-displays"
+
+[dependencies]
+zos-core = { path = "../zos-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "zos-monitors"
+path = "src/main.rs"
