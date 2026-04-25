@@ -122,7 +122,7 @@ type UdevRenderer<'a> = MultiRenderer<
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct UdevOutputId {
     device_id: DrmNode,
     crtc: crtc::Handle,
@@ -253,20 +253,41 @@ impl Backend for UdevData {
 
             match &change.action {
                 OutputConfigAction::Disable => {
-                    // TODO(output-disable): cleanly disable a CRTC at the DRM
-                    // level requires dropping the SurfaceData (which holds
-                    // the DrmOutput) and calling `space.unmap_output` on the
-                    // associated Output. The Backend trait does not expose
-                    // `&mut Space<WindowElement>` so we can't do the
-                    // space-side update here. Implementing this needs either
-                    // an extension of the Backend signature or a separate
-                    // post-apply hook in AnvilState. For v1 we report
-                    // NotSupported and let the client see `failed`.
-                    tracing::warn!(
-                        name = change.output.name(),
-                        "apply_output_config: Disable is not yet supported on the udev backend"
-                    );
-                    return Err(OutputConfigError::NotSupported);
+                    // The Space-side unmap happens in
+                    // `AnvilState::apply_space_change` (state.rs) once we
+                    // return `Ok(())`. Here we only handle the DRM side:
+                    // drop the SurfaceData, whose `Drop` impl tears down
+                    // the DrmOutput and removes the GlobalId. This
+                    // mirrors the surface-removal logic in
+                    // `connector_disconnected` (udev.rs).
+                    if test_only {
+                        // No DRM-test path for disable; the dispatch
+                        // already verified the output exists and has a
+                        // UdevOutputId. Nothing else to validate.
+                        tracing::debug!(
+                            name = change.output.name(),
+                            "apply_output_config: Disable test_only: ok"
+                        );
+                        continue;
+                    }
+                    if let Some(device) = self.backends.get_mut(&id.device_id) {
+                        // Dropping the SurfaceData runs its Drop impl
+                        // which tears down DrmOutput and unregisters the
+                        // wl_output global. Mirrors connector_disconnected
+                        // surface-teardown.
+                        let _ = device.surfaces.remove(&id.crtc);
+                        tracing::info!(
+                            name = change.output.name(),
+                            crtc = ?id.crtc,
+                            "apply_output_config: disabled output (DRM surface dropped)"
+                        );
+                    } else {
+                        tracing::warn!(
+                            name = change.output.name(),
+                            device = ?id.device_id,
+                            "apply_output_config: Disable: backend device not found"
+                        );
+                    }
                 }
                 OutputConfigAction::Enable {
                     mode,
@@ -437,6 +458,36 @@ impl Backend for UdevData {
         }
 
         Ok(())
+    }
+
+    /// Advertise dmabuf-capture formats from the primary GPU's renderer.
+    ///
+    /// `DmabufConstraints.node` is the DRM render node clients should
+    /// allocate from (so they don't have to copy across GPUs); `formats`
+    /// is the per-fourcc list of supported modifiers from the primary
+    /// GPU's GLES renderer. If we can't reach the primary renderer right
+    /// now (e.g. the device list is mid-enumeration), fall back to
+    /// shm-only by returning `None`.
+    fn screencopy_dma_constraints(
+        &mut self,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
+        use std::collections::HashMap;
+
+        use smithay::wayland::image_copy_capture::DmabufConstraints;
+
+        let renderer = self.gpus.single_renderer(&self.primary_gpu).ok()?;
+        let mut by_fourcc: HashMap<Fourcc, Vec<Modifier>> = HashMap::new();
+        for fmt in renderer.dmabuf_formats().iter() {
+            by_fourcc.entry(fmt.code).or_default().push(fmt.modifier);
+        }
+        let formats: Vec<(Fourcc, Vec<Modifier>)> = by_fourcc.into_iter().collect();
+        if formats.is_empty() {
+            return None;
+        }
+        Some(DmabufConstraints {
+            node: self.primary_gpu,
+            formats,
+        })
     }
 }
 

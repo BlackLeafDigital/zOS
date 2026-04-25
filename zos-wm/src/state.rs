@@ -684,6 +684,12 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
         let output = weak_output.upgrade()?;
         let mode = output.current_mode()?;
 
+        // Ask the backend for dmabuf format constraints. Backends that don't
+        // advertise dmabuf capture (or can't reach a renderer right now)
+        // return `None` from the default impl, which falls back to shm-only.
+        #[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
+        let dma = self.backend_data.screencopy_dma_constraints();
+
         Some(BufferConstraints {
             size: mode
                 .size
@@ -694,7 +700,7 @@ impl<BackendData: Backend> ImageCopyCaptureHandler for AnvilState<BackendData> {
                 smithay::reexports::wayland_server::protocol::wl_shm::Format::Xrgb8888,
             ],
             #[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
-            dma: None,
+            dma,
         })
     }
 
@@ -764,13 +770,97 @@ impl<BackendData: Backend + 'static> OutputManagementHandler for AnvilState<Back
         changes: &[OutputConfigChange],
         test_only: bool,
     ) -> Result<(), OutputConfigError> {
-        // Forward to the backend. The default `Backend::apply_output_config`
-        // body returns `NotSupported` so winit/x11 trivially refuse output
-        // reconfiguration. The udev backend overrides it in 2.D.3.
-        self.backend_data.apply_output_config(changes, test_only)
+        // Phase 1: backend does the DRM-side work (modeset, surface
+        // teardown, plane disable, adaptive-sync stash). The default
+        // `Backend::apply_output_config` returns `NotSupported`, so
+        // winit/x11 trivially refuse output reconfiguration.
+        self.backend_data.apply_output_config(changes, test_only)?;
+
+        // Phase 2 (skipped on test_only): apply Space-side updates that
+        // the backend cannot reach. The Backend trait only sees its own
+        // BackendData (DRM/winit), not `Space<WindowElement>` which lives
+        // on `AnvilState`. Mode/refresh changes were already committed by
+        // the backend; here we update the smithay Output's logical state
+        // (transform, scale, position) and re-map the output in `Space`
+        // so layouts reflect the new geometry.
+        if !test_only {
+            for change in changes {
+                self.apply_space_change(change);
+            }
+        }
+        Ok(())
     }
 }
 crate::delegate_output_management!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
+impl<BackendData: Backend + 'static> AnvilState<BackendData> {
+    /// Post-DRM Space-side updates for a single output config change.
+    ///
+    /// Runs *after* `Backend::apply_output_config` returned `Ok(())`, so
+    /// any DRM-level work (modeset, surface teardown for Disable) is
+    /// already committed. This helper is infallible by construction:
+    /// `Output::change_current_state` just stamps fields, and
+    /// `Space::map_output`/`unmap_output` cannot fail.
+    fn apply_space_change(
+        &mut self,
+        change: &crate::protocols::output_management::OutputConfigChange,
+    ) {
+        use crate::protocols::output_management::OutputConfigAction;
+        use smithay::output::Scale;
+        match &change.action {
+            OutputConfigAction::Enable {
+                mode: _, // already applied by Backend::apply_output_config
+                position,
+                scale,
+                transform,
+                adaptive_sync: _, // stashed in Output user-data by the dispatch
+            } => {
+                // Re-stamp logical state for any field the client set.
+                // `change_current_state` treats `None` as "leave alone",
+                // so we map `Option<f64>` → `Option<Scale::Fractional>`.
+                let scale_arg = scale.map(Scale::Fractional);
+                change.output.change_current_state(
+                    None,
+                    *transform,
+                    scale_arg,
+                    *position,
+                );
+                // (Re)map the output into Space at the requested
+                // position; default to the origin if the client didn't
+                // supply one (matches how connector_connected handles a
+                // freshly-enabled head).
+                let pos = position.unwrap_or_else(|| (0, 0).into());
+                self.space.map_output(&change.output, pos);
+            }
+            OutputConfigAction::Disable => {
+                // Backend has torn down the DRM surface (udev) or
+                // returned NotSupported (winit, in which case `?`
+                // already short-circuited and we never get here). All
+                // that remains is to drop the output from the layout.
+                self.space.unmap_output(&change.output);
+                self.space.refresh();
+            }
+            OutputConfigAction::Update {
+                mode: _, // already applied by Backend::apply_output_config
+                position,
+                scale,
+                transform,
+                adaptive_sync: _,
+            } => {
+                let scale_arg = scale.map(Scale::Fractional);
+                change.output.change_current_state(
+                    None,
+                    *transform,
+                    scale_arg,
+                    *position,
+                );
+                if let Some(pos) = position {
+                    self.space.map_output(&change.output, *pos);
+                }
+            }
+        }
+    }
+}
 
 impl<BackendData: Backend> SessionLockHandler for AnvilState<BackendData> {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
@@ -1443,5 +1533,22 @@ pub trait Backend {
         _test_only: bool,
     ) -> Result<(), crate::protocols::output_management::OutputConfigError> {
         Err(crate::protocols::output_management::OutputConfigError::NotSupported)
+    }
+
+    /// Optional dmabuf-capture format advertisement for ext-image-copy-capture-v1.
+    ///
+    /// Backends that have a render-capable GPU (winit's GLES context, udev's
+    /// primary GPU) override this to advertise the dmabuf formats that
+    /// `try_capture` can render directly into. Returning `None` falls back to
+    /// shm-only capture (the legacy CPU memcpy path).
+    ///
+    /// Gated on `backend_drm` (via the same `udev`/`winit`/`x11` feature
+    /// envelope as `BufferConstraints::dma`) because `DmabufConstraints`
+    /// only exists when smithay's `backend_drm` is enabled.
+    #[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
+    fn screencopy_dma_constraints(
+        &mut self,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
+        None
     }
 }

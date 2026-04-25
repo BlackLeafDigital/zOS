@@ -91,6 +91,40 @@ impl Backend for WinitData {
     }
     fn early_import(&mut self, _surface: &wl_surface::WlSurface) {}
     fn update_led_state(&mut self, _led_state: LedState) {}
+
+    /// Advertise dmabuf-capture formats from the GLES renderer.
+    ///
+    /// Resolves the EGL render node via the renderer's display, then walks
+    /// the renderer's dmabuf format set to assemble the per-fourcc modifier
+    /// vectors expected by `DmabufConstraints`. If we can't resolve a render
+    /// node (rare on Mesa, occasional on weird drivers), fall back to shm.
+    fn screencopy_dma_constraints(
+        &mut self,
+    ) -> Option<smithay::wayland::image_copy_capture::DmabufConstraints> {
+        use std::collections::HashMap;
+
+        use smithay::backend::allocator::{Fourcc, Modifier};
+        use smithay::wayland::image_copy_capture::DmabufConstraints;
+
+        let renderer = self.backend.renderer();
+        let render_node =
+            EGLDevice::device_for_display(renderer.egl_context().display())
+                .ok()
+                .and_then(|d| d.try_get_render_node().ok().flatten())?;
+
+        let mut by_fourcc: HashMap<Fourcc, Vec<Modifier>> = HashMap::new();
+        for fmt in renderer.dmabuf_formats().iter() {
+            by_fourcc.entry(fmt.code).or_default().push(fmt.modifier);
+        }
+        let formats: Vec<(Fourcc, Vec<Modifier>)> = by_fourcc.into_iter().collect();
+        if formats.is_empty() {
+            return None;
+        }
+        Some(DmabufConstraints {
+            node: render_node,
+            formats,
+        })
+    }
 }
 
 pub fn run_winit() {
@@ -233,6 +267,10 @@ pub fn run_winit() {
                 };
                 output.change_current_state(Some(mode), None, None, None);
                 output.set_preferred(mode);
+                crate::protocols::output_management::notify_changes(
+                    &mut state.output_management_manager_state,
+                    &output,
+                );
                 crate::shell::fixup_positions(&mut state.space, state.pointer.current_location());
             }
             WinitEvent::Input(event) => state.process_input_event_windowed(event, OUTPUT_NAME),

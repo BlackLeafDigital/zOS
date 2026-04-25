@@ -6,8 +6,9 @@
 //! 1. Accept `frame()` callbacks from the handler and queue them against the
 //!    Output they belong to (see `state.rs` -> `ImageCopyCaptureHandler::frame`).
 //! 2. After we finish rendering an output, re-render the same element list
-//!    into an offscreen GLES texture, read the pixels back, and memcpy them
-//!    into the client's shm buffer.
+//!    either directly into the client's dmabuf (zero-copy fast path) or
+//!    into an offscreen GLES texture which we read back and memcpy into
+//!    the client's shm buffer (fallback).
 //! 3. Signal `Frame::success` with the presentation timestamp so clients
 //!    (OBS, grim, the xdg-desktop-portal screen-cast backend) see a real
 //!    frame instead of the previous hard-coded failure.
@@ -15,19 +16,23 @@
 //! Scope of this implementation:
 //! - One-shot capture per `capture()` request (no streaming `request_frame`
 //!   continuous-update loop).
-//! - shm buffers only. TODO(screencopy-dmabuf): dmabuf path for zero-copy
-//!   screencast into the portal pipewire node.
+//! - shm and dmabuf buffers. The dmabuf fast path (when the client allocated
+//!   a GPU buffer matching our `DmabufConstraints`) renders directly into
+//!   the client's dmabuf — no readback, no memcpy. The shm path is kept as
+//!   a fallback for clients that don't support dmabuf (or whose dmabuf
+//!   doesn't match our advertised formats).
 //! - Whole-output capture (no region crop, no explicit cursor compositing —
 //!   we re-render the same element list the backend just used).
 //! - Generic over the renderer: works with both the winit `GlesRenderer`
 //!   path and the udev `MultiRenderer<GbmGlesBackend, GbmGlesBackend>` path.
-//!   Both back ends use a `GlesTexture` as the offscreen target type.
+//!   Both back ends use a `GlesTexture` as the offscreen target type and
+//!   both implement `Bind<Dmabuf>` for the zero-copy capture path.
 
 use std::{fmt::Debug, ptr, time::Duration};
 
 use smithay::{
     backend::{
-        allocator::Fourcc,
+        allocator::{Fourcc, dmabuf::Dmabuf},
         renderer::{
             Bind, Color32F, ExportMem, Offscreen, Renderer, Texture,
             damage::OutputDamageTracker,
@@ -38,6 +43,7 @@ use smithay::{
     reexports::wayland_server::protocol::wl_shm,
     utils::{Buffer as BufferCoords, Rectangle, Size, Transform},
     wayland::{
+        dmabuf::get_dmabuf,
         image_copy_capture::{CaptureFailureReason, Frame, SessionRef},
         shm::{self, with_buffer_contents_mut},
     },
@@ -64,12 +70,17 @@ impl std::fmt::Debug for PendingScreencopy {
 }
 
 /// Drain the pending screencopy queue for the given output and fulfill each
-/// request by rendering the scene into an offscreen texture and memcpy'ing
-/// the pixels into the client's shm buffer.
+/// request.
 ///
-/// `elements` is the same element list the backend just rendered to the real
-/// framebuffer; we re-render it into a fresh texture so the client gets an
-/// exact copy of what was just presented to the user.
+/// For each pending capture we re-render the same element list the backend
+/// just rendered. If the client attached a dmabuf buffer we bind that
+/// dmabuf as the framebuffer and render directly into it (zero-copy);
+/// otherwise we fall back to the shm path (offscreen texture + PBO readback
+/// + memcpy into the client's shm pool).
+///
+/// `elements` is the same element list the backend just rendered to the
+/// real framebuffer; the re-render gives the client an exact copy of what
+/// was just presented to the user.
 ///
 /// `presented_at` is the compositor-clock time the frame was presented; it
 /// becomes the `presentation_time` event on the captured frame.
@@ -80,7 +91,7 @@ pub fn drain_pending_for_output<R, T, E>(
     elements: &[E],
     presented_at: Duration,
 ) where
-    R: Renderer + Bind<T> + Offscreen<T> + ExportMem,
+    R: Renderer + Bind<T> + Bind<Dmabuf> + Offscreen<T> + ExportMem,
     R::TextureId: Texture,
     R::Error: Debug,
     T: Texture + 'static,
@@ -147,9 +158,17 @@ pub fn drain_pending_for_output<R, T, E>(
     }
 }
 
-/// Render the element list into an offscreen texture matching the client's
-/// buffer size, read the pixels back, and copy them into the shm buffer
-/// currently attached to `frame`.
+/// Capture a frame for the given client buffer.
+///
+/// Two paths:
+///   * **dmabuf fast path** — if the client attached a dmabuf buffer (i.e.
+///     `get_dmabuf` succeeds), bind that dmabuf as the renderer's framebuffer
+///     and run the same `OutputDamageTracker::render_output` we use for the
+///     real output. No readback, no memcpy — the dmabuf IS the client's
+///     buffer, the GL fence on framebuffer drop is what the client syncs on.
+///   * **shm fallback** — render into a fresh offscreen texture, then PBO
+///     readback + memcpy into the client's shm buffer. Slower but works for
+///     clients (or scenarios) that didn't allocate a matching dmabuf.
 fn try_capture<R, T, E>(
     renderer: &mut R,
     elements: &[E],
@@ -157,7 +176,7 @@ fn try_capture<R, T, E>(
     buffer_size: Size<i32, BufferCoords>,
 ) -> Result<(), CaptureFailureReason>
 where
-    R: Renderer + Bind<T> + Offscreen<T> + ExportMem,
+    R: Renderer + Bind<T> + Bind<Dmabuf> + Offscreen<T> + ExportMem,
     R::TextureId: Texture,
     R::Error: Debug,
     T: Texture + 'static,
@@ -165,9 +184,33 @@ where
 {
     let wl_buffer = frame.buffer();
 
-    // --- validate the buffer is shm and matches our advertised constraints ---
+    // --- dmabuf fast path: render straight into the client's dmabuf ---
+    //
+    // Smithay's `validate_dmabuf` already checked size + format/modifier
+    // against the `DmabufConstraints` we advertised, so by the time we get
+    // here a dmabuf attachment is guaranteed compatible with our renderer.
+    if let Ok(dmabuf) = get_dmabuf(&wl_buffer) {
+        let mut dmabuf = dmabuf.clone();
+        let mut framebuffer = Bind::<Dmabuf>::bind(renderer, &mut dmabuf).map_err(|err| {
+            warn!(?err, "screencopy: failed to bind client dmabuf as framebuffer");
+            CaptureFailureReason::Unknown
+        })?;
+        let mut damage_tracker =
+            OutputDamageTracker::new((buffer_size.w, buffer_size.h), 1.0, Transform::Normal);
+        damage_tracker
+            .render_output(renderer, &mut framebuffer, 0, elements, Color32F::TRANSPARENT)
+            .map_err(|err| {
+                warn!(?err, "screencopy: dmabuf render_output failed");
+                CaptureFailureReason::Unknown
+            })?;
+        // Framebuffer drops here, releasing the bind. The client will sync
+        // on the buffer via its own syncobj timeline (or wait for release).
+        return Ok(());
+    }
+
+    // --- shm fallback: validate the buffer is shm and matches constraints ---
     let buffer_info = shm::with_buffer_contents(&wl_buffer, |_, _, data| data).map_err(|_| {
-        // Not an shm buffer (probably dmabuf). TODO(screencopy-dmabuf).
+        // Not an shm buffer and not a dmabuf we recognise — reject.
         CaptureFailureReason::BufferConstraints
     })?;
 
