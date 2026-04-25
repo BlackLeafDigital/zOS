@@ -15,7 +15,7 @@ use iced::{
     Background, Border, Element, Length, Padding, Subscription, Task, Theme,
     alignment::Vertical,
     border::Radius,
-    widget::{Row, Space, button, container, row, text},
+    widget::{MouseArea, Row, Space, button, container, row, text},
 };
 use iced_layershell::settings::Settings;
 use iced_layershell::to_layer_message;
@@ -81,6 +81,17 @@ enum Msg {
     /// Open the NetworkManager connection editor (`nm-connection-editor`).
     /// Same silent-fallback semantics as `OpenAudioMixer`.
     OpenNetworkEditor,
+    /// Bump the default sink volume by +5% via `pactl`. Emitted by
+    /// scroll-up over the audio module. Best-effort: missing `pactl`
+    /// is silently dropped, and the post-spawn `fetch_audio()` may race
+    /// the child process — the next tick will resync.
+    AudioVolumeUp,
+    /// Drop the default sink volume by -5% via `pactl`. Emitted by
+    /// scroll-down over the audio module.
+    AudioVolumeDown,
+    /// Toggle mute on the default sink. Emitted by middle-click on the
+    /// audio module.
+    AudioToggleMute,
 }
 
 /// Naive `HH:MM` formatter from `SystemTime` — assumes the seconds-since-epoch
@@ -160,6 +171,38 @@ fn update(state: &mut Panel, msg: Msg) -> Task<Msg> {
             if let Err(e) = std::process::Command::new("nm-connection-editor").spawn() {
                 tracing::warn!(error = ?e, "failed to spawn nm-connection-editor");
             }
+        }
+        // Scroll-wheel + middle-click handlers on the audio module. We
+        // shell out to `pactl` (which is what HyprPanel did) and then
+        // re-poll so the label updates without waiting for the next
+        // tick. The re-poll can race the child process — that's fine,
+        // the 1Hz tick will resync on the following second.
+        Msg::AudioVolumeUp => {
+            if let Err(e) = std::process::Command::new("pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "+5%"])
+                .spawn()
+            {
+                tracing::warn!(error = ?e, "failed to spawn pactl set-sink-volume +5%");
+            }
+            state.audio = fetch_audio();
+        }
+        Msg::AudioVolumeDown => {
+            if let Err(e) = std::process::Command::new("pactl")
+                .args(["set-sink-volume", "@DEFAULT_SINK@", "-5%"])
+                .spawn()
+            {
+                tracing::warn!(error = ?e, "failed to spawn pactl set-sink-volume -5%");
+            }
+            state.audio = fetch_audio();
+        }
+        Msg::AudioToggleMute => {
+            if let Err(e) = std::process::Command::new("pactl")
+                .args(["set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+                .spawn()
+            {
+                tracing::warn!(error = ?e, "failed to spawn pactl set-sink-mute toggle");
+            }
+            state.audio = fetch_audio();
         }
         // Layer-shell control messages (anchor/size/margin/etc.) injected
         // by `#[to_layer_message]`. zos-panel doesn't reconfigure its
@@ -374,10 +417,34 @@ fn audio_view<'a>(state: &AudioState) -> Element<'a, Msg> {
     // In-house sink picker is a follow-up; pavucontrol ships with the
     // image (`pulseaudio-utils` family) and is the same UX users already
     // have on the legacy HyprPanel.
-    button(text(label).size(theme::font_size::SM).color(theme::TEXT))
+    let btn = button(text(label).size(theme::font_size::SM).color(theme::TEXT))
         .on_press(Msg::OpenAudioMixer)
         .padding(Padding::from([0.0_f32, 6.0_f32]))
-        .style(module_btn_style)
+        .style(module_btn_style);
+
+    // Wrap in MouseArea to grab scroll-wheel + middle-click. Scroll
+    // up/down adjusts default-sink volume by ±5%, middle-click toggles
+    // mute. `on_scroll` requires returning a `Msg` (not Option), so a
+    // zero-delta scroll falls through to `Msg::Tick` — a benign re-poll
+    // of all panel state.
+    MouseArea::new(btn)
+        .on_middle_press(Msg::AudioToggleMute)
+        .on_scroll(|delta| {
+            let dy = match delta {
+                iced::mouse::ScrollDelta::Lines { y, .. } => y,
+                // Trackpad / hi-res wheels report pixels; scale down so a
+                // single notch doesn't spam multiple ±5% steps. 20px ~= a
+                // typical wheel notch.
+                iced::mouse::ScrollDelta::Pixels { y, .. } => y / 20.0,
+            };
+            if dy > 0.0 {
+                Msg::AudioVolumeUp
+            } else if dy < 0.0 {
+                Msg::AudioVolumeDown
+            } else {
+                Msg::Tick
+            }
+        })
         .into()
 }
 

@@ -190,6 +190,57 @@ pub fn default_bindings() -> HashMap<KeyCombo, Action> {
     m.insert(KeyCombo::button(Modifiers::SUPER, 272), BeginMove);
     m.insert(KeyCombo::button(Modifiers::SUPER, 273), BeginResize);
 
+    // --- Media keys (no modifier required) ---
+    // Volume controls via pactl; brightness via brightnessctl. Both
+    // shipped on Bazzite by default.
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioRaiseVolume),
+        Spawn(vec!["pactl".into(), "set-sink-volume".into(), "@DEFAULT_SINK@".into(), "+5%".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioLowerVolume),
+        Spawn(vec!["pactl".into(), "set-sink-volume".into(), "@DEFAULT_SINK@".into(), "-5%".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioMute),
+        Spawn(vec!["pactl".into(), "set-sink-mute".into(), "@DEFAULT_SINK@".into(), "toggle".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioMicMute),
+        Spawn(vec!["pactl".into(), "set-source-mute".into(), "@DEFAULT_SOURCE@".into(), "toggle".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioPlay),
+        Spawn(vec!["playerctl".into(), "play-pause".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioNext),
+        Spawn(vec!["playerctl".into(), "next".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_AudioPrev),
+        Spawn(vec!["playerctl".into(), "previous".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_MonBrightnessUp),
+        Spawn(vec!["brightnessctl".into(), "set".into(), "+5%".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::XF86_MonBrightnessDown),
+        Spawn(vec!["brightnessctl".into(), "set".into(), "5%-".into()]),
+    );
+
+    // --- Misc utilities ---
+    // Print key (and Super+P) → screenshot via zos-cli
+    m.insert(
+        KeyCombo::keysym(Modifiers::empty(), Keysym::Print),
+        Spawn(vec!["zos".into(), "screenshot".into(), "--copy".into(), "--quiet".into()]),
+    );
+    m.insert(
+        KeyCombo::keysym(Modifiers::SUPER, Keysym::p),
+        Spawn(vec!["zos".into(), "screenshot".into(), "--region".into(), "--copy".into(), "--quiet".into()]),
+    );
+
     m
 }
 
