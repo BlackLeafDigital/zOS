@@ -36,6 +36,7 @@
 #[cfg(test)]
 extern crate self as zos_ui;
 
+pub mod config;
 pub mod layer;
 pub mod prelude;
 pub mod signal;

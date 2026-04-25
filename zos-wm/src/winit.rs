@@ -64,6 +64,9 @@ pub struct WinitData {
     /// path then skips per-window rounded masks. See
     /// `crate::effects::rounded`.
     pub rounded_effect: Option<crate::effects::rounded::RoundedCornersEffect>,
+    /// Compiled drop-shadow pixel-shader program. Same lifecycle/None
+    /// semantics as `rounded_effect`. See `crate::effects::shadow`.
+    pub shadow_effect: Option<crate::effects::shadow::DropShadowEffect>,
 }
 
 impl DmabufHandler for AnvilState<WinitData> {
@@ -244,6 +247,22 @@ pub fn run_winit() {
         }
     };
 
+    // Same pattern for the drop-shadow shader.
+    let shadow_effect = match crate::effects::shadow::DropShadowEffect::new(backend.renderer()) {
+        Ok(effect) => {
+            info!("Compiled drop-shadow pixel shader on winit renderer");
+            Some(effect)
+        }
+        Err(err) => {
+            warn!(
+                ?err,
+                "Failed to compile drop-shadow pixel shader; \
+                 windows will render without drop shadows"
+            );
+            None
+        }
+    };
+
     let data = {
         let damage_tracker = OutputDamageTracker::from_output(&output);
 
@@ -255,6 +274,7 @@ pub fn run_winit() {
             #[cfg(feature = "debug")]
             fps: fps_ticker::Fps::default(),
             rounded_effect,
+            shadow_effect,
         }
     };
     let mut state = AnvilState::init(display, event_loop.handle(), data, true);

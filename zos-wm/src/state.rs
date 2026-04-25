@@ -257,6 +257,22 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     /// in `crate::render`).
     pub corner_radius: f32,
 
+    // Phase 4 effects: drop-shadow parameters (in logical pixels).
+    /// Gaussian blur radius for the drop-shadow pixel shader. 16.0 px
+    /// is a soft default that reads as a real shadow without dominating
+    /// the layout. Render-path application is the same `MultiRenderer`-
+    /// trait gap as rounded corners — see
+    /// `crate::effects::shadow` and `TODO(P4-render-integration)`.
+    pub shadow_radius: f32,
+    /// Shadow offset from the window in logical pixels, `(x, y)`.
+    /// Positive `y` drops the shadow downward (the conventional "drop"
+    /// shadow). Default `(0.0, 4.0)`.
+    pub shadow_offset: (f32, f32),
+    /// Premultiplied RGBA shadow color, 0..1 per channel. Default
+    /// `[0.0, 0.0, 0.0, 0.5]` — 50% black, matching the Catppuccin/zOS
+    /// reference look.
+    pub shadow_color: [f32; 4],
+
     /// Compile-time extension registry. Populated in `init` with whatever
     /// the compositor wants running in-process every frame. Each frame the
     /// backends call `pre_frame_all` / `post_frame_all` around render.
@@ -1183,6 +1199,11 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
 
             // Phase 4 effects: 8.0 px rounded corners by default.
             corner_radius: 8.0,
+
+            // Phase 4 effects: 16 px soft drop shadow, 4 px down, 50% black.
+            shadow_radius: 16.0,
+            shadow_offset: (0.0, 4.0),
+            shadow_color: [0.0, 0.0, 0.0, 0.5],
 
             // Compile-time extension registry, already populated + init'd above.
             extension_registry,

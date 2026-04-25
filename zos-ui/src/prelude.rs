@@ -4,6 +4,10 @@
 //! code — iced types, the theme, signals, components, and the built-in
 //! widget set.
 
+pub use crate::config::{
+    AnimationOverrides, BezierCurveOverride, PropertyOverride, ThemeOverrides, load_animations,
+    load_theme_overrides,
+};
 pub use crate::signal::{
     Effect, Interval, Memo, Signal, Timeout, tick_timers, use_interval, use_timeout,
 };

@@ -154,6 +154,13 @@ pub struct UdevData {
     /// mask. Per-GPU programs are tracked in
     /// `TODO(P4-multi-gpu-rounded)`.
     pub rounded_effect: Option<crate::effects::rounded::RoundedCornersEffect>,
+    /// Compiled drop-shadow pixel-shader program, bound to the primary
+    /// GPU's `GlesRenderer`. `None` if shader compilation failed (logged
+    /// at backend init) or if no primary renderer was available. Same
+    /// multi-GPU caveat as `rounded_effect` — see
+    /// `TODO(P4-multi-gpu-rounded)` (the shadow path inherits the same
+    /// gap).
+    pub shadow_effect: Option<crate::effects::shadow::DropShadowEffect>,
 }
 
 impl UdevData {
@@ -630,6 +637,9 @@ pub fn run_udev() {
         // Filled in below once `device_added(primary_gpu, ...)` has set up
         // the primary renderer; see `state.backend_data.rounded_effect = ...`.
         rounded_effect: None,
+        // Same lifecycle as `rounded_effect`; filled in below on the
+        // primary GPU's renderer.
+        shadow_effect: None,
     };
     let mut state = AnvilState::init(display, event_loop.handle(), data, true);
 
@@ -812,13 +822,13 @@ pub fn run_udev() {
         .create_global_with_default_feedback::<AnvilState<UdevData>>(&display_handle, &default_feedback);
     state.backend_data.dmabuf_state = Some((dmabuf_state, global));
 
-    // ---- Compile rounded-corners pixel shader on the primary GPU's
+    // ---- Compile pixel-shader effects on the primary GPU's
     //      `GlesRenderer`. Drop the dmabuf-init `renderer` borrow first
     //      (it borrows `state.backend_data.gpus`); take a fresh
     //      `single_renderer` here, then unwrap the `MultiRenderer` to
-    //      `&mut GlesRenderer` via `AsMut`. Failure does NOT panic — we
-    //      log a warning and leave `rounded_effect = None`, which the
-    //      render path treats as "no rounding".
+    //      `&mut GlesRenderer` via `AsMut`. Failures do NOT panic — we
+    //      log a warning and leave the corresponding effect at `None`,
+    //      which the render path treats as "skip this effect".
     drop(renderer);
     {
         match state.backend_data.gpus.single_renderer(&primary_gpu) {
@@ -841,13 +851,30 @@ pub fn run_udev() {
                         );
                     }
                 }
+                match crate::effects::shadow::DropShadowEffect::new(gles) {
+                    Ok(effect) => {
+                        info!(
+                            ?primary_gpu,
+                            "Compiled drop-shadow pixel shader on primary GPU"
+                        );
+                        state.backend_data.shadow_effect = Some(effect);
+                    }
+                    Err(err) => {
+                        warn!(
+                            ?err,
+                            ?primary_gpu,
+                            "Failed to compile drop-shadow pixel shader; \
+                             windows will render without drop shadows"
+                        );
+                    }
+                }
             }
             Err(err) => {
                 warn!(
                     ?err,
                     ?primary_gpu,
-                    "Could not bind primary renderer for rounded-corners shader compile; \
-                     windows will render without corner rounding"
+                    "Could not bind primary renderer for effect shader compile; \
+                     windows will render without corner rounding or drop shadows"
                 );
             }
         }

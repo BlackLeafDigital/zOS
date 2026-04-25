@@ -11,3 +11,6 @@
 
 #[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
 pub mod rounded;
+
+#[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
+pub mod shadow;

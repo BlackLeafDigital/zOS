@@ -74,6 +74,13 @@ struct BatteryState {
 enum Msg {
     Tick,
     SwitchToWorkspace(i64),
+    /// Open the system audio mixer (`pavucontrol`). Spawned as a detached
+    /// child; if the binary is missing the spawn errors out silently and
+    /// the panel keeps running. Replaces an in-house sink picker for v1.
+    OpenAudioMixer,
+    /// Open the NetworkManager connection editor (`nm-connection-editor`).
+    /// Same silent-fallback semantics as `OpenAudioMixer`.
+    OpenNetworkEditor,
 }
 
 /// Naive `HH:MM` formatter from `SystemTime` — assumes the seconds-since-epoch
@@ -138,6 +145,20 @@ fn update(state: &mut Panel, msg: Msg) -> Task<Msg> {
                 if let Err(e) = comp.switch_to_workspace(id) {
                     tracing::warn!(workspace = id, error = ?e, "switch_to_workspace failed");
                 }
+            }
+        }
+        Msg::OpenAudioMixer => {
+            // Detached spawn — we don't await the child, just fire it.
+            // Missing binary (`pavucontrol` not installed) is a config
+            // issue; the spawn returns an Err which we deliberately drop
+            // so the panel keeps running.
+            if let Err(e) = std::process::Command::new("pavucontrol").spawn() {
+                tracing::warn!(error = ?e, "failed to spawn pavucontrol");
+            }
+        }
+        Msg::OpenNetworkEditor => {
+            if let Err(e) = std::process::Command::new("nm-connection-editor").spawn() {
+                tracing::warn!(error = ?e, "failed to spawn nm-connection-editor");
             }
         }
         // Layer-shell control messages (anchor/size/margin/etc.) injected
@@ -349,13 +370,15 @@ fn audio_view<'a>(state: &AudioState) -> Element<'a, Msg> {
     } else {
         "❓".to_string()
     };
-    container(
-        text(label)
-            .size(theme::font_size::SM)
-            .color(theme::TEXT),
-    )
-    .padding(Padding::from([0.0_f32, 6.0_f32]))
-    .into()
+    // Button instead of container — clicking spawns pavucontrol.
+    // In-house sink picker is a follow-up; pavucontrol ships with the
+    // image (`pulseaudio-utils` family) and is the same UX users already
+    // have on the legacy HyprPanel.
+    button(text(label).size(theme::font_size::SM).color(theme::TEXT))
+        .on_press(Msg::OpenAudioMixer)
+        .padding(Padding::from([0.0_f32, 6.0_f32]))
+        .style(module_btn_style)
+        .into()
 }
 
 fn network_view<'a>(state: &NetworkState) -> Element<'a, Msg> {
@@ -373,13 +396,12 @@ fn network_view<'a>(state: &NetworkState) -> Element<'a, Msg> {
     } else {
         label
     };
-    container(
-        text(display)
-            .size(theme::font_size::SM)
-            .color(theme::TEXT),
-    )
-    .padding(Padding::from([0.0_f32, 6.0_f32]))
-    .into()
+    // Button — clicking spawns nm-connection-editor.
+    button(text(display).size(theme::font_size::SM).color(theme::TEXT))
+        .on_press(Msg::OpenNetworkEditor)
+        .padding(Padding::from([0.0_f32, 6.0_f32]))
+        .style(module_btn_style)
+        .into()
 }
 
 fn battery_view<'a>(state: Option<&BatteryState>) -> Element<'a, Msg> {
@@ -434,6 +456,27 @@ fn ws_button_style(active: bool, status: button::Status) -> button::Style {
     button::Style {
         background: Some(Background::Color(bg)),
         text_color: fg,
+        border: Border {
+            color: bg,
+            width: 0.0,
+            radius: Radius::from(theme::radius::SM),
+        },
+        ..Default::default()
+    }
+}
+
+/// Shared style for "module" buttons (audio, network) — the ones that
+/// previously rendered as plain containers. Default state matches the bar
+/// background so the buttons read as labels; hover reveals a subtle
+/// `SURFACE0` chip indicating interactivity.
+fn module_btn_style(_: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => theme::SURFACE0,
+        _ => theme::CRUST,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: theme::TEXT,
         border: Border {
             color: bg,
             width: 0.0,

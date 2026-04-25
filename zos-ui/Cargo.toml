@@ -27,6 +27,12 @@ iced_layershell = { version = "0.17", optional = true }
 # zos-ui-macros directly.
 zos-ui-macros = { path = "../zos-ui-macros" }
 
+# User config loading — `~/.config/zos/animations.toml` + `theme.toml` are
+# parsed via `serde` + `toml` and reported through `tracing` on parse failure.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+
 [lib]
 name = "zos_ui"
 path = "src/lib.rs"
