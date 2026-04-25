@@ -241,3 +241,19 @@ pub fn cmd_close_focused() -> Result<(), Box<dyn std::error::Error>> {
         other => Err(format!("unexpected response: {:?}", other).into()),
     }
 }
+
+pub fn cmd_move_to_workspace(id: u32) -> Result<(), Box<dyn std::error::Error>> {
+    match send(&Request::MoveWindowToWorkspace { id })? {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message.into()),
+        other => Err(format!("unexpected response: {:?}", other).into()),
+    }
+}
+
+pub fn cmd_focus_window(id: u32) -> Result<(), Box<dyn std::error::Error>> {
+    match send(&Request::FocusWindow { id })? {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message.into()),
+        other => Err(format!("unexpected response: {:?}", other).into()),
+    }
+}

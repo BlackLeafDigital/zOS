@@ -1897,12 +1897,71 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
                 }
                 Response::Ok
             }
-            Request::MoveWindowToWorkspace { .. } => Response::Error {
-                message: "not yet implemented".into(),
-            },
-            Request::FocusWindow { .. } => Response::Error {
-                message: "not yet implemented".into(),
-            },
+            Request::MoveWindowToWorkspace { id } => {
+                let target_id = WorkspaceId(id);
+                let Some(out_id) = self.focused_output else {
+                    return Response::Error {
+                        message: "no focused output".into(),
+                    };
+                };
+                let Some(out_state) = self.outputs.get_mut(&out_id) else {
+                    return Response::Error {
+                        message: "focused output not found".into(),
+                    };
+                };
+                let Some(focused_id) = out_state.active().active else {
+                    return Response::Error {
+                        message: "no focused window".into(),
+                    };
+                };
+                if out_state.active().id == target_id {
+                    // Already on the target workspace — nothing to do.
+                    return Response::Ok;
+                }
+                let Some(mut entry) = out_state.active_mut().remove(focused_id) else {
+                    return Response::Error {
+                        message: "failed to remove focused window".into(),
+                    };
+                };
+                entry.workspace_id = target_id;
+                if out_state.workspace(target_id).is_some() {
+                    out_state.workspace_mut(target_id).unwrap().add(entry);
+                } else {
+                    // Lazy-create the target workspace without leaving it
+                    // active; mirrors action_move_window_to_workspace.
+                    let prev_active_id = out_state.active().id;
+                    out_state.switch_to(target_id);
+                    out_state.active_mut().add(entry);
+                    out_state.switch_to(prev_active_id);
+                }
+                crate::shell::workspace::sync_active_workspaces_to_space(
+                    &self.outputs,
+                    &mut self.space,
+                );
+                Response::Ok
+            }
+            Request::FocusWindow { id } => {
+                // WindowId has no `from_raw`; compare via raw() instead.
+                for out_state in self.outputs.values_mut() {
+                    let workspace = out_state.active_mut();
+                    let target = workspace
+                        .windows
+                        .iter()
+                        .find(|e| e.id.raw() == id)
+                        .map(|e| e.id);
+                    if let Some(target) = target {
+                        workspace.focus(target, true);
+                        crate::shell::workspace::sync_active_workspaces_to_space(
+                            &self.outputs,
+                            &mut self.space,
+                        );
+                        return Response::Ok;
+                    }
+                }
+                Response::Error {
+                    message: format!("window {} not found on any active workspace", id),
+                }
+            }
             Request::CloseFocused => {
                 // Find focused window across all outputs and send close.
                 let target = self.outputs.values().find_map(|os| {

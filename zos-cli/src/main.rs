@@ -5,6 +5,7 @@
 // migrate --auto -> silent migration (no TUI, for systemd).
 
 mod compositor;
+mod doctor;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -97,6 +98,16 @@ enum CompositorCmd {
         /// Workspace id
         id: u32,
     },
+    /// Move the focused window to workspace <id>
+    MoveToWorkspace {
+        /// Target workspace id
+        id: u32,
+    },
+    /// Focus a window by its WindowId
+    FocusWindow {
+        /// Window id
+        id: u32,
+    },
     /// Close the currently focused window
     CloseFocused,
 }
@@ -140,7 +151,7 @@ fn main() -> Result<()> {
                 tui::run(tui::View::Migrate)
             }
         }
-        Some(Commands::Doctor) => tui::run(tui::View::Doctor),
+        Some(Commands::Doctor) => doctor::run().map_err(|e| eyre!(e.to_string())),
         Some(Commands::Grub) => tui::run(tui::View::Grub),
         Some(Commands::Setup) => {
             if zos_core::commands::setup::is_root() {
@@ -168,6 +179,8 @@ fn run_compositor(cmd: CompositorCmd) -> Result<(), Box<dyn std::error::Error>> 
         CompositorCmd::Monitors { json } => compositor::cmd_monitors(json),
         CompositorCmd::Active { json } => compositor::cmd_active(json),
         CompositorCmd::Switch { id } => compositor::cmd_switch(id),
+        CompositorCmd::MoveToWorkspace { id } => compositor::cmd_move_to_workspace(id),
+        CompositorCmd::FocusWindow { id } => compositor::cmd_focus_window(id),
         CompositorCmd::CloseFocused => compositor::cmd_close_focused(),
     }
 }
