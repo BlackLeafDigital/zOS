@@ -6,22 +6,31 @@ license = "MIT"
 publish = false
 description = "Shared UI framework for zOS apps (panel, dock, settings, switcher)"
 
+[features]
+# Layer-shell wrappers default-on; users targeting non-layer-shell windows
+# (e.g. settings dialogs) can opt out with `default-features = false`.
+default = ["layer-shell"]
+layer-shell = ["dep:iced_layershell"]
+
 [dependencies]
 # iced version pinned to match zos-settings + zos-dock (0.14).
 # `wayland` is in iced 0.14 default features but listed explicitly here as
 # a load-bearing requirement of zOS (Wayland-only desktop, no X fallback).
 iced = { version = "0.14", features = ["wayland", "tokio", "image", "svg"] }
 
+# Layer-shell support — pinned to match zos-dock (0.17). Optional so consumers
+# can use zos-ui for plain iced windows without pulling in wayland-protocols.
+iced_layershell = { version = "0.17", optional = true }
+
 # Proc-macro half of the framework. `#[component]`, `#[panel_module]`, and
 # `#[taskbar_icon]` are re-exported through `zos_ui` so app code never imports
 # zos-ui-macros directly.
 zos-ui-macros = { path = "../zos-ui-macros" }
 
-# NOTE: iced_layershell is intentionally NOT a dependency of this crate yet.
-# zos-dock pins iced_layershell 0.17. Layer-shell wrappers (TopBar, BottomDock,
-# etc.) live in a follow-up task — when added, mirror that 0.17 pin to avoid
-# version skew across the workspace.
-
 [lib]
 name = "zos_ui"
 path = "src/lib.rs"
+
+[[example]]
+name = "clock"
+path = "examples/clock.rs"

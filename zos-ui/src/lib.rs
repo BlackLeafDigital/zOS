@@ -36,9 +36,11 @@
 #[cfg(test)]
 extern crate self as zos_ui;
 
+pub mod layer;
 pub mod prelude;
 pub mod signal;
 pub mod theme;
+pub mod widgets;
 
 // Re-export the proc-macros under the `zos_ui` namespace so app code only
 // needs `use zos_ui::prelude::*;` — never `use zos_ui_macros::*`.
