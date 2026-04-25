@@ -257,6 +257,10 @@ pub fn run_winit() {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
+    // Start the zos-wm IPC server. The handle's Drop removes the socket
+    // file, so we keep it alive until the main loop exits.
+    let _ipc_server = state.start_ipc_server();
+
     info!("Initialization completed, starting the main loop.");
 
     let mut pointer_element = PointerElement::default();

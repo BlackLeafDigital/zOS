@@ -7,7 +7,11 @@ publish = false
 description = "zOS top panel — replaces HyprPanel"
 
 [dependencies]
+zos-ui = { path = "../zos-ui" }
 zos-core = { path = "../zos-core" }
+iced = { version = "0.14", features = ["wayland", "tokio", "image", "svg"] }
+iced_layershell = "0.17"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

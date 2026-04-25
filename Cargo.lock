@@ -7376,9 +7376,11 @@ dependencies = [
 name = "zos-monitors"
 version = "0.1.0"
 dependencies = [
+ "iced",
  "tracing",
  "tracing-subscriber",
  "zos-core",
+ "zos-ui",
 ]
 
 [[package]]
@@ -7395,9 +7397,13 @@ dependencies = [
 name = "zos-panel"
 version = "0.1.0"
 dependencies = [
+ "iced",
+ "iced_layershell",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "zos-core",
+ "zos-ui",
 ]
 
 [[package]]

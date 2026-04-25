@@ -1629,3 +1629,257 @@ pub trait Backend {
         None
     }
 }
+
+// ---------------------------------------------------------------------------
+// IPC integration (Phase 7)
+//
+// The IPC server runs on its own thread (Unix socket accept loop). Per-client
+// reader threads call back into the user-supplied handler closure. Since
+// AnvilState is not `Send`, the handler can't touch it directly; instead we
+// bridge via a calloop channel: handler enqueues `(Request, oneshot::Sender)`
+// onto the compositor's event loop, the source dispatches the request inline
+// against AnvilState, then sends the response back through the per-request
+// oneshot. The handler closure blocks on the oneshot (with a 2s timeout) and
+// returns the response to the IPC reader thread.
+// ---------------------------------------------------------------------------
+impl<BackendData: Backend + 'static> AnvilState<BackendData> {
+    /// Start the zos-wm IPC server and wire it into the compositor's event
+    /// loop. Returns the server handle, which **must** be kept alive for the
+    /// duration of the main loop (its `Drop` impl removes the socket file).
+    /// Returns `None` if either the calloop source or the listener fails to
+    /// register; in that case the compositor continues without IPC.
+    pub fn start_ipc_server(&self) -> Option<crate::ipc::IpcServer> {
+        let socket_path = crate::ipc::IpcServer::default_socket_path();
+        let handle = self.handle.clone();
+
+        // Calloop channel from IPC threads -> compositor event loop.
+        let (ipc_tx, ipc_rx) = smithay::reexports::calloop::channel::channel::<(
+            crate::ipc::Request,
+            std::sync::mpsc::SyncSender<crate::ipc::Response>,
+        )>();
+
+        if let Err(e) =
+            handle.insert_source(ipc_rx, |event, _, data: &mut AnvilState<BackendData>| {
+                use smithay::reexports::calloop::channel::Event;
+                if let Event::Msg((req, resp_tx)) = event {
+                    let response = data.handle_ipc_request(req);
+                    let _ = resp_tx.send(response);
+                }
+            })
+        {
+            warn!(?e, "failed to insert ipc calloop source");
+            return None;
+        }
+
+        // Handler closure consumed by the IPC server. Each invocation builds
+        // a fresh oneshot pair so concurrent requests don't cross-talk.
+        let handler = move |req: crate::ipc::Request| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<crate::ipc::Response>(1);
+            if ipc_tx.send((req, tx)).is_err() {
+                return crate::ipc::Response::Error {
+                    message: "compositor channel closed".into(),
+                };
+            }
+            rx.recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap_or_else(|_| crate::ipc::Response::Error {
+                    message: "compositor timeout".into(),
+                })
+        };
+
+        match crate::ipc::IpcServer::start(socket_path, handler) {
+            Ok(s) => {
+                info!("zos-wm IPC server started");
+                Some(s)
+            }
+            Err(e) => {
+                warn!(?e, "failed to start IPC server; continuing without it");
+                None
+            }
+        }
+    }
+
+    /// Map a single `Request` against the live compositor state and return a
+    /// `Response`. Runs inline on the calloop event loop (not in an IPC
+    /// thread), so it's safe to mutate `AnvilState` here.
+    pub fn handle_ipc_request(&mut self, req: crate::ipc::Request) -> crate::ipc::Response {
+        use crate::ipc::{
+            Monitor as RMonitor, Request, Response, Window as RWindow, Workspace as RWorkspace,
+        };
+        use crate::shell::{WorkspaceId, ZBand};
+        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+
+        // Helper: pull (app_id, title) out of a WindowElement's xdg toplevel
+        // role. Returns ("", "") for X11 surfaces or surfaces without the
+        // role attached.
+        fn class_and_title(element: &crate::shell::WindowElement) -> (String, String) {
+            let Some(surface) = element.wl_surface() else {
+                return (String::new(), String::new());
+            };
+            with_states(&surface, |states| {
+                let role = states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .and_then(|d| d.lock().ok().map(|g| (g.app_id.clone(), g.title.clone())));
+                match role {
+                    Some((a, t)) => (a.unwrap_or_default(), t.unwrap_or_default()),
+                    None => (String::new(), String::new()),
+                }
+            })
+        }
+
+        fn band_str(band: ZBand) -> String {
+            match band {
+                ZBand::Below => "Below",
+                ZBand::Normal => "Normal",
+                ZBand::AlwaysOnTop => "AlwaysOnTop",
+                ZBand::Fullscreen => "Fullscreen",
+            }
+            .into()
+        }
+
+        match req {
+            Request::Workspaces { output: filter } => {
+                let mut all = Vec::new();
+                for output_state in self.outputs.values() {
+                    let output_name = output_state.output.name();
+                    if let Some(ref f) = filter {
+                        if &output_name != f {
+                            continue;
+                        }
+                    }
+                    let active_id = output_state.active().id;
+                    for ws in &output_state.workspaces {
+                        all.push(RWorkspace {
+                            id: ws.id.0,
+                            output: output_name.clone(),
+                            windows: ws.windows.len(),
+                            active: ws.id == active_id,
+                        });
+                    }
+                }
+                Response::Workspaces { workspaces: all }
+            }
+            Request::Windows {
+                workspace: filter_ws,
+            } => {
+                let mut all = Vec::new();
+                for output_state in self.outputs.values() {
+                    let output_name = output_state.output.name();
+                    let active_ws_id = output_state.active().id;
+                    for ws in &output_state.workspaces {
+                        if let Some(f) = filter_ws
+                            && ws.id.0 != f
+                        {
+                            continue;
+                        }
+                        for entry in &ws.windows {
+                            let (class, title) = class_and_title(&entry.element);
+                            all.push(RWindow {
+                                id: entry.id.raw(),
+                                workspace_id: ws.id.0,
+                                output: output_name.clone(),
+                                class,
+                                title,
+                                focused: ws.active == Some(entry.id) && ws.id == active_ws_id,
+                                band: band_str(entry.band),
+                            });
+                        }
+                    }
+                }
+                Response::Windows { windows: all }
+            }
+            Request::Monitors => {
+                let mut all = Vec::new();
+                for output_state in self.outputs.values() {
+                    let mode = output_state.output.current_mode();
+                    let (width, height, refresh_mhz) = mode
+                        .map(|m| (m.size.w as u32, m.size.h as u32, m.refresh as u32))
+                        .unwrap_or((0, 0, 0));
+                    all.push(RMonitor {
+                        id: output_state.id.0,
+                        name: output_state.output.name(),
+                        width,
+                        height,
+                        refresh_mhz,
+                        active_workspace: Some(output_state.active().id.0),
+                    });
+                }
+                Response::Monitors { monitors: all }
+            }
+            Request::ActiveWindow => {
+                // First focused window across all outputs.
+                let win = self.outputs.values().find_map(|os| {
+                    let ws = os.active();
+                    let active_id = ws.active?;
+                    let entry = ws.windows.iter().find(|e| e.id == active_id)?;
+                    Some((os.output.name(), ws.id, entry.clone()))
+                });
+                let response_win = win.map(|(out_name, ws_id, entry)| {
+                    let (class, title) = class_and_title(&entry.element);
+                    RWindow {
+                        id: entry.id.raw(),
+                        workspace_id: ws_id.0,
+                        output: out_name,
+                        class,
+                        title,
+                        focused: true,
+                        band: band_str(entry.band),
+                    }
+                });
+                Response::ActiveWindow {
+                    window: response_win,
+                }
+            }
+            Request::SwitchToWorkspace { id } => {
+                if let Some(out_id) = self.focused_output {
+                    if let Some(out_state) = self.outputs.get_mut(&out_id) {
+                        out_state.switch_to(WorkspaceId(id));
+                    }
+                    crate::shell::workspace::sync_active_workspaces_to_space(
+                        &self.outputs,
+                        &mut self.space,
+                    );
+                }
+                Response::Ok
+            }
+            Request::MoveWindowToWorkspace { .. } => Response::Error {
+                message: "not yet implemented".into(),
+            },
+            Request::FocusWindow { .. } => Response::Error {
+                message: "not yet implemented".into(),
+            },
+            Request::CloseFocused => {
+                // Find focused window across all outputs and send close.
+                let target = self.outputs.values().find_map(|os| {
+                    let ws = os.active();
+                    let active_id = ws.active?;
+                    ws.windows
+                        .iter()
+                        .find(|e| e.id == active_id)
+                        .map(|e| e.element.clone())
+                });
+                if let Some(elem) = target {
+                    match elem.0.underlying_surface() {
+                        smithay::desktop::WindowSurface::Wayland(w) => {
+                            w.send_close();
+                            return Response::Ok;
+                        }
+                        #[cfg(feature = "xwayland")]
+                        smithay::desktop::WindowSurface::X11(w) => {
+                            let _ = w.close();
+                            return Response::Ok;
+                        }
+                    }
+                }
+                Response::Error {
+                    message: "no focused window".into(),
+                }
+            }
+            Request::Version => Response::Version {
+                ipc: crate::ipc::PROTOCOL_VERSION.into(),
+                build: env!("CARGO_PKG_VERSION").into(),
+            },
+            Request::Quit => Response::Ok,
+        }
+    }
+}

@@ -872,6 +872,11 @@ pub fn run_udev() {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
+    // Start the zos-wm IPC server. The handle is bound to the loop's
+    // lifetime — Drop removes the socket file, so we keep it alive until
+    // the main loop exits.
+    let _ipc_server = state.start_ipc_server();
+
     /*
      * And run our loop
      */
