@@ -7373,6 +7373,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zos-core",
+ "zos-ui",
 ]
 
 [[package]]
@@ -7390,11 +7391,14 @@ dependencies = [
 name = "zos-notify"
 version = "0.1.0"
 dependencies = [
+ "iced",
+ "iced_layershell",
  "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "zbus",
+ "zos-ui",
 ]
 
 [[package]]

@@ -22,44 +22,26 @@ use std::time::{Duration, Instant};
 /// Thickness of the layer-shell surface in pixels (short axis). Must match main.rs.
 const SURFACE_THICKNESS: f32 = 100.0;
 
-// --- Catppuccin Mocha colors ---
+// --- Catppuccin Mocha colors (sourced from zos_ui::theme) ---
+// Translucent dock background — Mantle at 85% alpha.
 const BG_COLOR: Color = Color {
-    r: 0x18 as f32 / 255.0,
-    g: 0x18 as f32 / 255.0,
-    b: 0x25 as f32 / 255.0,
     a: 0.85,
+    ..zos_ui::theme::MANTLE
 };
-const SURFACE_COLOR: Color = Color {
-    r: 0x31 as f32 / 255.0,
-    g: 0x31 as f32 / 255.0,
-    b: 0x44 as f32 / 255.0,
-    a: 1.0,
-};
+// Pill border / fallback icon background.
+const SURFACE_COLOR: Color = zos_ui::theme::SURFACE0;
+// Reserved for future accent use (focused-indicator fallback, etc.).
 #[allow(dead_code)]
-const ACCENT_BLUE: Color = Color {
-    r: 0x89 as f32 / 255.0,
-    g: 0xB4 as f32 / 255.0,
-    b: 0xFA as f32 / 255.0,
-    a: 1.0,
-};
-const TEXT_COLOR: Color = Color {
-    r: 0xCD as f32 / 255.0,
-    g: 0xD6 as f32 / 255.0,
-    b: 0xF4 as f32 / 255.0,
-    a: 1.0,
-};
+const ACCENT_BLUE: Color = zos_ui::theme::BLUE;
+// Default text color used by the dock + tooltips.
+const TEXT_COLOR: Color = zos_ui::theme::TEXT;
+// Separator and minimized-indicator color — Surface2 at 60% alpha.
 const SEPARATOR_COLOR: Color = Color {
-    r: 0x58 as f32 / 255.0,
-    g: 0x5B as f32 / 255.0,
-    b: 0x70 as f32 / 255.0,
     a: 0.6,
+    ..zos_ui::theme::SURFACE2
 };
-const INDICATOR_COLOR: Color = Color {
-    r: 0x6C as f32 / 255.0,
-    g: 0x70 as f32 / 255.0,
-    b: 0x86 as f32 / 255.0,
-    a: 1.0,
-};
+// Running-app indicator dot.
+const INDICATOR_COLOR: Color = zos_ui::theme::OVERLAY0;
 
 /// A single item displayed in the dock.
 #[derive(Debug, Clone)]
