@@ -71,6 +71,62 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
         place_new_window(&mut self.space, self.pointer.current_location(), &window, true);
 
+        // Auto-tile: if the focused workspace is in Tiled mode and this
+        // window doesn't have an explicit floating override, route it
+        // through the tiling algorithm. `place_new_window` has already
+        // mapped the window to a floating slot in `Space`; here we
+        // reinsert it into the algorithm and remap to the assigned rect
+        // before the workspace backfill block records its location.
+        let auto_tile = if let Some(focused_output_id) = self.focused_output {
+            if let Some(output_state) = self.outputs.get(&focused_output_id) {
+                let ws = output_state.active();
+                let tiled_workspace = matches!(ws.mode, crate::shell::workspace::WorkspaceMode::Tiled(_));
+                let explicit_floating = matches!(
+                    *window.layout_state().tiled_override.lock().unwrap(),
+                    Some(false),
+                );
+                tiled_workspace && !explicit_floating
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if auto_tile {
+            // Scope the `self.outputs` borrow tightly so we can reborrow
+            // `self.space` afterwards without conflict.
+            let assigned_rect = if let Some(focused_output_id) = self.focused_output {
+                if let Some(output_state) = self.outputs.get_mut(&focused_output_id) {
+                    let workspace = output_state.active_mut();
+                    let key = crate::shell::tiling::WindowKey::alloc();
+                    let win_id = window.id();
+                    workspace.tiling_keys.insert(win_id, key);
+
+                    if let crate::shell::workspace::WorkspaceMode::Tiled(ref mut algorithm) = workspace.mode {
+                        algorithm.insert(key);
+                        algorithm.rect_for(key)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(rect) = assigned_rect {
+                self.space.map_element(window.clone(), rect.loc, true);
+                surface.with_pending_state(|state| {
+                    state.size = Some(rect.size);
+                });
+                if surface.is_initial_configure_sent() {
+                    surface.send_pending_configure();
+                }
+            }
+        }
+
         // place_new_window has already mapped to Space at this point.
         // Backfill the workspace bookkeeping using the chosen location, so
         // the active workspace's window list reflects what's on screen.

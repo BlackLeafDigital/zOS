@@ -4,7 +4,7 @@
 //! the abstract `Compositor` interface. We do NOT depend on or modify
 //! zos-dock; this is a parallel implementation that shell apps consume.
 
-use super::{Compositor, MonitorInfo, WindowInfo, WorkspaceInfo};
+use super::{Compositor, MonitorInfo, MonitorMode, WindowInfo, WorkspaceInfo};
 use serde::Deserialize;
 use std::error::Error;
 use std::process::Command;
@@ -71,10 +71,36 @@ struct HyprMonitor {
     focused: bool,
     #[serde(rename = "activeWorkspace", default)]
     active_workspace: Option<HyprWorkspaceRef>,
+    /// Hyprland emits this as an array of strings like
+    /// `"2560x1440@144.00Hz"`. Older versions sometimes omit it or
+    /// return an empty array, which `#[serde(default)]` handles.
+    #[serde(default, rename = "availableModes")]
+    available_modes_strs: Vec<String>,
 }
 
 fn default_scale() -> f64 {
     1.0
+}
+
+/// Parse a Hyprland mode string of the form `"WxH@RR.RRHz"` into
+/// a [`MonitorMode`]. Tolerates trailing whitespace and a missing
+/// `Hz` suffix. Returns `None` on any structural mismatch.
+fn parse_mode_string(s: &str) -> Option<MonitorMode> {
+    // Examples we accept:
+    //   "1920x1080@60.00Hz"
+    //   "2560x1440@144.000000Hz"
+    //   "1920x1080@60"           (no Hz suffix)
+    //   "  1920x1080@60.00Hz \n" (surrounding whitespace)
+    let s = s.trim();
+    let s = s.strip_suffix("Hz").unwrap_or(s);
+    let s = s.trim_end();
+    let (resolution, refresh) = s.split_once('@')?;
+    let (w, h) = resolution.trim().split_once('x')?;
+    Some(MonitorMode {
+        width: w.trim().parse().ok()?,
+        height: h.trim().parse().ok()?,
+        refresh_hz: refresh.trim().parse().ok()?,
+    })
 }
 
 // --- Compositor impl ---
@@ -212,6 +238,11 @@ impl Compositor for Hyprland {
                 refresh_rate: m.refresh_rate,
                 scale: m.scale,
                 focused: m.focused,
+                available_modes: m
+                    .available_modes_strs
+                    .iter()
+                    .filter_map(|s| parse_mode_string(s))
+                    .collect(),
             })
             .collect())
     }
@@ -433,5 +464,88 @@ mod tests {
         assert_eq!(parsed[0].id, 5);
         assert_eq!(parsed[0].name, "");
         assert_eq!(parsed[0].windows, 0);
+    }
+
+    #[test]
+    fn parses_mode_string_variants() {
+        // Standard form Hyprland emits.
+        let m = parse_mode_string("1920x1080@60.00Hz").expect("standard");
+        assert_eq!(m.width, 1920);
+        assert_eq!(m.height, 1080);
+        assert!((m.refresh_hz - 60.0).abs() < 1e-6);
+
+        // Long fractional refresh (some monitors report 6-digit values).
+        let m = parse_mode_string("2560x1440@144.000000Hz").expect("fractional");
+        assert_eq!(m.width, 2560);
+        assert_eq!(m.height, 1440);
+        assert!((m.refresh_hz - 144.0).abs() < 1e-6);
+
+        // No "Hz" suffix.
+        let m = parse_mode_string("1920x1080@60").expect("no-Hz");
+        assert_eq!(m.width, 1920);
+        assert_eq!(m.height, 1080);
+        assert!((m.refresh_hz - 60.0).abs() < 1e-6);
+
+        // Surrounding whitespace.
+        let m = parse_mode_string("  3840x2160@59.94Hz  \n").expect("whitespace");
+        assert_eq!(m.width, 3840);
+        assert_eq!(m.height, 2160);
+        assert!((m.refresh_hz - 59.94).abs() < 1e-6);
+
+        // Garbage input should return None, not panic.
+        assert!(parse_mode_string("").is_none());
+        assert!(parse_mode_string("not a mode").is_none());
+        assert!(parse_mode_string("1920x@60Hz").is_none());
+        assert!(parse_mode_string("1920x1080@Hz").is_none());
+    }
+
+    #[test]
+    fn parses_available_modes_array() {
+        // Sample availableModes payload similar to what hyprctl emits on
+        // a real monitor that supports multiple modes.
+        let raw = r#"[
+            {
+                "id": 0,
+                "name": "DP-1",
+                "width": 2560,
+                "height": 1440,
+                "refreshRate": 144.0,
+                "scale": 1.0,
+                "focused": true,
+                "availableModes": [
+                    "2560x1440@144.00Hz",
+                    "2560x1440@120.00Hz",
+                    "1920x1080@60.00Hz",
+                    "garbage",
+                    "1280x720@59.94Hz"
+                ]
+            }
+        ]"#;
+        let parsed: Vec<HyprMonitor> = serde_json::from_str(raw).expect("monitors parse");
+        let m = &parsed[0];
+        assert_eq!(m.available_modes_strs.len(), 5);
+
+        let modes: Vec<MonitorMode> = m
+            .available_modes_strs
+            .iter()
+            .filter_map(|s| parse_mode_string(s))
+            .collect();
+        // Garbage entry filtered out — 4 valid modes remain.
+        assert_eq!(modes.len(), 4);
+        assert_eq!(modes[0].width, 2560);
+        assert_eq!(modes[0].height, 1440);
+        assert!((modes[0].refresh_hz - 144.0).abs() < 1e-6);
+        assert_eq!(modes[3].width, 1280);
+        assert!((modes[3].refresh_hz - 59.94).abs() < 1e-6);
+    }
+
+    #[test]
+    fn monitor_mode_displays_human_readable() {
+        let m = MonitorMode {
+            width: 2560,
+            height: 1440,
+            refresh_hz: 144.0,
+        };
+        assert_eq!(format!("{m}"), "2560x1440 @ 144.00 Hz");
     }
 }

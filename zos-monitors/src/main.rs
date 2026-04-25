@@ -12,11 +12,11 @@ use iced::{
     Background, Border, Element, Length, Padding, Task, Theme,
     alignment::Vertical,
     border::Radius,
-    widget::{Space, button, column, container, row, scrollable, text},
+    widget::{Space, button, column, container, pick_list, row, scrollable, text},
 };
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
-use zos_core::compositor::{self, MonitorInfo};
+use zos_core::compositor::{self, MonitorInfo, MonitorMode};
 use zos_ui::theme;
 
 #[derive(Default)]
@@ -42,6 +42,7 @@ impl Monitors {
 enum Msg {
     Refresh,
     Apply,
+    SetMode(usize, MonitorMode),
 }
 
 fn boot() -> (Monitors, Task<Msg>) {
@@ -69,6 +70,16 @@ fn update(state: &mut Monitors, msg: Msg) -> Task<Msg> {
                 state.apply_status = Some(format!("\u{2717} {e}"));
             }
         },
+        Msg::SetMode(idx, mode) => {
+            if let Some(m) = state.monitors.get_mut(idx) {
+                m.width = mode.width;
+                m.height = mode.height;
+                m.refresh_rate = mode.refresh_hz;
+            }
+            // User picked a new mode — clear any previous apply status
+            // so the bottom row stops showing stale "wrote..." messaging.
+            state.apply_status = None;
+        }
     }
     Task::none()
 }
@@ -109,8 +120,8 @@ fn view(state: &Monitors) -> Element<'_, Msg> {
         .into()
     } else {
         let mut col = column![].spacing(theme::space::X3);
-        for m in &state.monitors {
-            col = col.push(monitor_card(m));
+        for (idx, m) in state.monitors.iter().enumerate() {
+            col = col.push(monitor_card(idx, m));
         }
         scrollable(col).height(Length::Fill).into()
     };
@@ -165,7 +176,7 @@ fn view(state: &Monitors) -> Element<'_, Msg> {
         .into()
 }
 
-fn monitor_card<'a>(m: &MonitorInfo) -> Element<'a, Msg> {
+fn monitor_card<'a>(idx: usize, m: &'a MonitorInfo) -> Element<'a, Msg> {
     let focused_badge: Element<'a, Msg> = if m.focused {
         container(
             text("Focused")
@@ -205,7 +216,44 @@ fn monitor_card<'a>(m: &MonitorInfo) -> Element<'a, Msg> {
     ]
     .spacing(theme::space::X4);
 
-    container(column![title, stats].spacing(theme::space::X3))
+    // Mode picker — shows a dropdown of all (resolution, refresh) combos
+    // the compositor reports. We build a synthetic "current" mode from the
+    // monitor's live width/height/refresh; if it doesn't appear in
+    // `available_modes` (some Hyprland versions emit fractional refresh
+    // values that don't quite match), the picker still renders with the
+    // selection blank, which is fine.
+    let current_mode = MonitorMode {
+        width: m.width,
+        height: m.height,
+        refresh_hz: m.refresh_rate,
+    };
+
+    let mode_picker: Element<'a, Msg> = if m.available_modes.is_empty() {
+        text("No modes reported by compositor")
+            .size(theme::font_size::SM)
+            .color(theme::SUBTEXT0)
+            .into()
+    } else {
+        pick_list(
+            m.available_modes.clone(),
+            Some(current_mode),
+            move |selected| Msg::SetMode(idx, selected),
+        )
+        .placeholder("Select mode")
+        .text_size(theme::font_size::SM)
+        .width(Length::Fixed(280.0))
+        .into()
+    };
+
+    let mode_section = column![
+        text("Mode")
+            .size(theme::font_size::XS)
+            .color(theme::SUBTEXT0),
+        mode_picker,
+    ]
+    .spacing(2.0);
+
+    container(column![title, stats, mode_section].spacing(theme::space::X3))
         .padding(theme::space::X4)
         .style(card_bg_style)
         .width(Length::Fill)

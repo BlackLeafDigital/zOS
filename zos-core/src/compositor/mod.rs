@@ -38,6 +38,24 @@ pub struct WindowInfo {
     pub focused: bool,
 }
 
+/// One resolution+refresh combination a monitor reports as supported.
+///
+/// Refresh is `f64` because compositors emit fractional values
+/// (e.g. 59.94 Hz). That precludes `Eq`/`Hash`, but `pick_list` only
+/// needs `Clone + PartialEq + Display`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonitorMode {
+    pub width: u32,
+    pub height: u32,
+    pub refresh_hz: f64,
+}
+
+impl std::fmt::Display for MonitorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{} @ {:.2} Hz", self.width, self.height, self.refresh_hz)
+    }
+}
+
 /// Stable monitor info — what shell apps see.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorInfo {
@@ -49,6 +67,10 @@ pub struct MonitorInfo {
     pub scale: f64,
     pub focused: bool,
     pub active_workspace_id: Option<i64>,
+    /// All modes the compositor reports as supported. May be empty if
+    /// the compositor doesn't expose them (older Hyprland versions
+    /// often emit `availableModes: []`).
+    pub available_modes: Vec<MonitorMode>,
 }
 
 /// Compositor IPC trait. All methods may fail (network, missing
