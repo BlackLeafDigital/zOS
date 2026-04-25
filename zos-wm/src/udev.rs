@@ -1865,10 +1865,21 @@ impl AnvilState<UdevData> {
                 buffer
             });
 
+        // Look up the active workspace for this output. None when the
+        // output hasn't been bootstrapped into `self.outputs` yet —
+        // render.rs falls back to the smithay path in that case so the
+        // screen still produces pixels during the first frames.
+        let active_workspace_for_render: Option<&crate::shell::workspace::Workspace> = self
+            .outputs
+            .values()
+            .find(|os| os.output == output)
+            .map(|os| os.active());
+
         let result = render_surface(
             surface,
             &mut renderer,
             &self.space,
+            active_workspace_for_render,
             &output,
             self.pointer.current_location(),
             &pointer_image,
@@ -1879,11 +1890,21 @@ impl AnvilState<UdevData> {
             &mut self.pending_screencopy,
             Duration::from(frame_target),
         );
+        // Whether any animation across any workspace is still in flight.
+        // We capture this before the `match` so the borrow on `self` doesn't
+        // overlap with the post_repaint mutable call below.
+        let animations_in_flight = self.any_animating();
         let reschedule = match result {
             Ok((has_rendered, states)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
                 self.post_repaint(&output, frame_target, dmabuf_feedback, &states);
-                !has_rendered
+                // Re-arm if either nothing was damaged this frame OR an
+                // animation is still running. Without this, an idle
+                // compositor that's mid-animation would skip frames and
+                // freeze the animation visually until external damage
+                // arrives. The `is_animating` cutoff above naturally settles
+                // once all AnimatedValues finish.
+                !has_rendered || animations_in_flight
             }
             Err(err) => {
                 warn!("Error during rendering: {:#?}", err);
@@ -1952,6 +1973,7 @@ fn render_surface<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
     space: &Space<WindowElement>,
+    workspace: Option<&crate::shell::workspace::Workspace>,
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &MemoryRenderBuffer,
@@ -2037,8 +2059,14 @@ fn render_surface<'a>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+    let (elements, clear_color) = output_elements(
+        output,
+        space,
+        workspace,
+        custom_elements,
+        renderer,
+        show_window_preview,
+    );
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()

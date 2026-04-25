@@ -6,23 +6,27 @@ use smithay::{
             AsRenderElements, RenderElement, Wrap,
             surface::WaylandSurfaceRenderElement,
             utils::{
-                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
-                RescaleRenderElement,
+                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate,
+                RelocateRenderElement, RescaleRenderElement,
             },
         },
     },
-    desktop::space::{
-        ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element,
+    desktop::{
+        layer_map_for_output,
+        space::{
+            ConstrainBehavior, ConstrainReference, Space, SpaceRenderElements, constrain_space_element,
+        },
     },
     output::Output,
-    utils::{Point, Rectangle, Size},
+    utils::{Point, Rectangle, Scale, Size},
+    wayland::shell::wlr_layer::Layer as WlrLayer,
 };
 
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
     drawing::{CLEAR_COLOR, CLEAR_COLOR_FULLSCREEN, PointerRenderElement},
-    shell::{FullscreenSurface, WindowElement, WindowRenderElement},
+    shell::{FullscreenSurface, WindowElement, WindowRenderElement, workspace::Workspace},
 };
 
 smithay::backend::renderer::element::render_elements! {
@@ -56,6 +60,8 @@ smithay::backend::renderer::element::render_elements! {
     Window=Wrap<E>,
     Custom=CustomRenderElements<R>,
     Preview=CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>,
+    AnimatedWindow=RelocateRenderElement<WindowRenderElement<R>>,
+    LayerSurface=WaylandSurfaceRenderElement<R>,
 }
 
 impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug> std::fmt::Debug
@@ -67,6 +73,8 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
             Self::Window(arg0) => f.debug_tuple("Window").field(arg0).finish(),
             Self::Custom(arg0) => f.debug_tuple("Custom").field(arg0).finish(),
             Self::Preview(arg0) => f.debug_tuple("Preview").field(arg0).finish(),
+            Self::AnimatedWindow(arg0) => f.debug_tuple("AnimatedWindow").field(arg0).finish(),
+            Self::LayerSurface(arg0) => f.debug_tuple("LayerSurface").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -135,10 +143,31 @@ where
         })
 }
 
+/// Build the per-frame element list for `output`.
+///
+/// `workspace` lets the caller drive per-window animation: when `Some`, we
+/// walk the workspace's `iter_z_order` ourselves and wrap each window in a
+/// `RelocateRenderElement` whose offset comes from
+/// `WindowElement::anim_state().render_offset`. Workspace-level translation
+/// (`Workspace::render_offset`) folds into the same per-window offset so a
+/// workspace slide moves every window in lockstep. Per-window alpha and
+/// workspace alpha multiply through `WindowElement::render_elements`'s alpha
+/// parameter.
+///
+/// When `workspace` is `None` (e.g. before bootstrap completes or for outputs
+/// we haven't yet wired into `OutputState`), we fall back to the smithay
+/// `space_render_elements` path which renders without animation offsets but
+/// keeps the compositor producing pixels.
+///
+/// Layer-shell (panels, lock screens, etc.) is rendered manually here in both
+/// paths so that animated workspaces don't break panels. The walk mirrors
+/// smithay's `space_render_elements`: Background/Bottom go below windows,
+/// Top/Overlay go above.
 #[profiling::function]
 pub fn output_elements<R>(
     output: &Output,
     space: &Space<WindowElement>,
+    workspace: Option<&Workspace>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &mut R,
     show_window_preview: bool,
@@ -176,46 +205,148 @@ where
             output_render_elements.extend(space_preview_elements(renderer, space, output));
         }
 
-        // TODO(P4-relocate-render): Wrap each per-window render element in
-        // RelocateRenderElement::from_element(elem, offset, Relocate::Relative)
-        // using element.anim_state().render_offset.lock().unwrap().value().
-        // Smithay's `space_render_elements` collapses windows into
-        // SpaceRenderElements internally via `render_elements_for_region`, so
-        // injecting a relocate wrapper means bypassing that helper and walking
-        // workspace windows directly here. Animation values still tick via
-        // AnvilState::tick_animations; only the render-side relocate is
-        // pending. Log non-zero offsets so we can confirm the value pipeline
-        // is alive while the wrap path is being designed.
-        for window in space.elements_for_output(output) {
-            let anim = window.anim_state();
-            let offset = anim.render_offset.lock().unwrap().value();
-            if offset.x.abs() > f64::EPSILON || offset.y.abs() > f64::EPSILON {
-                tracing::trace!(
-                    window = ?window.id(),
-                    dx = offset.x,
-                    dy = offset.y,
-                    "render_offset is non-zero; render-side RelocateRenderElement wrap is TODO(P4-relocate-render)",
+        let output_scale = output.current_scale().fractional_scale();
+        let scale: Scale<f64> = Scale::from(output_scale);
+        let output_geo = space.output_geometry(output);
+
+        // ---- Layer-shell (Top + Overlay): rendered ABOVE windows. Collected
+        //      here, appended at the end. Walk order mirrors smithay's
+        //      `space_render_elements`: layers are iterated in reverse so the
+        //      topmost (last in the LayerMap deque) renders first.
+        let mut top_layer_elements: Vec<OutputRenderElements<R, WindowRenderElement<R>>> = Vec::new();
+        // ---- Layer-shell (Background + Bottom): rendered BELOW windows. We
+        //      append to `output_render_elements` immediately so the z-order
+        //      ends up [custom, bg/bottom layers, windows, top/overlay layers].
+        {
+            let layer_map = layer_map_for_output(output);
+            for surface in layer_map.layers().rev() {
+                let Some(geo) = layer_map.layer_geometry(surface) else {
+                    continue;
+                };
+                let physical_loc = geo.loc.to_physical_precise_round(output_scale);
+                let surface_elements: Vec<WaylandSurfaceRenderElement<R>> =
+                    AsRenderElements::<R>::render_elements(
+                        surface,
+                        renderer,
+                        physical_loc,
+                        scale,
+                        1.0,
+                    );
+                match surface.layer() {
+                    WlrLayer::Top | WlrLayer::Overlay => {
+                        top_layer_elements.extend(
+                            surface_elements
+                                .into_iter()
+                                .map(OutputRenderElements::LayerSurface),
+                        );
+                    }
+                    WlrLayer::Background | WlrLayer::Bottom => {
+                        output_render_elements.extend(
+                            surface_elements
+                                .into_iter()
+                                .map(OutputRenderElements::LayerSurface),
+                        );
+                    }
+                }
+            }
+        }
+
+        // ---- Toplevel windows.
+        if let Some(ws) = workspace {
+            // Workspace-level translation applies to every window in the
+            // workspace. Combined with each window's own render_offset.
+            let ws_offset = ws.render_offset.value();
+            let ws_alpha = ws.alpha.value();
+
+            // `iter_z_order` returns bottom-to-top across bands. Render
+            // elements expect top-to-bottom (front-most first); reverse so
+            // the topmost window's elements come first in the list.
+            let entries: Vec<_> = ws.iter_z_order().collect();
+            for entry in entries.into_iter().rev() {
+                let anim = entry.element.anim_state();
+                let win_offset = anim.render_offset.lock().unwrap().value();
+                let win_alpha = anim.alpha.lock().unwrap().value();
+                let combined_alpha = (win_alpha * ws_alpha).clamp(0.0, 1.0);
+
+                // Mirror smithay's render_elements_for_region: subtract the
+                // output's logical origin so windows on output 1 don't end up
+                // off-screen on output 0. `output_geo.loc` is the workspace-
+                // global origin of this output's region.
+                let region_origin = output_geo.map(|g| g.loc).unwrap_or_default();
+                // smithay's `render_location = location - element.geometry().loc`
+                // — see Space::render_elements_for_region. We mirror that so
+                // SSD-decorated and bbox-offset windows render at the same
+                // place they did under the smithay path.
+                let element_geo_loc =
+                    smithay::desktop::space::SpaceElement::geometry(&entry.element).loc;
+                let logical_loc = entry.location - region_origin - element_geo_loc;
+                let physical_loc = logical_loc.to_physical_precise_round(output_scale);
+
+                // Render the window at its base location, then relocate by
+                // the animation offset (workspace + per-window).
+                let window_render_elements: Vec<WindowRenderElement<R>> =
+                    AsRenderElements::<R>::render_elements(
+                        &entry.element,
+                        renderer,
+                        physical_loc,
+                        scale,
+                        combined_alpha,
+                    );
+
+                // Convert the combined logical offset to physical and wrap.
+                let combined_offset_logical = Point::<f64, smithay::utils::Logical>::from((
+                    ws_offset.x + win_offset.x,
+                    ws_offset.y + win_offset.y,
+                ));
+                let combined_offset_physical: Point<i32, smithay::utils::Physical> = (
+                    (combined_offset_logical.x * output_scale).round() as i32,
+                    (combined_offset_logical.y * output_scale).round() as i32,
+                )
+                    .into();
+
+                output_render_elements.extend(window_render_elements.into_iter().map(|el| {
+                    OutputRenderElements::AnimatedWindow(RelocateRenderElement::from_element(
+                        el,
+                        combined_offset_physical,
+                        Relocate::Relative,
+                    ))
+                }));
+            }
+        } else {
+            // Fallback: no workspace bootstrap for this output yet. Render
+            // via smithay's space helper so the screen is never blank during
+            // the brief bootstrap window.
+            //
+            // NOTE: `space_render_elements` ALSO walks layer-shell. We've
+            // already rendered layers above; to avoid double-rendering them
+            // here we use `Space::render_elements_for_region` directly,
+            // which by smithay's docs explicitly excludes layer surfaces.
+            if let Some(geo) = output_geo {
+                let region_elements: Vec<WindowRenderElement<R>> = space
+                    .render_elements_for_region(renderer, &geo, scale, 1.0)
+                    .into_iter()
+                    .collect();
+                output_render_elements.extend(
+                    region_elements
+                        .into_iter()
+                        .map(|e| OutputRenderElements::Window(Wrap::from(e))),
                 );
             }
         }
 
-        let space_elements = smithay::desktop::space::space_render_elements::<_, WindowElement, _>(
-            renderer,
-            [space],
-            output,
-            1.0,
-        )
-        .expect("output without mode?");
-        output_render_elements.extend(space_elements.into_iter().map(OutputRenderElements::Space));
+        // Append top/overlay layer-shell on top of everything else.
+        output_render_elements.extend(top_layer_elements);
 
         (output_render_elements, CLEAR_COLOR)
     }
 }
 
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_output<'a, 'd, R>(
     output: &'a Output,
     space: &'a Space<WindowElement>,
+    workspace: Option<&'a Workspace>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
     renderer: &'a mut R,
     framebuffer: &'a mut R::Framebuffer<'_>,
@@ -228,6 +359,6 @@ where
     R::TextureId: Clone + Send + 'static,
 {
     let (elements, clear_color) =
-        output_elements(output, space, custom_elements, renderer, show_window_preview);
+        output_elements(output, space, workspace, custom_elements, renderer, show_window_preview);
     damage_tracker.render_output(renderer, framebuffer, age, &elements, clear_color)
 }

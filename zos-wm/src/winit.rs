@@ -331,6 +331,16 @@ pub fn run_winit() {
             #[cfg(feature = "debug")]
             fps_element.update_fps(fps);
 
+            // Look up the active workspace for this output ahead of the
+            // mutable borrows below so the render closure can reference it.
+            // None when the output hasn't been bootstrapped into `outputs`
+            // yet — render.rs falls back to the smithay path in that case.
+            let active_workspace_for_render: Option<&crate::shell::workspace::Workspace> = state
+                .outputs
+                .values()
+                .find(|os| os.output == output)
+                .map(|os| os.active());
+
             let full_redraw = &mut state.backend_data.full_redraw;
             *full_redraw = full_redraw.saturating_sub(1);
             let space = &mut state.space;
@@ -418,7 +428,7 @@ pub fn run_winit() {
                 // to it so we can replay the same render into each pending
                 // screencopy frame after the main render completes.
                 let (elements, clear_color) =
-                    crate::render::output_elements(&output, space, custom_elements, renderer, show_window_preview);
+                    crate::render::output_elements(&output, space, active_workspace_for_render, custom_elements, renderer, show_window_preview);
 
                 // Tearing-control hint — winit submits via EGL `eglSwapBuffers`
                 // and has no DRM page flip, so this is purely advisory. Log if

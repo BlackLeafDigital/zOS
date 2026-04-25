@@ -7404,9 +7404,12 @@ dependencies = [
 name = "zos-power"
 version = "0.1.0"
 dependencies = [
+ "iced",
+ "iced_layershell",
  "tracing",
  "tracing-subscriber",
  "zos-core",
+ "zos-ui",
 ]
 
 [[package]]
