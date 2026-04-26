@@ -532,9 +532,9 @@ Workspace: 13 crates, all warning-free. Session total commits: 22 (this session 
 - [x] Media keys + screenshot bindings
 - [x] zos compositor CLI (workspaces / windows / monitors / switch / focus / move / version / --watch)
 - [x] zos doctor diagnostic
+- [x] Render-side shader gap resolved (MultiRenderPixelShaderElement wrapper); udev path now ships drop shadows
 - [ ] Daily-drive zos-wm for 48+ hours under real load (user task)
 - [ ] Confirm visual fidelity at 144Hz on 3× 1080p NVIDIA setup
-- [ ] Verify the deferred render-side shader integration isn't blocking (or implement smithay PR / per-backend specialization)
 - [ ] Drop Hyprland keep-alive banner in install-hyprland.sh, remove HyprPanel/wlogout/nwg-displays from dnf install
 - [ ] CI image rebuild + rebase via rpm-ostree
 
