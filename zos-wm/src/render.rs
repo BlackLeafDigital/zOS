@@ -495,6 +495,7 @@ pub fn splice_winit_elements(
     out
 }
 
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_output<'a, 'd, R>(
     output: &'a Output,

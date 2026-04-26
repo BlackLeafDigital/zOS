@@ -14,3 +14,10 @@ pub mod rounded;
 
 #[cfg(any(feature = "udev", feature = "winit", feature = "x11"))]
 pub mod shadow;
+
+// Multi-renderer shim: only the udev path needs it (winit's `GlesRenderer`
+// already accepts `PixelShaderElement` directly). Compiled exclusively
+// behind `feature = "udev"` so the GLES-only `MultiRenderer` types pulled
+// in by the wrapper aren't required for winit-only / x11-only builds.
+#[cfg(feature = "udev")]
+pub mod multi_render;

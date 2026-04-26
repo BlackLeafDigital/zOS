@@ -13,7 +13,6 @@ use crate::{
 
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
-#[cfg(feature = "udev")]
 use smithay::backend::renderer::DebugFlags;
 
 use smithay::{
@@ -46,13 +45,10 @@ use tracing::{debug, error, info, warn};
 use crate::state::Backend;
 #[cfg(feature = "udev")]
 use smithay::{
-    backend::{
-        input::{
-            Device, DeviceCapability, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
-            GestureSwipeUpdateEvent as _, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
-            TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
-        },
-        session::Session,
+    backend::input::{
+        Device, DeviceCapability, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
+        GestureSwipeUpdateEvent as _, PointerMotionEvent, ProximityState, TabletToolButtonEvent,
+        TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent, TabletToolTipState, TouchEvent,
     },
     input::{
         pointer::{
@@ -783,36 +779,23 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         }
     }
 
-    /// VT switching: udev backend wires this through to libseat;
-    /// winit/x11 don't own a TTY, so we log and continue.
-    #[cfg(feature = "udev")]
+    /// VT switching. Default `Backend::change_vt` is a no-op; UdevData
+    /// overrides it to drive `LibSeatSession::change_vt`. Single code
+    /// path, no cfg gates needed.
     fn dispatch_vt_switch(&mut self, vt: i32) {
         info!(to = vt, "Trying to switch vt");
-        if let Err(err) = self.backend_data.session.change_vt(vt) {
+        if let Err(err) = self.backend_data.change_vt(vt) {
             error!(vt, "Error switching vt: {}", err);
         }
     }
 
-    #[cfg(not(feature = "udev"))]
-    fn dispatch_vt_switch(&mut self, vt: i32) {
-        debug!(?vt, "VtSwitch ignored: backend has no session");
-    }
-
-    /// Output-tint debug toggle (anvil dev knob). Only the udev backend
-    /// exposes `DebugFlags`; on winit/x11 this is a no-op.
-    #[cfg(feature = "udev")]
+    /// Output-tint debug toggle (anvil dev knob). Routes through the
+    /// `Backend::debug_flags` / `set_debug_flags` trait methods — winit
+    /// defaults to no-op, udev forwards to `DrmCompositor::set_debug_flags`.
     fn dispatch_toggle_tint(&mut self) {
-        // Only the udev backend has DebugFlags; the trait method exists on
-        // every Backend impl for the udev build (anvil_state) but we keep
-        // the call best-effort by feature-gating the whole helper.
         let mut debug_flags = self.backend_data.debug_flags();
         debug_flags.toggle(DebugFlags::TINT);
         self.backend_data.set_debug_flags(debug_flags);
-    }
-
-    #[cfg(not(feature = "udev"))]
-    fn dispatch_toggle_tint(&mut self) {
-        debug!("ToggleTint ignored: backend has no debug-flags surface");
     }
 
     /// Adjust the fractional scale of the output under the pointer by

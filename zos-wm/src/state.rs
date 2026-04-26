@@ -1675,6 +1675,22 @@ pub trait Backend {
         Err(crate::protocols::output_management::OutputConfigError::NotSupported)
     }
 
+    /// Switch to a different VT (Virtual Terminal). Only meaningful on the
+    /// udev backend; winit/x11 default-impl is a no-op.
+    fn change_vt(&mut self, _vt: i32) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// Read the backend's current `DebugFlags`. Defaults to empty.
+    /// Override on udev to expose smithay's `DrmCompositor` debug knobs
+    /// (overlay-tint etc.).
+    fn debug_flags(&self) -> smithay::backend::renderer::DebugFlags {
+        smithay::backend::renderer::DebugFlags::empty()
+    }
+
+    /// Set the backend's `DebugFlags`. Default no-op.
+    fn set_debug_flags(&mut self, _flags: smithay::backend::renderer::DebugFlags) {}
+
     /// Optional dmabuf-capture format advertisement for ext-image-copy-capture-v1.
     ///
     /// Backends that have a render-capable GPU (winit's GLES context, udev's

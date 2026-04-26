@@ -115,12 +115,73 @@ const SUPPORTED_FORMATS: &[Fourcc] = &[
 ];
 const SUPPORTED_FORMATS_8BIT_ONLY: &[Fourcc] = &[Fourcc::Abgr8888, Fourcc::Argb8888];
 
-type UdevRenderer<'a> = MultiRenderer<
+pub(crate) type UdevRenderer<'a> = MultiRenderer<
     'a,
     'a,
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
     GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
 >;
+
+// `UdevOutputElements<'a>` mirrors `WinitOutputElements` for the udev path.
+// It carries either a regular per-output render element (window content,
+// pointer, layer-shell, etc.) or a per-window drop shadow wrapped through
+// `MultiRenderPixelShaderElement` so it satisfies
+// `RenderElement<MultiRenderer<...>>` via `MultiFrame::as_mut()` →
+// `&mut GlesFrame`. See `effects/multi_render.rs` for the impl rationale.
+//
+// Defined here (rather than in `render.rs`) because the macro instantiates
+// `RenderElement<UdevRenderer<'a>>` directly, and `UdevRenderer` is a
+// crate-private alias kept module-local to avoid leaking the GBM/GLES
+// generics through public APIs.
+smithay::backend::renderer::element::render_elements! {
+    pub(crate) UdevOutputElements<='a, UdevRenderer<'a>>;
+    Inner=crate::render::OutputRenderElements<
+        UdevRenderer<'a>,
+        crate::shell::WindowRenderElement<UdevRenderer<'a>>,
+    >,
+    Shadow=crate::effects::multi_render::MultiRenderPixelShaderElement,
+}
+
+impl<'a> std::fmt::Debug for UdevOutputElements<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inner(arg0) => f.debug_tuple("Inner").field(arg0).finish(),
+            Self::Shadow(arg0) => f.debug_tuple("Shadow").field(arg0).finish(),
+            Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
+        }
+    }
+}
+
+/// Splice udev shadow inserts into the udev render-element list. Mirrors
+/// [`crate::render::splice_winit_elements`]; index semantics are identical.
+fn splice_udev_elements<'a>(
+    inner_elements: Vec<crate::render::OutputRenderElements<
+        UdevRenderer<'a>,
+        crate::shell::WindowRenderElement<UdevRenderer<'a>>,
+    >>,
+    mut shadow_inserts: Vec<(usize, smithay::backend::renderer::gles::element::PixelShaderElement)>,
+) -> Vec<UdevOutputElements<'a>> {
+    let mut out: Vec<UdevOutputElements<'a>> = inner_elements
+        .into_iter()
+        .map(UdevOutputElements::Inner)
+        .collect();
+
+    if shadow_inserts.is_empty() {
+        return out;
+    }
+
+    shadow_inserts.sort_by_key(|(idx, _)| *idx);
+    for (offset, (idx, element)) in shadow_inserts.into_iter().enumerate() {
+        let pos = (idx + offset).min(out.len());
+        out.insert(
+            pos,
+            UdevOutputElements::Shadow(
+                crate::effects::multi_render::MultiRenderPixelShaderElement(element),
+            ),
+        );
+    }
+    out
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct UdevOutputId {
@@ -163,23 +224,9 @@ pub struct UdevData {
     pub shadow_effect: Option<crate::effects::shadow::DropShadowEffect>,
 }
 
-impl UdevData {
-    pub fn set_debug_flags(&mut self, flags: DebugFlags) {
-        if self.debug_flags != flags {
-            self.debug_flags = flags;
-
-            for (_, backend) in self.backends.iter_mut() {
-                for (_, surface) in backend.surfaces.iter_mut() {
-                    surface.drm_output.set_debug_flags(flags);
-                }
-            }
-        }
-    }
-
-    pub fn debug_flags(&self) -> DebugFlags {
-        self.debug_flags
-    }
-}
+// `debug_flags` / `set_debug_flags` / `change_vt` live on the `Backend`
+// trait impl below so the generic `dispatch_*` helpers in input_handler.rs
+// can call them through `BackendData: Backend`.
 
 impl DmabufHandler for AnvilState<UdevData> {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
@@ -230,6 +277,27 @@ impl Backend for UdevData {
     fn update_led_state(&mut self, led_state: LedState) {
         for keyboard in self.keyboards.iter_mut() {
             keyboard.led_update(led_state.into());
+        }
+    }
+
+    fn change_vt(&mut self, vt: i32) -> std::io::Result<()> {
+        self.session
+            .change_vt(vt)
+            .map_err(|e| std::io::Error::other(format!("libseat change_vt: {e}")))
+    }
+
+    fn debug_flags(&self) -> DebugFlags {
+        self.debug_flags
+    }
+
+    fn set_debug_flags(&mut self, flags: DebugFlags) {
+        if self.debug_flags != flags {
+            self.debug_flags = flags;
+            for (_, backend) in self.backends.iter_mut() {
+                for (_, surface) in backend.surfaces.iter_mut() {
+                    surface.drm_output.set_debug_flags(flags);
+                }
+            }
         }
     }
 
@@ -1901,6 +1969,12 @@ impl AnvilState<UdevData> {
 
         self.pre_repaint(&output, frame_target);
 
+        // Snapshot animation state BEFORE taking the mutable borrow on
+        // `self.backend_data.backends` below. The `device` borrow extends
+        // through the error-handler arm, so any later `&self` call would
+        // collide.
+        let animations_in_flight = self.any_animating();
+
         let device = if let Some(device) = self.backend_data.backends.get_mut(&node) {
             device
         } else {
@@ -1923,6 +1997,30 @@ impl AnvilState<UdevData> {
 
         let primary_gpu = self.backend_data.primary_gpu;
         let render_node = surface.render_node.unwrap_or(primary_gpu);
+
+        // Snapshot the per-frame shadow parameters BEFORE we hand out the
+        // mutable `gpus` borrow below. Cloning the `DropShadowEffect`
+        // produces a new handle to the same underlying compiled program
+        // (it's `Arc`-backed inside smithay), so this is a cheap snapshot
+        // we can pass into `render_surface` without holding `&mut self`.
+        //
+        // Cross-GPU caveat: `shadow_effect` was compiled on the primary
+        // GPU's `GlesRenderer`. Programs are not portable across GLES
+        // contexts. When `render_node != primary_gpu` we'd be feeding a
+        // foreign-context program into the secondary GPU's GlesFrame and
+        // either get a GL error at draw time or, worse, silently render
+        // garbage. Skip the shadow on cross-GPU surfaces — same caveat
+        // already documented on the field doc-comment for
+        // `UdevData::shadow_effect`.
+        let shadow_effect_clone = if primary_gpu == render_node {
+            self.backend_data.shadow_effect.clone()
+        } else {
+            None
+        };
+        let shadow_radius = self.shadow_radius;
+        let shadow_offset = self.shadow_offset;
+        let shadow_color = self.shadow_color;
+
         let mut renderer = if primary_gpu == render_node {
             self.backend_data.gpus.single_renderer(&render_node)
         } else {
@@ -1980,11 +2078,11 @@ impl AnvilState<UdevData> {
             self.show_window_preview,
             &mut self.pending_screencopy,
             Duration::from(frame_target),
+            shadow_effect_clone.as_ref(),
+            shadow_radius,
+            shadow_offset,
+            shadow_color,
         );
-        // Whether any animation across any workspace is still in flight.
-        // We capture this before the `match` so the borrow on `self` doesn't
-        // overlap with the post_repaint mutable call below.
-        let animations_in_flight = self.any_animating();
         let reschedule = match result {
             Ok((has_rendered, states)) => {
                 let dmabuf_feedback = surface.dmabuf_feedback.clone();
@@ -2079,6 +2177,10 @@ fn render_surface<'a>(
     show_window_preview: bool,
     pending_screencopy: &mut Vec<crate::screencopy::PendingScreencopy>,
     presented_at: Duration,
+    shadow_effect: Option<&crate::effects::shadow::DropShadowEffect>,
+    shadow_radius: f32,
+    shadow_offset: (f32, f32),
+    shadow_color: [f32; 4],
 ) -> Result<(bool, RenderElementStates), SwapBuffersError> {
     let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
@@ -2155,24 +2257,33 @@ fn render_surface<'a>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    // Pass `None` for `shadow_params`: `PixelShaderElement` only impls
-    // `RenderElement<GlesRenderer>`, but the udev path's renderer is
-    // `MultiRenderer<GbmGlesBackend<GlesRenderer>, ...>`. Until smithay
-    // grows a blanket `RenderElement<MultiRenderer<...>>` for
-    // `PixelShaderElement` (or we hand-roll a wrapper that delegates
-    // through `MultiRenderer::renderer_for(node).borrow_mut()`), the
-    // udev path renders without per-window shadow/rounded-corner
-    // effects. Winit ships them. Returned `_shadow_inserts` is always
-    // empty here.
-    let (elements, clear_color, _shadow_inserts) = output_elements(
+    // Per-window drop shadow on the udev path, mirroring the winit
+    // wiring. `output_elements` returns shader elements as a sidecar list
+    // of (insertion_index, PixelShaderElement). We splice them through
+    // `MultiRenderPixelShaderElement` (the wrapper that adds a
+    // `RenderElement<MultiRenderer<...>>` impl by delegating through
+    // `MultiFrame::as_mut()`) into a single `Vec<UdevOutputElements>` the
+    // damage tracker / drm_output can consume.
+    //
+    // Rounded corners are not yet wired here — that requires intercepting
+    // each window's `TextureRenderElement` at the surface boundary, see
+    // `effects/rounded.rs::P4-rounded-render-integration`.
+    let shadow_params = shadow_effect.map(|effect| crate::render::ShadowParams {
+        effect,
+        blur_radius: shadow_radius,
+        offset: shadow_offset,
+        color: shadow_color,
+    });
+    let (inner_elements, clear_color, shadow_inserts) = output_elements(
         output,
         space,
         workspace,
         custom_elements,
         renderer,
         show_window_preview,
-        None,
+        shadow_params,
     );
+    let elements = splice_udev_elements(inner_elements, shadow_inserts);
 
     let frame_mode = if surface.disable_direct_scanout {
         FrameFlags::empty()
