@@ -34,6 +34,7 @@ enum Msg {
     RebootToggle,
     Reboot,
     RebootToWindows,
+    RebootToWindowsPersistent,
     Shutdown,
     Cancel,
     Event(Event),
@@ -72,6 +73,20 @@ fn update(state: &mut PowerMenu, msg: Msg) -> Task<Msg> {
             if let Err(e) = zos_core::commands::grub::reboot_to_windows_elevated() {
                 tracing::error!(error = ?e, "reboot_to_windows_elevated failed; falling back to plain reboot");
                 spawn_detached(&["systemctl", "reboot"]);
+            }
+            std::process::exit(0);
+        }
+        Msg::RebootToWindowsPersistent => {
+            match zos_core::commands::grub::set_persistent_boot_target_elevated(
+                zos_core::commands::grub::BootTarget::Windows,
+            ) {
+                Ok(_new_order) => {
+                    spawn_detached(&["systemctl", "reboot"]);
+                }
+                Err(e) => {
+                    tracing::error!(error = ?e, "set_persistent_boot_target_elevated(Windows) failed; falling back to plain reboot");
+                    spawn_detached(&["systemctl", "reboot"]);
+                }
             }
             std::process::exit(0);
         }
@@ -141,7 +156,12 @@ fn view(state: &PowerMenu) -> Element<'_, Msg> {
             button(text("Reboot to Windows").size(theme::font_size::SM))
                 .on_press(Msg::RebootToWindows)
                 .style(submenu_style)
-                .width(Length::Fixed(160.0))
+                .width(Length::Fixed(220.0))
+                .padding(Padding::from(8.0_f32)),
+            button(text("Windows (Persistent)").size(theme::font_size::SM))
+                .on_press(Msg::RebootToWindowsPersistent)
+                .style(submenu_style)
+                .width(Length::Fixed(220.0))
                 .padding(Padding::from(8.0_f32)),
         ]
         .spacing(theme::space::X2)

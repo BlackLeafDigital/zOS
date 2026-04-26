@@ -22,6 +22,7 @@ enum GrubMode {
 enum ConfirmAction {
     Timeout(u32),
     WindowsBls,
+    Theme,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,13 @@ impl GrubView {
                         self.message = Some(("No Windows installation detected.".into(), true));
                     } else {
                         self.mode = GrubMode::Confirm(ConfirmAction::WindowsBls);
+                    }
+                }
+                KeyCode::Char('c') => {
+                    if !grub::is_root() {
+                        self.message = Some(("Requires root. Run: sudo zos grub".into(), true));
+                    } else {
+                        self.mode = GrubMode::Confirm(ConfirmAction::Theme);
                     }
                 }
                 _ => {}
@@ -122,6 +130,14 @@ impl GrubView {
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
+        let theme_applied =
+            std::path::Path::new("/boot/grub2/themes/catppuccin-mocha/theme.txt").exists();
+        let theme_str = if theme_applied {
+            "applied"
+        } else {
+            "not applied"
+        };
+
         let timeout_str = self
             .status
             .current_timeout
@@ -154,6 +170,10 @@ impl GrubView {
                 Span::styled(bls_str, theme::text_style()),
             ]),
             Line::from(vec![
+                Span::styled("  Theme:           ", theme::subtext_style()),
+                Span::styled(theme_str, theme::text_style()),
+            ]),
+            Line::from(vec![
                 Span::styled("  Running as root: ", theme::subtext_style()),
                 if grub::is_root() {
                     Span::styled("yes", theme::pass_style())
@@ -180,7 +200,7 @@ impl GrubView {
 
         let content = match &self.mode {
             GrubMode::Overview => Paragraph::new(Line::from(Span::styled(
-                "  Press 't' to set timeout, 'w' to add Windows boot entry.",
+                "  Press 't' to set timeout, 'w' to add Windows entry, 'c' to apply Catppuccin theme.",
                 theme::subtext_style(),
             ))),
             GrubMode::SetTimeout => Paragraph::new(vec![
@@ -197,6 +217,7 @@ impl GrubView {
                 let desc = match action {
                     ConfirmAction::Timeout(s) => format!("Set GRUB timeout to {}s", s),
                     ConfirmAction::WindowsBls => "Create Windows BLS boot entry".into(),
+                    ConfirmAction::Theme => "Apply Catppuccin Mocha GRUB theme".into(),
                 };
                 Paragraph::new(vec![
                     Line::from(Span::styled(
@@ -238,6 +259,8 @@ impl GrubView {
             Span::styled(" Timeout  ", theme::subtext_style()),
             Span::styled("[w]", theme::keybind_style()),
             Span::styled(" Windows Entry  ", theme::subtext_style()),
+            Span::styled("[c]", theme::keybind_style()),
+            Span::styled(" Theme  ", theme::subtext_style()),
             Span::styled("[Esc]", theme::keybind_style()),
             Span::styled(" Back  ", theme::subtext_style()),
             Span::styled("[q]", theme::keybind_style()),
@@ -267,6 +290,18 @@ impl GrubView {
                 Ok(()) => {
                     self.status = grub::get_grub_status();
                     self.message = Some(("Windows BLS entry created.".into(), false));
+                }
+                Err(e) => {
+                    self.message = Some((format!("Error: {}", e), true));
+                }
+            },
+            ConfirmAction::Theme => match grub::apply_grub_theme() {
+                Ok(()) => {
+                    self.status = grub::get_grub_status();
+                    self.message = Some((
+                        "Catppuccin Mocha theme applied. Reboot to see it.".into(),
+                        false,
+                    ));
                 }
                 Err(e) => {
                     self.message = Some((format!("Error: {}", e), true));

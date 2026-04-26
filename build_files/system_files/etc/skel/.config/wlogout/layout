@@ -40,3 +40,10 @@
     "text" : "Windows",
     "keybind" : "w"
 }
+
+{
+    "label" : "windows-persistent",
+    "action" : "zos boot persistent windows && systemctl reboot",
+    "text" : "Windows (Persistent)",
+    "keybind" : "p"
+}

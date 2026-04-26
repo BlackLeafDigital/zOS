@@ -37,6 +37,7 @@ pub fn run_doctor_checks() -> Vec<DoctorCheck> {
     checks.extend(check_expected_packages());
     checks.push(check_deprecated_hypr_syntax());
     checks.extend(check_config_versions());
+    checks.extend(check_boot_state());
 
     checks
 }
@@ -249,4 +250,157 @@ fn check_config_versions() -> Vec<DoctorCheck> {
             }
         })
         .collect()
+}
+
+fn check_boot_state() -> Vec<DoctorCheck> {
+    let mut out = Vec::new();
+
+    // 1. efibootmgr availability + reachability
+    let eb = Command::new("efibootmgr").output();
+    match eb {
+        Ok(o) if o.status.success() => {
+            out.push(DoctorCheck {
+                name: "EFI: efibootmgr".into(),
+                status: CheckStatus::Pass,
+                message: "efibootmgr reachable".into(),
+            });
+        }
+        Ok(_) => {
+            out.push(DoctorCheck {
+                name: "EFI: efibootmgr".into(),
+                status: CheckStatus::Fail,
+                message: "efibootmgr exited non-zero (legacy BIOS boot? not on UEFI?)".into(),
+            });
+            return out; // No point in further EFI checks
+        }
+        Err(_) => {
+            out.push(DoctorCheck {
+                name: "EFI: efibootmgr".into(),
+                status: CheckStatus::Fail,
+                message: "efibootmgr not in PATH".into(),
+            });
+            return out;
+        }
+    }
+
+    // 2. BootOrder + BootCurrent visibility
+    match crate::commands::grub::get_boot_order() {
+        Ok(order) => {
+            let current = crate::commands::grub::get_boot_current()
+                .unwrap_or_else(|| "?".into());
+            out.push(DoctorCheck {
+                name: "EFI: BootOrder".into(),
+                status: CheckStatus::Pass,
+                message: format!("Order: {} (current: {})", order.join(","), current),
+            });
+        }
+        Err(e) => {
+            out.push(DoctorCheck {
+                name: "EFI: BootOrder".into(),
+                status: CheckStatus::Warn,
+                message: format!("Could not parse BootOrder: {}", e),
+            });
+        }
+    }
+
+    // 3. BootNext (informational — set by `zos reboot-to-windows` etc.)
+    let stdout = Command::new("efibootmgr")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let bootnext = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("BootNext:").map(str::trim));
+    out.push(match bootnext {
+        Some(n) => DoctorCheck {
+            name: "EFI: BootNext".into(),
+            status: CheckStatus::Pass,
+            message: format!("Set: Boot{}", n),
+        },
+        None => DoctorCheck {
+            name: "EFI: BootNext".into(),
+            status: CheckStatus::Pass,
+            message: "Not set (normal — only set by reboot-to-windows commands)".into(),
+        },
+    });
+
+    // 4. Windows Boot Manager registration (efibootmgr + BLS file)
+    let win_efi = crate::commands::grub::get_windows_boot_num();
+    let bls_exists = std::path::Path::new("/boot/loader/entries/windows.conf").exists();
+    out.push(match (win_efi, bls_exists) {
+        (Some(n), true) => DoctorCheck {
+            name: "Dual-boot: Windows".into(),
+            status: CheckStatus::Pass,
+            message: format!("efibootmgr Boot{} + BLS entry windows.conf both present", n),
+        },
+        (Some(n), false) => DoctorCheck {
+            name: "Dual-boot: Windows".into(),
+            status: CheckStatus::Warn,
+            message: format!(
+                "efibootmgr Boot{} present but /boot/loader/entries/windows.conf missing — run `sudo zos grub`",
+                n
+            ),
+        },
+        (None, true) => DoctorCheck {
+            name: "Dual-boot: Windows".into(),
+            status: CheckStatus::Warn,
+            message: "BLS windows.conf present but no Windows Boot Manager in efibootmgr — Windows EFI may have been clobbered".into(),
+        },
+        (None, false) => DoctorCheck {
+            name: "Dual-boot: Windows".into(),
+            status: CheckStatus::Warn,
+            message: "Windows not detected (run `sudo zos grub` if you want dual-boot)".into(),
+        },
+    });
+
+    // 5. polkit passwordless rule for efibootmgr
+    let polkit_rule = std::path::Path::new(
+        "/usr/share/polkit-1/rules.d/50-zos-passwordless.rules",
+    )
+    .exists();
+    out.push(if polkit_rule {
+        DoctorCheck {
+            name: "Polkit: passwordless rule".into(),
+            status: CheckStatus::Pass,
+            message: "50-zos-passwordless.rules installed".into(),
+        }
+    } else {
+        DoctorCheck {
+            name: "Polkit: passwordless rule".into(),
+            status: CheckStatus::Warn,
+            message:
+                "50-zos-passwordless.rules NOT installed — wlogout reboot-to-windows will require password"
+                    .into(),
+        }
+    });
+
+    // 6. polkit agent running (user-session, hyprpolkitagent on this image)
+    let agent = Command::new("systemctl")
+        .args(["--user", "is-active", "hyprpolkitagent"])
+        .output();
+    out.push(match agent {
+        Ok(o) if o.status.success() => DoctorCheck {
+            name: "Polkit: agent".into(),
+            status: CheckStatus::Pass,
+            message: "hyprpolkitagent active".into(),
+        },
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            DoctorCheck {
+                name: "Polkit: agent".into(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "hyprpolkitagent state: {} — pkexec from non-TTY contexts will fail",
+                    if s.is_empty() { "unknown".into() } else { s }
+                ),
+            }
+        }
+        Err(_) => DoctorCheck {
+            name: "Polkit: agent".into(),
+            status: CheckStatus::Warn,
+            message: "could not query hyprpolkitagent state".into(),
+        },
+    });
+
+    out
 }

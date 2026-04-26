@@ -9,6 +9,10 @@ qemu_accel := if os() == "macos" { "-accel tcg,thread=multi -cpu qemu64" } else 
 qemu_display := if os() == "macos" { "-display cocoa" } else { "-display gtk" }
 qemu_bios := if os() == "macos" { "-bios /opt/homebrew/share/qemu/edk2-x86_64-code.fd" } else { "" }
 
+# OVMF firmware paths for UEFI boot (Fedora-first, fallback to common locations)
+ovmf_code := if os() == "macos" { "/opt/homebrew/share/qemu/edk2-x86_64-code.fd" } else { "/usr/share/edk2/ovmf/OVMF_CODE.fd" }
+ovmf_vars := if os() == "macos" { "/opt/homebrew/share/qemu/edk2-i386-vars.fd" } else { "/usr/share/edk2/ovmf/OVMF_VARS.fd" }
+
 # Build the AMD variant
 build:
     docker build \
@@ -87,6 +91,38 @@ run-vm:
         -device virtio-vga \
         -nic user,model=virtio-net-pci \
         {{qemu_bios}}
+
+# Run the QCOW2 in UEFI mode with persistent NVRAM (test dual-boot / efibootmgr changes)
+run-vm-uefi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting zOS UEFI VM..."
+    OVMF_CODE="{{ovmf_code}}"
+    OVMF_VARS_SRC="{{ovmf_vars}}"
+    if [ ! -f "$OVMF_CODE" ]; then
+        if [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then
+            OVMF_CODE=/usr/share/OVMF/OVMF_CODE.fd
+            OVMF_VARS_SRC=/usr/share/OVMF/OVMF_VARS.fd
+        else
+            echo "ERROR: OVMF firmware not found. Install it with: sudo dnf install edk2-ovmf" >&2
+            exit 1
+        fi
+    fi
+    OVMF_VARS_VM=output/qcow2/OVMF_VARS.zos.fd
+    if [ ! -f "$OVMF_VARS_VM" ]; then
+        cp "$OVMF_VARS_SRC" "$OVMF_VARS_VM"
+    fi
+    qemu-system-x86_64 \
+        {{qemu_accel}} \
+        -smp 4 \
+        -m 8G \
+        -machine q35 \
+        -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
+        -drive if=pflash,format=raw,file=$OVMF_VARS_VM \
+        -drive file=output/qcow2/disk.qcow2,format=qcow2,if=virtio \
+        {{qemu_display}} \
+        -device virtio-vga \
+        -nic user,model=virtio-net-pci
 
 # Create a blank disk for ISO installer testing
 create-test-disk:

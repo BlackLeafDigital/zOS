@@ -1857,7 +1857,15 @@ impl AnvilState<UdevData> {
                             ..
                         })) if source.kind() == io::ErrorKind::PermissionDenied
                     ),
-                    SwapBuffersError::ContextLost(err) => panic!("Rendering loop lost: {err}"),
+                    SwapBuffersError::ContextLost(err) => {
+                        error!(
+                            "EGL context lost on output (likely NVIDIA driver suspend/resume or hotplug race): {err}. \
+                             Compositor will continue but rendering on this output may be degraded until next vblank."
+                        );
+                        // Reschedule and hope the driver recovers. If we returned `false` here we'd
+                        // never re-attempt, leaving the output frozen until external action.
+                        true
+                    }
                 }
             }
         };
@@ -2118,7 +2126,13 @@ impl AnvilState<UdevData> {
                                 .expect("failed to reset drm device");
                             true
                         }
-                        _ => panic!("Rendering loop lost: {err}"),
+                        _ => {
+                            error!(
+                                "Unrecoverable DRM error on output, treating as transient: {err}. \
+                                 Compositor will continue and reschedule render."
+                            );
+                            true
+                        }
                     },
                 }
             }

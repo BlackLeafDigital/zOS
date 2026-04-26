@@ -538,4 +538,69 @@ Workspace: 13 crates, all warning-free. Session total commits: 22 (this session 
 - [ ] Drop Hyprland keep-alive banner in install-hyprland.sh, remove HyprPanel/wlogout/nwg-displays from dnf install
 - [ ] CI image rebuild + rebase via rpm-ostree
 
+> NOTE 2026-04-26: this checklist understated reality. The honest replacement is below.
+
+---
+
+## 2026-04-26 — Honest readiness audit + dual-boot/VM/theme batch + Part A guardrails
+
+### Why this section exists
+The prior "Daily-driver readiness checklist" (above) check-marked the *building blocks* and gated the swap on "user validation". Three independent agents auditing the codebase in plan mode surfaced six categories of showstoppers that were not represented in that checklist. zos-wm is **not** ready to replace Hyprland on the user's daily-driver hardware. This entry corrects the record and ships the fixes that are safely surgical right now (Parts A + B + C + D below); the larger remaining work is enumerated honestly under "Still required for swap".
+
+### Part B — VM testing path (commit pending)
+- New `Justfile` target `run-vm-uefi` boots the qcow2 with OVMF firmware + per-VM NVRAM at `output/qcow2/OVMF_VARS.zos.fd`. Persistent NVRAM survives across runs so EFI variable changes (`efibootmgr --bootnext`) can be exercised.
+- Added Linux fallback for `OVMF_CODE.fd`: tries `/usr/share/edk2/ovmf/` then `/usr/share/OVMF/`, fails clearly if neither exists with `dnf install edk2-ovmf` hint.
+- New `docs/TESTING.md` (137 lines) documents three test paths: `just dev-wm` (nested winit, sub-minute iteration), `just run-vm-uefi` (full VM via greetd), real hardware (only after Part A guardrails ship).
+
+### Part C — Catppuccin Mocha GRUB theme (commit pending)
+- New build script `build_files/scripts/install-grub-theme.sh` pulls `catppuccin/grub` upstream at pinned commit `0a37ab19f654e77129b409fed371891c01ffd0b9`. Installs to `/usr/share/grub/themes/catppuccin-mocha/` in the immutable image layer.
+- New Containerfile RUN layer between `install-hyprland.sh` and `install-dev-tools.sh`.
+- Runtime activation via `sudo zos grub` (TUI: press `c`) or `sudo zos-system grub`. Both copy theme to `/boot/grub2/themes/` and write a marker-delimited stanza (`# zos-grub-theme-managed`) to `/boot/grub2/user.cfg` (Fedora Atomic-supported override path). Idempotent. Rust path: `zos_core::commands::grub::apply_grub_theme`. Python path: `_apply_grub_theme` in `build_files/scripts/zos-system.py`.
+- TUI gains a "Theme: applied / not applied" status line.
+
+### Part D — Working dual-boot, one-shot, and persistent default (commit pending)
+- **Polkit:** new rule `build_files/system_files/usr/share/polkit-1/rules.d/50-zos-passwordless.rules`. JS rule that lets users in `wheel` with an active session run a curated allowlist of root binaries via `pkexec` without a password prompt. Initial allowlist: `/usr/sbin/efibootmgr`, `/usr/bin/efibootmgr`. Audio/PipeWire tooling is explicitly excluded (it runs in user-space). Destructive commands (rpm-ostree, grub2-mkconfig) are not added — should be gated behind settings-level confirm flow.
+- **Deploy fix:** `install-user-configs.sh` now copies `/usr/share/polkit-1/rules.d/` (was a silent gap — the new rule would never have shipped).
+- **`zos-core::commands::grub` additions:**
+  - `reboot_to_windows_elevated` rewritten to capture stderr and classify polkit-cancellation (exit 126/127, "Authorization required", "Cancelled", "polkit-agent" in stderr) with hint `systemctl --user status hyprpolkitagent`. Missing-Windows error suggests `sudo zos grub`.
+  - `set_bootnext_only_elevated(boot_num)` and `set_bootnext_windows_only_elevated()` — set BootNext without rebooting (verification path).
+  - `BootTarget::{Windows, CurrentSystem}` enum + `set_persistent_boot_target_elevated(target)` — moves target to front of EFI BootOrder for persistent default-boot. `CurrentSystem` resolves via `BootCurrent` so the user can revert from inside Bazzite.
+  - `get_boot_order()`, `get_boot_current()`, `set_boot_order_first_elevated()` — primitives.
+- **`zos boot` CLI subcommand** in `zos-cli/src/main.rs`: `status`, `next-windows`, `persistent <windows|current>`. Wired to the new core functions.
+- **zos-power:** "Windows (Persistent)" button in the reboot submenu next to "Reboot to Windows". Width bumped 160 → 220 to fit the longer label.
+- **wlogout layout:** new "Windows (Persistent)" entry, keybind `p`, action `zos boot persistent windows && systemctl reboot`.
+- **`zos doctor` boot block:** 6 new checks — efibootmgr reachable, BootOrder + BootCurrent, BootNext, Windows EFI + BLS entry presence, polkit rule installed, hyprpolkitagent running.
+
+### Part A — Crash-path guardrails (commit pending)
+- **`zos-wm/src/udev.rs:1860`** `SwapBuffersError::ContextLost` — converted from `panic!` to `error!` + return `true` (reschedule next frame). NVIDIA driver suspend/resume and hot-plug races no longer crash the compositor.
+- **`zos-wm/src/udev.rs:2121`** unrecoverable DRM error catch-all — same conversion: `error!` + reschedule.
+- **`zos-wm/src/shell/grabs.rs:536, 573, 749, 786`** four `panic!("invalid resize state")` sites converted to `tracing::warn!` + drop. Resize grab in unexpected state no longer crashes; the grab cleans itself up when the user releases.
+- New **`zos-wm/STATUS.md`** documents what's actually broken / deferred so the CHANGELOG never overstates again. Cross-reference for "what I should not assume just works".
+
+### Still required for swap (the actual blockers)
+None of the below are addressed in this batch. They are the Phase 8 actual blockers:
+- **Shell-app autostart not wired.** `start-zos-wm` (`build_files/system_files/usr/bin/start-zos-wm:41`) just `exec`s the compositor. Under zos-wm, panel/notify/power/monitors do not autostart. Black screen + windows + launcher only.
+- **Compositor IPC trait stubbed under zos-wm.** `zos-core/src/compositor/zos_wm.rs:20-38` returns empty data. zos-panel under zos-wm shows empty workspaces and clicks are no-ops.
+- **zos-monitors writes Hyprland config under zos-wm.** `zos-monitors/src/main.rs:355` writes `~/.config/hypr/monitors.conf`. Silent no-op under zos-wm.
+- **Session lock is fake.** `zos-wm/src/state.rs:940-953` flips a flag; render path ignores lock surfaces. **Security gap on a daily driver.**
+- **Rounded corners shader compiled but not rendered.** `zos-wm/src/effects/rounded.rs:41-49`, `zos-wm/src/render.rs:358-364`. Multi-GPU mask explicitly skipped (`zos-wm/src/udev.rs:216, 222`).
+- **Tearing-control accepts and discards.** `zos-wm/src/udev.rs:2297` TODO `tearing-async-pageflip`.
+- **Gamma-control LUT stored, not applied to DRM.** `zos-wm/src/protocols/gamma_control.rs:282, 398`.
+- **Screencopy: outputs only, no toplevel/window capture.** `zos-wm/src/state.rs:789` TODO.
+- **wlr-output-management partial.** Position/scale/transform need Backend trait extension; adaptive-sync stored but not written to DRM (`zos-wm/src/udev.rs:530`).
+
+These are deferred to follow-up batches and will be tackled after `just build-nvidia` validates the current changes end-to-end.
+
+### Verification
+- `cargo check --workspace` (default features = winit + xwayland): clean.
+- `cargo check -p zos-wm --features udev,xwayland` (in podman fedora:43 with libseat-devel + libdisplay-info-devel): clean.
+- `cargo test --workspace --lib`: 44/44 zos-wm + 9/9 zos-core + others passing.
+- `shellcheck build_files/scripts/*.sh`: clean.
+- `python3 -m py_compile build_files/scripts/zos-system.py`: clean.
+- `zos boot --help` parses correctly with `status`, `next-windows`, `persistent`.
+
+### Not addressed by this entry
+- Image not rebuilt yet — gated on `just build-nvidia` succeeding. Rebuild surfaces any container-build issues with the new RUN layer (`install-grub-theme.sh`) and the new polkit rule deploy.
+- Daily-drive validation by user — explicitly deferred until image rebuilds successfully and the user smoke-tests `just run-vm-uefi`.
+
 ---

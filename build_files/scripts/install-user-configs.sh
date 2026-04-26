@@ -116,6 +116,11 @@ gtk-update-icon-cache /usr/share/icons/hicolor/ 2>/dev/null || true
 mkdir -p /usr/share/polkit-1/actions
 cp /ctx/system_files/usr/share/polkit-1/actions/com.zos.settings.policy /usr/share/polkit-1/actions/
 
+# --- Polkit rules (passwordless allowlist for wheel users) ---
+mkdir -p /usr/share/polkit-1/rules.d
+cp /ctx/system_files/usr/share/polkit-1/rules.d/50-zos-passwordless.rules \
+   /usr/share/polkit-1/rules.d/
+
 # --- zos is built from Rust in Containerfile, already at /usr/bin/zos ---
 
 # --- Auto-migration systemd user service ---

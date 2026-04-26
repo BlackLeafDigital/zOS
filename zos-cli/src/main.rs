@@ -59,6 +59,11 @@ enum Commands {
     },
     /// Set Windows as next boot target and reboot
     RebootToWindows,
+    /// Boot-order management (one-shot BootNext or persistent default flip)
+    Boot {
+        #[command(subcommand)]
+        cmd: BootCmd,
+    },
     /// Talk to the zos-wm compositor over its IPC socket
     Compositor {
         #[command(subcommand)]
@@ -140,6 +145,27 @@ enum CompositorCmd {
     CloseFocused,
 }
 
+#[derive(Subcommand)]
+enum BootCmd {
+    /// Show current EFI boot order and BootNext / BootCurrent
+    Status,
+    /// Set Windows as next boot target (one-shot, no reboot)
+    NextWindows,
+    /// Make the named target the persistent default boot entry
+    Persistent {
+        #[arg(value_enum)]
+        target: BootPersistTarget,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum BootPersistTarget {
+    /// Windows Boot Manager (looked up via efibootmgr)
+    Windows,
+    /// Whatever booted this session (typically Bazzite/Fedora) — use to revert
+    Current,
+}
+
 fn main() -> Result<()> {
     color_eyre::install()?;
 
@@ -195,6 +221,7 @@ fn main() -> Result<()> {
         Some(Commands::Search { name }) => zos_core::commands::install::search_and_print(&name),
         Some(Commands::Install { name }) => zos_core::commands::install::search_and_install(&name),
         Some(Commands::RebootToWindows) => zos_core::commands::grub::reboot_to_windows_elevated(),
+        Some(Commands::Boot { cmd }) => run_boot(cmd).map_err(|e| eyre!(e.to_string())),
         Some(Commands::Compositor { cmd }) => run_compositor(cmd).map_err(|e| eyre!(e.to_string())),
         Some(Commands::Screenshot {
             region,
@@ -244,5 +271,40 @@ fn run_compositor(cmd: CompositorCmd) -> Result<(), Box<dyn std::error::Error>> 
         CompositorCmd::MoveToWorkspace { id } => compositor::cmd_move_to_workspace(id),
         CompositorCmd::FocusWindow { id } => compositor::cmd_focus_window(id),
         CompositorCmd::CloseFocused => compositor::cmd_close_focused(),
+    }
+}
+
+fn run_boot(cmd: BootCmd) -> Result<(), Box<dyn std::error::Error>> {
+    use zos_core::commands::grub::{
+        get_boot_current, get_boot_order, get_windows_boot_num,
+        set_bootnext_windows_only_elevated, set_persistent_boot_target_elevated, BootTarget,
+    };
+
+    match cmd {
+        BootCmd::Status => {
+            let order = get_boot_order()?;
+            let current = get_boot_current().unwrap_or_else(|| "(unknown)".into());
+            let windows = get_windows_boot_num()
+                .map(|n| format!("Boot{}", n))
+                .unwrap_or_else(|| "(not present)".into());
+            println!("BootCurrent: {}", current);
+            println!("BootOrder:   {}", order.join(","));
+            println!("Windows:     {}", windows);
+            Ok(())
+        }
+        BootCmd::NextWindows => {
+            set_bootnext_windows_only_elevated()?;
+            println!("BootNext set to Windows. Reboot to apply.");
+            Ok(())
+        }
+        BootCmd::Persistent { target } => {
+            let bt = match target {
+                BootPersistTarget::Windows => BootTarget::Windows,
+                BootPersistTarget::Current => BootTarget::CurrentSystem,
+            };
+            let new_order = set_persistent_boot_target_elevated(bt)?;
+            println!("New BootOrder: {}", new_order.join(","));
+            Ok(())
+        }
     }
 }

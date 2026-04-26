@@ -17,6 +17,7 @@ use smithay::{
 };
 #[cfg(feature = "xwayland")]
 use smithay::{utils::Rectangle, xwayland::xwm::ResizeEdge as X11ResizeEdge};
+use tracing::warn;
 
 use super::{SurfaceData, WindowElement, WindowId};
 use crate::{
@@ -533,7 +534,10 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerResiz
                         if let ResizeState::Resizing(resize_data) = data.resize_state {
                             data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial);
                         } else {
-                            panic!("invalid resize state: {:?}", data.resize_state);
+                            warn!(
+                                state = ?data.resize_state,
+                                "resize grab pointer-up: surface in unexpected resize state, dropping ack",
+                            );
                         }
                     });
                 }
@@ -570,7 +574,10 @@ impl<BackendData: Backend> PointerGrab<AnvilState<BackendData>> for PointerResiz
                         if let ResizeState::Resizing(resize_data) = data.resize_state {
                             data.resize_state = ResizeState::WaitingForCommit(resize_data);
                         } else {
-                            panic!("invalid resize state: {:?}", data.resize_state);
+                            warn!(
+                                state = ?data.resize_state,
+                                "resize grab pointer-up (commit path): surface in unexpected resize state, dropping",
+                            );
                         }
                     });
                 }
@@ -746,7 +753,10 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchResizeSur
                     if let ResizeState::Resizing(resize_data) = data.resize_state {
                         data.resize_state = ResizeState::WaitingForFinalAck(resize_data, event.serial);
                     } else {
-                        panic!("invalid resize state: {:?}", data.resize_state);
+                        warn!(
+                            state = ?data.resize_state,
+                            "resize grab touch-up: surface in unexpected resize state, dropping ack",
+                        );
                     }
                 });
             }
@@ -783,7 +793,10 @@ impl<BackendData: Backend> TouchGrab<AnvilState<BackendData>> for TouchResizeSur
                     if let ResizeState::Resizing(resize_data) = data.resize_state {
                         data.resize_state = ResizeState::WaitingForCommit(resize_data);
                     } else {
-                        panic!("invalid resize state: {:?}", data.resize_state);
+                        warn!(
+                            state = ?data.resize_state,
+                            "resize grab touch-up (commit path): surface in unexpected resize state, dropping",
+                        );
                     }
                 });
             }

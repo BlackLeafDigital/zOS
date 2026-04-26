@@ -31,7 +31,7 @@ ARG GH_TOKEN
 RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git libseat-devel mingw64-gcc mingw64-binutils mingw64-headers mingw64-crt && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel git libseat-devel libdisplay-info-devel mingw64-gcc mingw64-binutils mingw64-headers mingw64-crt && \
     dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel && \
     export HOME=/tmp && \
     if [ -n "$GH_TOKEN" ]; then git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi && \
@@ -102,6 +102,14 @@ RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
     --mount=type=tmpfs,dst=/tmp \
     export GITHUB_TOKEN="${GH_TOKEN}" && \
     /ctx/scripts/install-hyprland.sh
+
+# Layer: Catppuccin Mocha GRUB theme into /usr/share/grub/themes/
+RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    export GITHUB_TOKEN="${GH_TOKEN}" && \
+    /ctx/scripts/install-grub-theme.sh
 
 # Layer: developer toolchain (largest - compilers, -devel headers, Android SDK, CUDA)
 RUN --mount=type=bind,from=build-ctx,source=/,target=/ctx \

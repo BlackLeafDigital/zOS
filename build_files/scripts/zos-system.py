@@ -492,6 +492,9 @@ def cmd_grub(_args: argparse.Namespace) -> int:
         else:
             changes.append("Windows not detected on any EFI partition (skipped)")
 
+    # --- Catppuccin GRUB theme ---
+    _apply_grub_theme(changes)
+
     # --- Summary ---
     print(header("Setup Complete"))
     for change in changes:
@@ -500,6 +503,75 @@ def cmd_grub(_args: argparse.Namespace) -> int:
     print(info("Reboot to apply GRUB changes."))
     print()
     return 0
+
+
+def _apply_grub_theme(changes: list[str]) -> None:
+    """Install Catppuccin Mocha GRUB theme to /boot and activate via user.cfg.
+
+    Idempotent: skips the copy if the destination already has theme.txt, and
+    rewrites only the marker-delimited stanza in user.cfg without duplicating.
+    """
+    IMAGE_THEME = Path("/usr/share/grub/themes/catppuccin-mocha")
+    BOOT_THEME = Path("/boot/grub2/themes/catppuccin-mocha")
+
+    if not IMAGE_THEME.exists():
+        changes.append("GRUB theme not installed in image (skipped)")
+        return
+
+    if not BOOT_THEME.joinpath("theme.txt").exists():
+        try:
+            shutil.copytree(IMAGE_THEME, BOOT_THEME, dirs_exist_ok=True)
+        except OSError as e:
+            print(fail(f"Failed to copy GRUB theme to /boot: {e}"))
+            changes.append(f"Failed to copy GRUB theme: {e}")
+            return
+
+    user_cfg = Path("/boot/grub2/user.cfg")
+    start_marker = "# zos-grub-theme-managed"
+    end_marker = "# zos-grub-theme-managed-end"
+    stanza_lines = [
+        start_marker,
+        "set theme=/boot/grub2/themes/catppuccin-mocha/theme.txt",
+        "set gfxmode=auto",
+        "insmod gfxterm",
+        "terminal_output gfxterm",
+        end_marker,
+    ]
+    stanza = "\n".join(stanza_lines) + "\n"
+
+    try:
+        if not user_cfg.exists():
+            user_cfg.parent.mkdir(parents=True, exist_ok=True)
+            new_content = stanza
+        else:
+            existing = user_cfg.read_text()
+            lines = existing.splitlines()
+            if start_marker in lines:
+                start_idx = lines.index(start_marker)
+                if end_marker in lines[start_idx:]:
+                    end_idx = start_idx + lines[start_idx:].index(end_marker)
+                else:
+                    # Missing end marker — replace from start to EOF defensively.
+                    end_idx = len(lines) - 1
+                new_lines = lines[:start_idx] + stanza_lines + lines[end_idx + 1:]
+                new_content = "\n".join(new_lines)
+                if not new_content.endswith("\n"):
+                    new_content += "\n"
+            else:
+                if existing and not existing.endswith("\n"):
+                    existing += "\n"
+                new_content = existing + stanza
+
+        tmp_path = user_cfg.with_name(user_cfg.name + ".zos-tmp")
+        tmp_path.write_text(new_content)
+        os.chmod(tmp_path, 0o644)
+        os.replace(tmp_path, user_cfg)
+    except OSError as e:
+        print(fail(f"Failed to update /boot/grub2/user.cfg: {e}"))
+        changes.append(f"Failed to activate GRUB theme: {e}")
+        return
+
+    changes.append("GRUB Catppuccin Mocha theme applied")
 
 
 def _find_windows_efi() -> str | None:
