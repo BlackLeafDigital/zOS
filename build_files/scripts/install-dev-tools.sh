@@ -24,6 +24,7 @@ dnf5 install -y \
     clang-devel \
     musl-gcc \
     musl-libc-static \
+    gcc-aarch64-linux-gnu \
     rust \
     cargo \
     clippy \

@@ -31,7 +31,7 @@ ARG GH_TOKEN
 RUN --mount=type=bind,from=rust-ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=tmpfs,dst=/tmp \
-    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel clang-libs git libseat-devel libdisplay-info-devel libdrm-devel libinput-devel libxkbcommon-devel systemd-devel pixman-devel wayland-devel mingw64-gcc mingw64-binutils mingw64-headers mingw64-crt && \
+    dnf5 install -y rust cargo gtk4-devel libadwaita-devel gtk3-devel libayatana-appindicator-gtk3-devel gtk4-layer-shell-devel clang-devel clang-libs git libseat-devel libdisplay-info-devel libdrm-devel libinput-devel libxkbcommon-devel systemd-devel pixman-devel wayland-devel mingw64-gcc mingw64-binutils mingw64-headers mingw64-crt hdf5 hdf5-devel nfs-utils && \
     dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel && \
     dnf5 download mesa-libgbm-devel mesa-libEGL-devel --destdir /tmp/ && \
     rpm -Uvh --nodeps --replacepkgs /tmp/mesa-libgbm-devel*.rpm /tmp/mesa-libEGL-devel*.rpm && \
