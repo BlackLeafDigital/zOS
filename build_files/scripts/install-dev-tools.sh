@@ -89,6 +89,66 @@ dnf5 install -y --enablerepo=fedora-multimedia \
 # See AUDIO_HANDOFF.md.
 dnf5 install -y pipewire-devel
 
+# --- HDF5 pkg-config files ---
+# Fedora's hdf5-devel ships headers, libs, and the h5cc compiler wrapper but
+# no .pc files (autotools build, not cmake). Synthesize them so downstream
+# build systems that probe via `pkg-config --cflags hdf5` (Rust hdf5-sys,
+# Python h5py from source, etc.) can find the install. Version is pulled
+# from the actual rpm so it stays in sync across image rebuilds.
+HDF5_VERSION=$(rpm -q --qf '%{VERSION}' hdf5-devel)
+mkdir -p /usr/lib64/pkgconfig
+cat > /usr/lib64/pkgconfig/hdf5.pc <<EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib64
+includedir=\${prefix}/include
+
+Name: HDF5
+Description: Hierarchical Data Format 5 (HDF5)
+Version: ${HDF5_VERSION}
+Libs: -L\${libdir} -lhdf5
+Cflags: -I\${includedir}
+EOF
+cat > /usr/lib64/pkgconfig/hdf5_hl.pc <<EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib64
+includedir=\${prefix}/include
+
+Name: HDF5 High Level
+Description: HDF5 High Level Library
+Version: ${HDF5_VERSION}
+Requires: hdf5
+Libs: -L\${libdir} -lhdf5_hl
+Cflags: -I\${includedir}
+EOF
+cat > /usr/lib64/pkgconfig/hdf5_cpp.pc <<EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib64
+includedir=\${prefix}/include
+
+Name: HDF5 C++
+Description: HDF5 C++ Library
+Version: ${HDF5_VERSION}
+Requires: hdf5
+Libs: -L\${libdir} -lhdf5_cpp
+Cflags: -I\${includedir}
+EOF
+cat > /usr/lib64/pkgconfig/hdf5_hl_cpp.pc <<EOF
+prefix=/usr
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib64
+includedir=\${prefix}/include
+
+Name: HDF5 C++ High Level
+Description: HDF5 High Level C++ Library
+Version: ${HDF5_VERSION}
+Requires: hdf5_cpp hdf5_hl
+Libs: -L\${libdir} -lhdf5_hl_cpp
+Cflags: -I\${includedir}
+EOF
+
 # --- Android / mobile dev ---
 # Note: bluez-libs-devel conflicts with Bazzite's custom bluez build
 # Fedora 44 dropped java-21-openjdk-devel; java-25 is the current LTS in repo.
