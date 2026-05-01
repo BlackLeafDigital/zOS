@@ -82,19 +82,19 @@ dnf5 install -y --enablerepo=fedora-multimedia \
     x265-devel \
     libfdk-aac-devel
 
-# pipewire-devel: upstream Fedora's package strict-requires a pipewire-libs
-# version that Bazzite excludes (Bazzite ships its own pinned pipewire build).
-# Bazzite ships their own matching pipewire-devel in the bazzite-multilib COPR
-# (enabled=0 by default; --repo= overrides). Required for `cargo check -p
-# zos-settings` after the audio panel rewrite added `pipewire = "0.8"`.
+# pipewire-devel: required for `cargo check -p zos-settings` after the audio
+# panel rewrite added `pipewire = "0.9"`. Resolves cleanly against Bazzite
+# f44's pinned pipewire build via the regular Fedora repos (the
+# bazzite-multilib COPR doesn't carry a 64-bit pipewire-devel).
 # See AUDIO_HANDOFF.md.
-dnf5 install -y --repo=copr:copr.fedorainfracloud.org:ublue-os:bazzite-multilib pipewire-devel
+dnf5 install -y pipewire-devel
 
 # --- Android / mobile dev ---
 # Note: bluez-libs-devel conflicts with Bazzite's custom bluez build
+# Fedora 44 dropped java-21-openjdk-devel; java-25 is the current LTS in repo.
 dnf5 install -y \
     android-tools \
-    java-21-openjdk-devel
+    java-25-openjdk-devel
 
 # --- Android SDK (system-wide cmdline-tools + minimum platforms) ---
 # Lives under /usr/lib so it's read-only and shared across users. Users

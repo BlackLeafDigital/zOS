@@ -77,10 +77,19 @@ dnf5 install -y \
 
 # --- HyprPanel (Ubuntu-style panel with quick settings, replaces waybar+swaync+blueman+nm-applet) ---
 # Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
-# appmenu-glib-translator: provides libappmenu-glib-translator.so.0 needed by astal-libs
-# (transitive dep of hyprpanel via aylurs-gtk-shell2)
+#
+# astal-libs (transitive dep of hyprpanel via aylurs-gtk-shell2) needs
+# libappmenu-glib-translator.so.0()(64bit) which is only published in the
+# sdegler/hyprland copr's f43 chroot, not f44. Bazzite stable is now f44, so
+# pull the f43 RPM directly and install with --nodeps. The lib is a small
+# D-Bus menubar translator with no f44-specific ABI surface — the f43 .so
+# satisfies the f44 astal-libs link requirement.
+APPMENU_RPM_URL="https://download.copr.fedorainfracloud.org/results/sdegler/hyprland/fedora-43-x86_64/09838713-appmenu-glib-translator/appmenu-glib-translator-25.04%5E1.gitf05d28d-1.fc43.x86_64.rpm"
+gh_curl -o /tmp/appmenu-glib-translator.rpm "$APPMENU_RPM_URL"
+rpm -ivh --nodeps /tmp/appmenu-glib-translator.rpm
+rm -f /tmp/appmenu-glib-translator.rpm
+
 dnf5 install -y \
-    appmenu-glib-translator \
     hyprpanel \
     libgtop2 \
     swww \
@@ -126,7 +135,12 @@ cp /ctx/system_files/etc/greetd/regreet.toml /etc/greetd/
 cp /ctx/system_files/usr/lib/sysusers.d/zos-greetd.conf /usr/lib/sysusers.d/
 # ReGreet cache dir created at boot via tmpfiles.d
 cp /ctx/system_files/usr/lib/tmpfiles.d/zos-regreet.conf /usr/lib/tmpfiles.d/
-systemctl disable sddm || true
+# Bazzite f43 used sddm; Bazzite f44 switched default DM to plasmalogin.service.
+# Disable both (whichever exists), then clear any existing display-manager.service
+# symlink so `systemctl enable greetd` can claim it without --force.
+systemctl disable sddm 2>/dev/null || true
+systemctl disable plasmalogin 2>/dev/null || true
+rm -f /etc/systemd/system/display-manager.service
 systemctl enable greetd
 
 # --- Copy Hyprland session file for greetd ---

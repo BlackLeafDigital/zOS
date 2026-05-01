@@ -9,7 +9,11 @@ elif [ -d "$HOME/.linuxbrew" ]; then
 fi
 
 [ -d "$HOME/.local/share/mise/shims" ] && PATH="$HOME/.local/share/mise/shims:$PATH"
-[ -d /usr/lib/jvm/java-21-openjdk ] && export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+if [ -d /usr/lib/jvm/java-25-openjdk ]; then
+    export JAVA_HOME=/usr/lib/jvm/java-25-openjdk
+elif [ -d /usr/lib/jvm/java-21-openjdk ]; then
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+fi
 
 if [ -d "$HOME/Android/Sdk" ]; then
     export ANDROID_HOME="$HOME/Android/Sdk"

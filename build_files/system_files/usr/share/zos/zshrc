@@ -106,7 +106,9 @@ if [ -n "${ANDROID_HOME:-}" ]; then
 fi
 
 # --- Java ---
-if [ -d /usr/lib/jvm/java-21-openjdk ]; then
+if [ -d /usr/lib/jvm/java-25-openjdk ]; then
+    export JAVA_HOME=/usr/lib/jvm/java-25-openjdk
+elif [ -d /usr/lib/jvm/java-21-openjdk ]; then
     export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 fi
 
