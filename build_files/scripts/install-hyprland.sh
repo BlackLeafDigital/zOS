@@ -77,7 +77,10 @@ dnf5 install -y \
 
 # --- HyprPanel (Ubuntu-style panel with quick settings, replaces waybar+swaync+blueman+nm-applet) ---
 # Note: power-profiles-daemon conflicts with Bazzite's tuned-ppd
+# appmenu-glib-translator: provides libappmenu-glib-translator.so.0 needed by astal-libs
+# (transitive dep of hyprpanel via aylurs-gtk-shell2)
 dnf5 install -y \
+    appmenu-glib-translator \
     hyprpanel \
     libgtop2 \
     swww \
