@@ -30,6 +30,7 @@ dnf5 install -y \
     clippy \
     rustfmt \
     openssl-devel \
+    tpm2-tss-devel \
     pkg-config \
     python3-pip \
     python3-devel \
