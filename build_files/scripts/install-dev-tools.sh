@@ -31,6 +31,7 @@ dnf5 install -y \
     rustfmt \
     openssl-devel \
     tpm2-tss-devel \
+    opencascade-devel \
     pkg-config \
     python3-pip \
     python3-devel \
